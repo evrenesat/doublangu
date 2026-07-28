@@ -1,5 +1,35 @@
 # Development Log
 
+## 2026-07-28 — Checkpoint 5: Native Loader Preflight Boundary
+
+### Decisions
+
+- **Nine typed failures only**: malformed JSON and manifest validation now map to
+  `schema`; there is no separate parse stage. `complete` is success only.
+- **Pre-open compatibility**: the caller supplies host API/Go/role/fingerprint
+  values. The loader compares all of them, plus inspected artifact GOOS/GOARCH,
+  before `plugin.Open`; it recognizes only Linux ARM64 ELF and macOS ARM64 Mach-O.
+- **Observed evidence**: injected opener, native lookup, plugin manifest,
+  comparator, and registrar collaborators append the test trace. Loader results
+  contain typed stages/codes, not synthesized call counters.
+- **Panic and nil containment**: typed-nil direct/inner plugin symbols and nil
+  native plugins fail deterministically; post-open collaborator panics become
+  their owning stage.
+- **Zero-plugin smoke**: `/health` has deterministic core/loader/schema,
+  unique-plugin, and registration-count fields. The Make target builds and starts
+  the binary on an ephemeral loopback address, requests `/health`, then interrupts
+  it cleanly.
+
+### Verification
+
+All verification commands pass:
+- `go test ./internal/plugins -run 'Loader|PreOpen|Symbol|Subprocess|Diagnostic' -count=1`
+- `go test -race ./internal/plugins -run 'Loader|Registration' -count=10`
+- `go test ./cmd/doublangu-server -count=1`
+- `make test-plugin-loader`
+- `make test-core-no-feature-plugins`
+- `make verify`
+
 ## 2026-07-28 — Checkpoint 2: Plugin Manifest And Schema Contract
 
 ### Decisions
