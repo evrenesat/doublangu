@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+web/node_modules/
+
+# Build outputs
+web/build/
+web/.svelte-kit/
+/doublangu-server
+/doublangu-agent
+
+# Environment files
+.env
+web/.env
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Test coverage
+coverage.out
+coverage.html
+*.coverprofile
+
+# Logs
+*.log
+
+# Go
+vendor/

@@ -32,4 +32,60 @@ flowchart LR
 
 Deployment work is explicitly outside this handoff. Implementing and reviewer agents must not edit the external `evreniops` repository, Ansible files, production nginx/systemd configuration, DNS, TLS, VPS state, cloud storage, or production secrets.
 
-The project owner/architect will separately implement and operate Ansible deployment after the application produces the release artifacts and deployment contract defined in Checkpoint 15. Current hosting is a single Ubuntu 24.04 ARM64 VPS with 2 cores, 3.7 GiB RAM, no swap, and approximately 25 GiB free. It is suitable for the Go server and lightweight media operations, not AI inference or a large audiobook corpus. Production media storage therefore remains a configurable filesystem mount whose volume provisioning is an owner-operated decision.
+The project owner/architect will separately implement and operate Ansible deployment after the application produces the release artifacts and deployment contract defined in Checkpoint 28. Current hosting is a single Ubuntu 24.04 ARM64 VPS with 2 cores, 3.7 GiB RAM, no swap, and approximately 25 GiB free. It is suitable for the Go server and lightweight media operations, not AI inference or a large audiobook corpus. Production media storage therefore remains a configurable filesystem mount whose volume provisioning is an owner-operated decision.
+
+## Development Quickstart
+
+### Prerequisites
+
+- Go 1.26.5+
+- Node 24+
+- npm
+
+### Setup
+
+Install frontend dependencies with exact pinned versions:
+
+```sh
+npm --prefix web ci
+```
+
+### Development
+
+Start the Go server and web dev server together:
+
+```sh
+make dev
+```
+
+The Go server listens on `0.0.0.0:8080` (configurable via `DOUBLANGU_*` env vars). The Vite dev server proxies `/api/*` and `/health/*` requests to Go.
+
+### Verification
+
+Run all checks (vet, type-check, unit tests, and production static build):
+
+```sh
+make verify
+```
+
+Run tests only:
+
+```sh
+make test
+```
+
+### Smoke Test
+
+Start the server and verify the health endpoint:
+
+```sh
+make smoke-health
+```
+
+### Build
+
+Compile the Go binary:
+
+```sh
+make build
+```
