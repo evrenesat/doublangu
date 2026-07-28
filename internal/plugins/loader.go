@@ -189,7 +189,7 @@ func Load(ctx context.Context, artifactPath, sidecarPath string, cfg LoaderConfi
 	}
 	comparator := cfg.Comparator
 	if comparator == nil {
-		comparator = canonicalComparator{}
+		comparator = artifactParityComparator{}
 	}
 	equal, err := safelyCompare(comparator, embedded, sidecar)
 	if err != nil {
@@ -384,12 +384,6 @@ type realNativePlugin struct{ plugin *plugin.Plugin }
 
 func (p realNativePlugin) Lookup(symbol string) (plugin.Symbol, error) {
 	return p.plugin.Lookup(symbol)
-}
-
-type canonicalComparator struct{}
-
-func (canonicalComparator) Equal(embedded, sidecar v1.Manifest) bool {
-	return v1.CanonicalEquals(embedded, sidecar)
 }
 
 type registryRegistrar struct{}

@@ -91,3 +91,73 @@ The server (`cmd/doublangu-server`) starts with an empty registry and prints a
 visible banner. `/health` reports independent core and loader readiness, checked
 schema availability, sorted unique contributing plugin IDs, and a separate total
 of registration surfaces. The server exposes no readiness endpoint.
+
+## Fingerprint And Artifact Integration (Checkpoint 6)
+
+### Canonical Fingerprint Model
+
+Plugin compatibility is enforced through three fingerprints computed from the
+artifact binary:
+
+| Fingerprint | Source | Exclusions |
+|---|---|---|
+| Build Settings | `debug.BuildInfo.Settings`, sorted key-then-value | `vcs`, `vcs.*`, `-buildmode`, `-ldflags` |
+| Module Graph | Main module and sorted dependencies, each with path/version/sum/replacement data | None (no usable module data → `"no-deps"`) |
+| Artifact Checksum | SHA-256 of final plugin `.so` bytes | None |
+
+Build Settings and Artifact Checksum are SHA-256 values stored as 64 lowercase
+hex characters. Module Graph is also SHA-256 when module data is available, or
+the explicit `"no-deps"` sentinel otherwise. Unknown non-VCS settings remain
+significant and participate in the fingerprint.
+
+### Two-Phase Build
+
+The `tools/pluginbuild` tool uses a two-phase approach:
+
+1. **Pre-build**: compile the plugin with placeholder fingerprint values and
+   read its candidate `debug.BuildInfo`. This candidate supplies the
+   `vcs.revision` precedence tier and the values injected into the final build.
+
+2. **Final build**: rebuild with `-ldflags -X` injecting the computed hashes,
+   source revision, and canonical target list. The helper then reads the final
+   binary for its sidecar fingerprints and `ArtifactReport`; its checksum is
+   written only to the sidecar because it is self-referential.
+
+### Artifact Parity
+
+The production loader defaults to the artifact parity comparator, which compares
+embedded and sidecar manifests in every field except `artifact_checksum`. The
+checksum is self-referential: embedding a file's SHA-256 inside the file changes
+the file, making the embedded value instantly stale. The pre-open checksum
+validation (`StageChecksum`) independently verifies file integrity against the
+sidecar before inspection or native loading.
+
+### Sidecar ↔ Embedded Parity
+
+After loading, the plugin's `Manifest()` must match the sidecar in all fields
+except `artifact_checksum`. The build tool injects the following via ldflags:
+
+- `buildSettingsHash` — canonical build-settings hash
+- `moduleGraphHash` — canonical module-graph hash
+- `sourceRevision` — resolved source revision
+- `targetJSON` — JSON-encoded canonical target array
+
+### Host Role Validation
+
+The loader validates the host role against the plugin's target list at the
+`compatibility` stage, before native code is opened. A plugin targeting only
+`["server"]` is rejected on an agent host, and vice versa. Multi-target
+plugins (`["agent", "server"]`) load on either host.
+
+The integration matrix builds matching `-race` plugins when the host test binary
+uses the race detector. Each allowed or rejected role case runs in a subprocess,
+so every process performs at most one real `plugin.Open` while proving all four
+allowed loads and both pre-open role rejections.
+
+### Source Revision Precedence
+
+Source revision follows a four-tier fallback: explicit build-tool option →
+`vcs.revision` from the pre-build candidate artifact → helper
+`git rev-parse HEAD` → `"unknown"`.
+Explicit revisions must be 7–64 ASCII hex characters; empty, whitespace,
+control-character, and leading-dash values are rejected.

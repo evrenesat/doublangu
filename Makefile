@@ -1,11 +1,11 @@
-.PHONY: verify test test-manifest test-core-no-feature-plugins test-plugin-loader vet check-no-network
+.PHONY: verify test test-manifest test-core-no-feature-plugins test-plugin-loader test-fingerprint-integration vet check-no-network
 
-# verify runs all static checks and manifest/schema tests.
-verify: vet check-no-network test-manifest
+# verify runs static checks plus manifest/schema and normal fingerprint tests.
+verify: vet check-no-network test-manifest test-fingerprint-integration
 
 # vet runs go vet on all packages.
 vet:
-	go vet ./pkg/pluginapi/v1 ./internal/plugins ./cmd/doublangu-server
+	go vet ./pkg/pluginapi/v1 ./internal/plugins ./cmd/doublangu-server ./tools/pluginbuild ./plugins/official/sample
 
 # test-manifest runs the manifest and schema validation tests.
 test-manifest:
@@ -21,6 +21,11 @@ test-core-no-feature-plugins:
 # test-plugin-loader runs trace-based loader tables and the real helper-process protocol.
 test-plugin-loader:
 	go test ./internal/plugins -run 'Loader|PreOpen|Symbol|Subprocess|Diagnostic' -count=1
+
+# test-fingerprint-integration runs normal fingerprint, revision, target, artifact,
+# comparator, and real-load matrix tests for Checkpoint 6.
+test-fingerprint-integration:
+	go test ./internal/plugins ./tools/pluginbuild -run 'Fingerprint|BuildConfig|Module|Revision|Target|Artifact|Integration|Comparator' -count=1
 
 # check-no-network ensures no network-dependent tooling is referenced in scoped files.
 # The JSON Schema $schema and $id URLs are standard draft-07 metadata, not tool downloads.

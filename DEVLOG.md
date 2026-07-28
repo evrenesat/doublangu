@@ -30,6 +30,38 @@ All verification commands pass:
 - `make test-core-no-feature-plugins`
 - `make verify`
 
+## 2026-07-29 — Checkpoint 6: Release Fingerprint And Real Artifact Integration
+
+### Decisions
+
+- **Canonical graph**: Module fingerprints retain every available main-module,
+  dependency, and replacement path/version/sum field, sort on all canonical
+  fields, and use `"no-deps"` only when no usable module data exists.
+- **Final-artifact reporting**: `pluginbuild` resolves revision only after the
+  pre-build candidate is available, then reads the final binary and sidecar to
+  construct its report. Invalid explicit revisions fail before any `go build`.
+- **Checksum boundary**: The production loader excludes only the self-referential
+  checksum from embedded/sidecar comparison; byte tampering stops at
+  `StageChecksum` before inspection or native loading.
+- **Load evidence**: The role matrix executes server-only/server, agent-only/agent,
+  and multi-target on both hosts in isolated subprocesses. It also proves both
+  role rejections occur before `plugin.Open`, and uses matching `-race` plugins
+  instead of skipping native loads.
+- **Cross-directory fallback**: Equivalent `-buildvcs=false` builds from two
+  checkout directories retain equal fingerprints and use helper Git revision
+  fallback while preserving final artifact/sidecar/report parity.
+
+### Verification
+
+All verification commands pass:
+- `go test ./internal/plugins ./tools/pluginbuild -run 'Fingerprint|BuildConfig|Module|Revision|Target|Artifact|Integration|Comparator' -count=1`
+- `go test ./internal/plugins -run 'TestIntegration_FullMatrix' -count=1 -v`
+- `go test -race ./internal/plugins -run 'TestIntegration_FullMatrix' -count=1 -v`
+- `go test -race ./internal/plugins -count=1`
+- `make test-plugin-loader`
+- No stale artifacts in `bin/plugins/`
+- `make verify`
+
 ## 2026-07-28 — Checkpoint 2: Plugin Manifest And Schema Contract
 
 ### Decisions

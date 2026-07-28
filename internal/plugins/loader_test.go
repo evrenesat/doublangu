@@ -56,6 +56,21 @@ type staticInspector struct {
 	panicValue any
 }
 
+type traceInspector struct {
+	trace      *callTrace
+	info       ArtifactInfo
+	err        error
+	panicValue any
+}
+
+func (inspector traceInspector) Inspect(string) (ArtifactInfo, error) {
+	inspector.trace.add("inspect")
+	if inspector.panicValue != nil {
+		panic(inspector.panicValue)
+	}
+	return inspector.info, inspector.err
+}
+
 func (inspector staticInspector) Inspect(string) (ArtifactInfo, error) {
 	if inspector.panicValue != nil {
 		panic(inspector.panicValue)
@@ -439,6 +454,71 @@ func TestLoaderAcceptedSymbolShapesAndSuccess(t *testing.T) {
 			assertFixtureLoad(t, fixture, Load(context.Background(), fixture.artifact, fixture.sidecar, fixture.config), StageComplete, callTrace{"open", "lookup", "manifest", "compare", "register"})
 		})
 	}
+}
+
+func TestArtifactParityComparator_ExcludesOnlyChecksum(t *testing.T) {
+	baseline := testManifest()
+	baseline.ArtifactChecksum = strings.Repeat("a", 64)
+	if err := baseline.Validate(); err != nil {
+		t.Fatalf("baseline manifest: %v", err)
+	}
+
+	checksumOnly := baseline
+	checksumOnly.ArtifactChecksum = strings.Repeat("b", 64)
+	if !(artifactParityComparator{}).Equal(baseline, checksumOnly) {
+		t.Fatal("checksum-only embedded difference did not compare equal")
+	}
+
+	mutations := []struct {
+		name  string
+		apply func(*v1.Manifest)
+	}{
+		{"id", func(manifest *v1.Manifest) { manifest.ID = "other-plugin" }},
+		{"version", func(manifest *v1.Manifest) { manifest.Version = "2.0.0" }},
+		{"api version", func(manifest *v1.Manifest) { manifest.APIVersion = "v2" }},
+		{"go version", func(manifest *v1.Manifest) { manifest.GoVersion = "go9.9.9" }},
+		{"target", func(manifest *v1.Manifest) { manifest.Target = []string{"agent"} }},
+		{"source revision", func(manifest *v1.Manifest) { manifest.SourceRevision = "abcdefabcdefabcdefabcdefabcdefabcdefabcd" }},
+		{"build settings", func(manifest *v1.Manifest) { manifest.BuildSettings = "other-build-settings" }},
+		{"module graph", func(manifest *v1.Manifest) { manifest.ModuleGraph = "other-module-graph" }},
+		{"name", func(manifest *v1.Manifest) { manifest.Name = "Other Plugin" }},
+		{"description", func(manifest *v1.Manifest) { manifest.Description = "Other description" }},
+		{"author", func(manifest *v1.Manifest) { manifest.Author = "Other author" }},
+	}
+	for _, mutation := range mutations {
+		t.Run(mutation.name, func(t *testing.T) {
+			candidate := baseline
+			candidate.Target = append([]string(nil), baseline.Target...)
+			mutation.apply(&candidate)
+			if (artifactParityComparator{}).Equal(baseline, candidate) {
+				t.Fatalf("%s difference compared equal", mutation.name)
+			}
+		})
+	}
+}
+
+func TestLoaderProductionDefaultComparator_AllowsChecksumPlaceholder(t *testing.T) {
+	fixture := newLoaderFixture(t)
+	fixture.config.Comparator = nil
+	fixture.plugin.manifest.ArtifactChecksum = strings.Repeat("0", 64)
+
+	result := Load(context.Background(), fixture.artifact, fixture.sidecar, fixture.config)
+	assertFixtureLoad(t, fixture, result, StageComplete, callTrace{"open", "lookup", "manifest", "register"})
+}
+
+func TestLoaderChecksumFailurePrecedesInspectionAndNativeCalls(t *testing.T) {
+	fixture := newLoaderFixture(t)
+	fixture.config.Comparator = nil
+	fixture.config.Inspector = traceInspector{
+		trace: fixture.trace,
+		info:  ArtifactInfo{GOOS: "linux", GOARCH: "arm64"},
+	}
+	if err := os.WriteFile(fixture.artifact, []byte("tampered artifact bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	result := Load(context.Background(), fixture.artifact, fixture.sidecar, fixture.config)
+	assertFixtureLoad(t, fixture, result, StageChecksum, nil)
 }
 
 func TestLoaderRegistrationRollback(t *testing.T) {
