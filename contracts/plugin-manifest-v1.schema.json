@@ -1,0 +1,93 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://doublangu.dev/schemas/plugin-manifest-v1.schema.json",
+  "title": "Doublangu Native Plugin Manifest v1",
+  "description": "Strict machine-readable manifest for Doublangu native plugins.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "version",
+    "api_version",
+    "go_version",
+    "target",
+    "source_revision",
+    "artifact_checksum",
+    "build_settings",
+    "module_graph",
+    "name",
+    "description",
+    "author"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,126}[a-zA-Z0-9]$",
+      "description": "Stable plugin identifier; 2-128 chars, alphanumeric with dots/dashes/underscores."
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$",
+      "description": "Strict SemVer 2.0.0; numeric identifiers reject leading zeroes and digit-leading alphanumeric prereleases are allowed."
+    },
+    "api_version": {
+      "type": "string",
+      "minLength": 1,
+      "const": "v1",
+      "description": "Plugin API version; must equal the host API version constant."
+    },
+    "go_version": {
+      "type": "string",
+      "minLength": 1,
+      "const": "go1.26.5",
+      "description": "Exact Go toolchain version required by the host."
+    },
+    "target": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": ["server", "agent"]
+      },
+      "description": "Ordered, unique host-role targets."
+    },
+    "source_revision": {
+      "oneOf": [
+        { "const": "unknown" },
+        { "type": "string", "pattern": "^[a-fA-F0-9]{7,64}$" }
+      ],
+      "description": "Git revision (7-64 hex) or 'unknown'; provenance, not host compatibility."
+    },
+    "artifact_checksum": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "SHA-256 of final plugin bytes (lowercase hex)."
+    },
+    "build_settings": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Canonical sorted build-settings hash."
+    },
+    "module_graph": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Canonical module-graph hash."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable plugin name."
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable plugin description."
+    },
+    "author": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Plugin author."
+    }
+  }
+}
