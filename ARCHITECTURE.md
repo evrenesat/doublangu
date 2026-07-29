@@ -238,3 +238,61 @@ healthy module proves route, panel, settings, command, reader, and radial
 contributions; the other fixtures throw during mount or have a malformed default
 export. Browser tests exercise these assets through the production host and Go
 asset route.
+
+## Library Representation Contract (Checkpoint 9)
+
+### Record Types
+
+Five core library record types are defined in `internal/library/types.go`:
+
+| Record | Table | Key identity |
+|---|---|---|
+| `Library` | `library` | ULID; groups works under `source_language`/`target_language` (BCP-47) |
+| `Work` | `work` | ULID; belongs to library (FK cascade) |
+| `Edition` | `edition` | ULID; specific format/version of a work (FK cascade) |
+| `Chapter` | `chapter` | ULID; timed segment with `start_ms`, `end_ms`, `duration_ms` (int64) |
+| `SourceAsset` | `source_asset` | ULID; source file record with timing (int64 ms) |
+
+Constructors generate every record's own canonical 26-character uppercase ULID
+through the unexported `newULID` boundary. Public DTO literals remain useful for
+database scans and decoding, but must pass their record's `Validate` method
+before use; validation strict-parses own and parent IDs, canonicalizes library
+and edition language fields, and checks chapter/source timing. `newULID` uses
+`crypto/rand` without a cross-call monotonic-ordering promise.
+
+### ULID
+
+The `ULID` type preserves an encoded DTO identity until validation in
+`internal/library/ulid.go`. `newULID()` is the sole creation boundary, while
+`ParseULID` enforces:
+
+- Exactly 26 uppercase Crockford base32 characters (excludes I, L, O, U)
+- No whitespace, no lowercase, no trailing/leading garbage
+- UUID-shaped inputs (36-char dashed) are rejected as negative controls
+
+### BCP-47 Language Tags
+
+`ParseBCP47` in `internal/library/language.go` wraps
+`golang.org/x/text/language`. Record validation canonicalizes valid tags (for
+example, `"en-us"` → `"en-US"` and `"zh-hans"` → `"zh-Hans"`) and rejects:
+
+- Empty strings
+- Whitespace-padded input
+- Malformed input (starts with digit, special characters, too short)
+- Tags that parse to the root/undetermined language
+- Canonical forms that are not round-trip stable
+
+Checkpoint 10 will persist these validated canonical metadata values; Checkpoint
+9 defines and proves the representation boundary only.
+
+### Migration 002
+
+`internal/store/migrations/002_library.sql` creates the five library tables with:
+
+- Foreign keys with `ON DELETE CASCADE` throughout the chain
+- `CHECK (start_ms >= 0)`, `CHECK (end_ms >= 0)`, `CHECK (duration_ms >= 0)`
+- Table-level `CHECK (end_ms >= start_ms)` on `chapter` and `source_asset`
+- Indexes on every foreign-key column
+
+The migration runner applies it transactionally after 001_initial; a failing
+migration rollback leaves no schema changes and no version record.

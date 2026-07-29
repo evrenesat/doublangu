@@ -161,3 +161,40 @@ The repair matrix covers assembled clean-cookie login, logout negative controls,
 session rotation/reset rollback, forwarded-header spoofing, migration
 upgrade/rollback/PRAGMA evidence, frontend type/behavior tests, module tidiness,
 race checks, and the repository Make targets.
+
+## 2026-07-29 — Checkpoint 9: Core Library Representation And Schema Contract
+
+### Decisions
+
+- **Production record boundary**: Constructors generate each own ID and call
+  reusable record validators. Validators strict-parse own and parent IDs,
+  canonicalise library/edition BCP-47 fields, and reject negative or reversed
+  chapter/source millisecond ranges. Public struct literals remain possible for
+  decoding and scanning, so callers must validate them before use.
+- **ULID identity**: `newULID` uses `crypto/rand` to generate canonical
+  uppercase ULIDs, with no cross-call monotonic-ordering guarantee. `ParseULID`
+  rejects lowercase, whitespace-padded, wrong-length, and UUID-shaped (36-char
+  dashed) values via `ulid.ParseStrict` plus an explicit uppercase check.
+- **BCP-47 canonicalisation**: `ParseBCP47` wraps `golang.org/x/text/language`
+  and validators retain its canonical output while rejecting empty,
+  whitespace-padded, malformed, and undetermined tags. CP10 owns persistence of
+  validated canonical metadata.
+- **Integer-millisecond timing**: `Chapter` and `SourceAsset` use `int64`
+  `start_ms`, `end_ms`, and `duration_ms`; validators and migration CHECK
+  constraints enforce `>= 0` and `end_ms >= start_ms`.
+- **Migration 002**: Five tables (library, work, edition, chapter, source_asset)
+  with cascading foreign keys. The upgrade test applies checked-in 001 then the
+  embedded migrations, while rollback derives a failing variant from checked-in
+  002 and proves a clean retry.
+- **Dependency pinning**: `github.com/oklog/ulid/v2` and `golang.org/x/text` are
+  promoted to direct dependencies. The existing `google/uuid` indirect dependency
+  is not referenced by any production or test code in the library/store scope.
+
+### Verification
+
+All verification commands pass:
+- `test -z "$(gofmt -l internal/library internal/store)"`
+- `go mod tidy -diff`
+- `go test ./internal/library ./internal/store -run 'ULID|BCP47|Milliseconds|Migration|Rollback' -count=30`
+- No forbidden patterns (`google/uuid`, `uuid.NewString`, `start_offset`, `end_offset`, `duration_seconds`, `float64`) in scoped files
+- `git diff --check && make verify`

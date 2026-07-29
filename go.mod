@@ -3,8 +3,10 @@ module doublangu
 go 1.26.5
 
 require (
+	github.com/oklog/ulid/v2 v2.1.2
 	golang.org/x/crypto v0.54.0
 	golang.org/x/term v0.45.0
+	golang.org/x/text v0.40.0
 	modernc.org/sqlite v1.54.0
 )
 
