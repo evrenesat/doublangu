@@ -22,6 +22,7 @@ import (
 	"doublangu/internal/config"
 	"doublangu/internal/httpapi"
 	"doublangu/internal/httpapi/pluginassets"
+	"doublangu/internal/library"
 	manifest "doublangu/internal/plugins"
 	"doublangu/internal/store"
 	"golang.org/x/term"
@@ -105,7 +106,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "WARNING: schema not available: %v\n", err)
 	}
 	registry := manifest.NewRegistry()
-	if err := serve(cfg.Listen, registry, schema, db, newHandler(registry, schema, authHandler, healthHandler), stdout); err != nil {
+	if err := serve(cfg.Listen, registry, schema, db, newHandler(registry, schema, authHandler, healthHandler, cfg, db), stdout); err != nil {
 		fmt.Fprintf(stderr, "server: %v\n", err)
 		return 1
 	}
@@ -125,6 +126,8 @@ func newHandler(
 	schema *manifest.ParsedSchema,
 	authHandler *auth.AuthHandler,
 	health *httpapi.HealthHandler,
+	cfg *config.Config,
+	db *store.DB,
 ) http.Handler {
 	mux := http.NewServeMux()
 
@@ -169,7 +172,77 @@ func newHandler(
 		mux.Handle(pluginassets.DefaultPrefix, assets)
 	}
 
+	// Library and media routes — all require authentication.
+	libraryHandler := httpapi.NewLibraryHandler(db, authHandler.CSRF)
+	mediaHandler := httpapi.NewMediaHandler(db, &library.Store{}, cfg.Paths.Media, mediaAccelPrefix(cfg))
+
+	libRoutes := authHandler.RequireAuth(libraryMux(libraryHandler))
+	mux.Handle("/api/v1/libraries", libRoutes)
+	mux.Handle("/api/v1/libraries/", libRoutes)
+	mux.Handle("/api/v1/works/", libRoutes)
+	mux.Handle("/api/v1/editions/", libRoutes)
+	mux.Handle("/api/v1/chapters/", libRoutes)
+	mux.Handle("/api/v1/assets/", libRoutes)
+
+	mediaRoutes := authHandler.RequireAuth(mediaMux(mediaHandler))
+	mux.Handle("/api/v1/media/", mediaRoutes)
+
 	return mux
+}
+
+// libraryMux returns a single http.Handler that dispatches library routes based
+// on the URL path. All library routes share the same auth wrapper.
+func libraryMux(h *httpapi.LibraryHandler) http.Handler {
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("GET /api/v1/libraries", h.ServeLibraries)
+	mux.HandleFunc("POST /api/v1/libraries", h.ServeLibraries)
+	mux.HandleFunc("GET /api/v1/libraries/{id}", h.ServeLibrary)
+	mux.HandleFunc("PUT /api/v1/libraries/{id}", h.ServeLibrary)
+	mux.HandleFunc("DELETE /api/v1/libraries/{id}", h.ServeLibrary)
+
+	mux.HandleFunc("GET /api/v1/libraries/{id}/works", h.ServeWorksByLibrary)
+	mux.HandleFunc("POST /api/v1/libraries/{id}/works", h.ServeWorksByLibrary)
+
+	mux.HandleFunc("GET /api/v1/works/{id}", h.ServeWork)
+	mux.HandleFunc("PUT /api/v1/works/{id}", h.ServeWork)
+	mux.HandleFunc("DELETE /api/v1/works/{id}", h.ServeWork)
+
+	mux.HandleFunc("GET /api/v1/works/{id}/editions", h.ServeEditionsByWork)
+	mux.HandleFunc("POST /api/v1/works/{id}/editions", h.ServeEditionsByWork)
+
+	mux.HandleFunc("GET /api/v1/editions/{id}", h.ServeEdition)
+	mux.HandleFunc("PUT /api/v1/editions/{id}", h.ServeEdition)
+	mux.HandleFunc("DELETE /api/v1/editions/{id}", h.ServeEdition)
+
+	mux.HandleFunc("GET /api/v1/editions/{id}/chapters", h.ServeChaptersByEdition)
+	mux.HandleFunc("POST /api/v1/editions/{id}/chapters", h.ServeChaptersByEdition)
+
+	mux.HandleFunc("GET /api/v1/chapters/{id}", h.ServeChapter)
+	mux.HandleFunc("PUT /api/v1/chapters/{id}", h.ServeChapter)
+	mux.HandleFunc("DELETE /api/v1/chapters/{id}", h.ServeChapter)
+
+	mux.HandleFunc("GET /api/v1/chapters/{id}/assets", h.ServeAssetsByChapter)
+	mux.HandleFunc("POST /api/v1/chapters/{id}/assets", h.ServeAssetsByChapter)
+
+	mux.HandleFunc("GET /api/v1/assets/{id}", h.ServeSourceAsset)
+	mux.HandleFunc("PUT /api/v1/assets/{id}", h.ServeSourceAsset)
+	mux.HandleFunc("DELETE /api/v1/assets/{id}", h.ServeSourceAsset)
+
+	return mux
+}
+
+func mediaMux(h *httpapi.MediaHandler) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/media/{id}", h.ServeMedia)
+	return mux
+}
+
+func mediaAccelPrefix(cfg *config.Config) string {
+	if !cfg.MediaRedirect.Enabled {
+		return ""
+	}
+	return cfg.MediaRedirect.Prefix
 }
 
 func pluginAssetsRoot() string {

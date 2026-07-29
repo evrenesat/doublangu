@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -14,12 +15,13 @@ import (
 
 // Config holds every validated server setting.
 type Config struct {
-	Listen    string
-	PublicURL string
-	Secret    []byte // decoded raw bytes from the base64 env var
-	Database  DatabaseConfig
-	Session   SessionConfig
-	Paths     PathsConfig
+	Listen        string
+	PublicURL     string
+	Secret        []byte // decoded raw bytes from the base64 env var
+	Database      DatabaseConfig
+	Session       SessionConfig
+	Paths         PathsConfig
+	MediaRedirect MediaRedirectConfig
 }
 
 // DatabaseConfig holds the SQLite path and WAL mode settings.
@@ -39,6 +41,16 @@ type SessionConfig struct {
 type PathsConfig struct {
 	Media string
 	Data  string
+}
+
+// MediaRedirectConfig controls optional X-Accel-Redirect delegation.
+// When Enabled is true, the media handler returns X-Accel-Redirect with
+// Prefix + digest instead of streaming bytes directly. The prefix is an
+// opaque internal URI that the reverse proxy maps to the real blob
+// directory — the filesystem path is never exposed to clients.
+type MediaRedirectConfig struct {
+	Enabled bool
+	Prefix  string // e.g. "/_media-internal/"
 }
 
 // Load reads configuration from the environment and returns a validated Config
@@ -67,6 +79,11 @@ func Load() (*Config, error) {
 
 	cfg.Paths.Media = envOrDefault("DOUBLANGU_MEDIA_PATH", "media")
 	cfg.Paths.Data = envOrDefault("DOUBLANGU_DATA_PATH", "data")
+
+	if v := os.Getenv("DOUBLANGU_MEDIA_REDIRECT"); v != "" {
+		cfg.MediaRedirect.Enabled = true
+		cfg.MediaRedirect.Prefix = v
+	}
 
 	cfg.Session.MaxAge = 24 * time.Hour
 	if v := os.Getenv("DOUBLANGU_SESSION_MAX_AGE"); v != "" {
@@ -139,7 +156,42 @@ func (cfg *Config) Validate() error {
 	if isHTTPS(cfg.PublicURL) && !cfg.Session.Secure {
 		return errors.New("session secure=false is not allowed when public_url uses https")
 	}
+	if cfg.MediaRedirect.Enabled {
+		if err := validateMediaRedirectPrefix(cfg.MediaRedirect.Prefix); err != nil {
+			return fmt.Errorf("media redirect prefix: %w", err)
+		}
+	} else if cfg.MediaRedirect.Prefix != "" {
+		return errors.New("media redirect prefix requires redirect to be enabled")
+	}
 
+	return nil
+}
+
+func validateMediaRedirectPrefix(prefix string) error {
+	if prefix == "" || !strings.HasPrefix(prefix, "/") || strings.HasPrefix(prefix, "//") || !strings.HasSuffix(prefix, "/") {
+		return errors.New("must be an absolute URI path with one leading and trailing slash")
+	}
+	if strings.ContainsAny(prefix, "\\%?#") {
+		return errors.New("must not contain escapes, query, fragment, or backslash")
+	}
+	for _, r := range prefix {
+		if r < 0x20 || r == 0x7f {
+			return errors.New("must not contain control characters")
+		}
+	}
+	u, err := url.ParseRequestURI(prefix)
+	if err != nil || u.IsAbs() || u.Host != "" || u.RawQuery != "" || u.Fragment != "" {
+		return errors.New("must not contain a scheme or host")
+	}
+	clean := path.Clean(prefix)
+	if clean != strings.TrimSuffix(prefix, "/") {
+		return errors.New("must be a clean URI path")
+	}
+	for _, segment := range strings.Split(strings.Trim(prefix, "/"), "/") {
+		if segment == "" || segment == "." || segment == ".." {
+			return errors.New("must not contain empty, dot, or dot-dot segments")
+		}
+	}
 	return nil
 }
 

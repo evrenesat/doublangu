@@ -230,3 +230,25 @@ func TestSecretBase64RoundTrips(t *testing.T) {
 		t.Errorf("SecretBase64 should not return the redacted sentinel")
 	}
 }
+
+func TestMediaRedirectPrefix(t *testing.T) {
+	t.Setenv("DOUBLANGU_SECRET", validSecret(t))
+	t.Setenv("DOUBLANGU_MEDIA_REDIRECT", "")
+	cfg, err := Load()
+	if err != nil || cfg.MediaRedirect.Enabled || cfg.MediaRedirect.Prefix != "" {
+		t.Fatalf("default redirect = %+v, err=%v", cfg.MediaRedirect, err)
+	}
+	t.Setenv("DOUBLANGU_MEDIA_REDIRECT", "/_media-internal/")
+	cfg, err = Load()
+	if err != nil || !cfg.MediaRedirect.Enabled || cfg.MediaRedirect.Prefix != "/_media-internal/" {
+		t.Fatalf("valid redirect = %+v, err=%v", cfg.MediaRedirect, err)
+	}
+	for _, value := range []string{"media/", "//media/", "/media", "/media//", "/./", "/../", "/media%2f/", "/media\\/", "/media?x/", "/media#x/", "/media\n/"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("DOUBLANGU_MEDIA_REDIRECT", value)
+			if _, err := Load(); err == nil {
+				t.Fatalf("Load accepted %q", value)
+			}
+		})
+	}
+}

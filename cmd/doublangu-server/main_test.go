@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -18,7 +19,9 @@ import (
 	"time"
 
 	"doublangu/internal/auth"
+	"doublangu/internal/config"
 	"doublangu/internal/httpapi"
+	"doublangu/internal/library"
 	manifest "doublangu/internal/plugins"
 	"doublangu/internal/store"
 	v1 "doublangu/pkg/pluginapi/v1"
@@ -59,13 +62,202 @@ func testHealth(t *testing.T, db *store.DB) *httpapi.HealthHandler {
 	return httpapi.NewHealthHandler(db)
 }
 
+func testConfig(t *testing.T) *config.Config {
+	t.Helper()
+	dir := t.TempDir()
+	return &config.Config{
+		Listen:    ":0",
+		PublicURL: "http" + "://localhost:8080",
+		Secret:    bytes.Repeat([]byte("x"), 32),
+		Database:  config.DatabaseConfig{Path: ":memory:"},
+		Session: config.SessionConfig{
+			MaxAge:   time.Hour,
+			Secure:   false,
+			HTTPOnly: true,
+			SameSite: "lax",
+		},
+		Paths: config.PathsConfig{
+			Media: filepath.Join(dir, "media"),
+			Data:  filepath.Join(dir, "data"),
+		},
+	}
+}
+
+func serverRequest(method, target, body, session, csrf string) *http.Request {
+	req := httptest.NewRequest(method, target, strings.NewReader(body))
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if session != "" {
+		req.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: session})
+	}
+	if csrf != "" {
+		req.AddCookie(&http.Cookie{Name: auth.CSRFCookie, Value: csrf})
+		req.Header.Set(auth.CSRFHeader, csrf)
+	}
+	return req
+}
+
+func seedServerMedia(t *testing.T, db *store.DB, mediaRoot string) (string, string, []byte) {
+	t.Helper()
+	data := []byte("assembled media")
+	sum := sha256.Sum256(data)
+	digest := hex.EncodeToString(sum[:])
+	if err := os.MkdirAll(filepath.Join(mediaRoot, "blobs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mediaRoot, "blobs", digest), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := &library.Store{}
+	var asset library.SourceAsset
+	err := db.WithTransaction(t.Context(), func(tx *sql.Tx) error {
+		lib, err := library.NewLibrary("Library", "nl", "en", "")
+		if err != nil {
+			return err
+		}
+		if err = s.CreateLibrary(t.Context(), tx, &lib); err != nil {
+			return err
+		}
+		work, err := library.NewWork(lib.ID, "Work", "Author", "audiobook", "")
+		if err != nil {
+			return err
+		}
+		if err = s.CreateWork(t.Context(), tx, &work); err != nil {
+			return err
+		}
+		edition, err := library.NewEdition(work.ID, "Edition", "nl", "mp3")
+		if err != nil {
+			return err
+		}
+		if err = s.CreateEdition(t.Context(), tx, &edition); err != nil {
+			return err
+		}
+		chapter, err := library.NewChapter(edition.ID, "Chapter", 1, 0, int64(len(data)), int64(len(data)))
+		if err != nil {
+			return err
+		}
+		if err = s.CreateChapter(t.Context(), tx, &chapter); err != nil {
+			return err
+		}
+		asset, err = library.NewSourceAsset(chapter.ID, "file:///media.mp3", "audio/mpeg", int64(len(data)), digest, 0, int64(len(data)), int64(len(data)))
+		if err != nil {
+			return err
+		}
+		return s.CreateSourceAsset(t.Context(), tx, &asset)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return asset.ID.String(), digest, data
+}
+
+func TestAssembledLibraryAndMediaAuthCSRF(t *testing.T) {
+	ah, db := testAuth(t)
+	handler := newHandler(manifest.NewRegistry(), &manifest.ParsedSchema{}, ah, testHealth(t, db), testConfig(t), db)
+	for _, target := range []string{"/api/v1/libraries", "/api/v1/media/01J00000000000000000000000"} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, serverRequest(http.MethodGet, target, "", "", ""))
+		if rec.Code != http.StatusUnauthorized || decodeServerError(t, rec).Code != httpapi.ErrCodeAuth {
+			t.Fatalf("%s status=%d", target, rec.Code)
+		}
+	}
+	session, err := ah.Sessions.Create(t.Context(), time.Hour, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	csrf, err := ah.CSRF.GenerateToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, request := range []*http.Request{
+		serverRequest(http.MethodPost, "/api/v1/libraries/not-a-ulid/works", "{", session, ""),
+		serverRequest(http.MethodPost, "/api/v1/libraries/not-a-ulid/works", "{", session, "bad"),
+	} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, request)
+		if rec.Code != http.StatusForbidden || decodeServerError(t, rec).Code != httpapi.ErrCodeCSRF {
+			t.Fatalf("csrf ordering status=%d", rec.Code)
+		}
+	}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, serverRequest(http.MethodPost, "/api/v1/libraries", `{"name":"Dutch","source_language":"nl","target_language":"en"}`, session, csrf))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var created library.Library
+	if err := json.NewDecoder(rec.Body).Decode(&created); err != nil || created.ID == "" || created.CreatedAt == "" || created.UpdatedAt == "" {
+		t.Fatalf("create=%+v err=%v", created, err)
+	}
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, serverRequest(http.MethodGet, "/api/v1/libraries/"+created.ID.String(), "", session, ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("stored CRUD status=%d", rec.Code)
+	}
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, serverRequest(http.MethodGet, "/api/v1/media/not-a-ulid", "", session, ""))
+	if rec.Code != http.StatusBadRequest || decodeServerError(t, rec).Code != httpapi.ErrCodeValidation {
+		t.Fatalf("media handler status=%d", rec.Code)
+	}
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, serverRequest(http.MethodGet, "/api/v1/media/%2E%2E", "", session, ""))
+	if rec.Code != http.StatusBadRequest || decodeServerError(t, rec).Code != httpapi.ErrCodeValidation {
+		t.Fatalf("escaped media traversal status=%d", rec.Code)
+	}
+}
+
+func TestAssembledMediaRedirectConfig(t *testing.T) {
+	ah, db := testAuth(t)
+	mediaRoot := t.TempDir()
+	id, digest, data := seedServerMedia(t, db, mediaRoot)
+	session, err := ah.Sessions.Create(t.Context(), time.Hour, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	directConfig := testConfig(t)
+	directConfig.Paths.Media = mediaRoot
+	direct := newHandler(manifest.NewRegistry(), &manifest.ParsedSchema{}, ah, testHealth(t, db), directConfig, db)
+	rec := httptest.NewRecorder()
+	direct.ServeHTTP(rec, serverRequest(http.MethodGet, "/api/v1/media/"+id, "", session, ""))
+	if rec.Code != http.StatusOK || rec.Body.String() != string(data) || rec.Header().Get("X-Accel-Redirect") != "" {
+		t.Fatalf("direct status=%d body=%q redirect=%q", rec.Code, rec.Body.String(), rec.Header().Get("X-Accel-Redirect"))
+	}
+	t.Setenv("DOUBLANGU_SECRET", base64.StdEncoding.EncodeToString(bytes.Repeat([]byte("x"), 32)))
+	t.Setenv("DOUBLANGU_MEDIA_PATH", mediaRoot)
+	t.Setenv("DOUBLANGU_MEDIA_REDIRECT", "/_media-internal/")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	accelerated := newHandler(manifest.NewRegistry(), &manifest.ParsedSchema{}, ah, testHealth(t, db), cfg, db)
+	rec = httptest.NewRecorder()
+	accelerated.ServeHTTP(rec, serverRequest(http.MethodGet, "/api/v1/media/"+id, "", session, ""))
+	if rec.Code != http.StatusOK || rec.Body.Len() != 0 || rec.Header().Get("X-Accel-Redirect") != "/_media-internal/"+digest {
+		t.Fatalf("accelerated status=%d body=%q redirect=%q", rec.Code, rec.Body.String(), rec.Header().Get("X-Accel-Redirect"))
+	}
+	t.Setenv("DOUBLANGU_MEDIA_REDIRECT", "/invalid")
+	if _, err := config.Load(); err == nil {
+		t.Fatal("invalid redirect configuration loaded")
+	}
+}
+
+func decodeServerError(t *testing.T, rec *httptest.ResponseRecorder) httpapi.APIError {
+	t.Helper()
+	var body httpapi.APIError
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	return body
+}
+
 func TestServerHandlerAssemblyDoesNotUseGlobalMux(t *testing.T) {
 	registry := manifest.NewRegistry()
 	ah, db := testAuth(t)
 	hh := testHealth(t, db)
+	cfg := testConfig(t)
 
-	first := newHandler(registry, &manifest.ParsedSchema{}, ah, hh)
-	second := newHandler(registry, &manifest.ParsedSchema{}, ah, hh)
+	first := newHandler(registry, &manifest.ParsedSchema{}, ah, hh, cfg, db)
+	second := newHandler(registry, &manifest.ParsedSchema{}, ah, hh, cfg, db)
 
 	health := httptest.NewRecorder()
 	first.ServeHTTP(health, httptest.NewRequest(http.MethodGet, "/health", nil))
@@ -102,7 +294,8 @@ func TestUIContributionsEndpointReturnsVersionedSnakeCasePayload(t *testing.T) {
 
 	ah, db := testAuth(t)
 	hh := testHealth(t, db)
-	handler := newHandler(registry, &manifest.ParsedSchema{}, ah, hh)
+	cfg := testConfig(t)
+	handler := newHandler(registry, &manifest.ParsedSchema{}, ah, hh, cfg, db)
 	unauthorized := httptest.NewRecorder()
 	handler.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/api/v1/ui/contributions", nil))
 	if unauthorized.Code != http.StatusUnauthorized {
@@ -145,7 +338,8 @@ func TestAssembledPluginAssetsRequireOwnerSession(t *testing.T) {
 	}
 	t.Setenv("DOUBLANGU_PLUGIN_ASSETS", root)
 	ah, db := testAuth(t)
-	handler := newHandler(manifest.NewRegistry(), &manifest.ParsedSchema{}, ah, testHealth(t, db))
+	cfg := testConfig(t)
+	handler := newHandler(manifest.NewRegistry(), &manifest.ParsedSchema{}, ah, testHealth(t, db), cfg, db)
 	path := "/api/v1/plugins/assets/v1/" + digest + "/module.js"
 
 	denied := httptest.NewRecorder()
@@ -169,7 +363,8 @@ func TestAssembledPluginAssetsRequireOwnerSession(t *testing.T) {
 func TestProductionCSRFBootstrapLoginFlow(t *testing.T) {
 	registry := manifest.NewRegistry()
 	ah, db := testAuth(t)
-	server := httptest.NewServer(newHandler(registry, &manifest.ParsedSchema{}, ah, testHealth(t, db)))
+	cfg := testConfig(t)
+	server := httptest.NewServer(newHandler(registry, &manifest.ParsedSchema{}, ah, testHealth(t, db), cfg, db))
 	defer server.Close()
 	jar, err := cookiejar.New(nil)
 	if err != nil {
@@ -286,9 +481,10 @@ func TestLiveEndpoint(t *testing.T) {
 	registry := manifest.NewRegistry()
 	ah, db := testAuth(t)
 	hh := testHealth(t, db)
+	cfg := testConfig(t)
 
 	recorder := httptest.NewRecorder()
-	newHandler(registry, &manifest.ParsedSchema{}, ah, hh).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/live", nil))
+	newHandler(registry, &manifest.ParsedSchema{}, ah, hh, cfg, db).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/live", nil))
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("live status = %d: %s", recorder.Code, recorder.Body.String())
 	}
@@ -305,9 +501,10 @@ func TestReadyEndpoint(t *testing.T) {
 	registry := manifest.NewRegistry()
 	ah, db := testAuth(t)
 	hh := testHealth(t, db)
+	cfg := testConfig(t)
 
 	recorder := httptest.NewRecorder()
-	newHandler(registry, &manifest.ParsedSchema{}, ah, hh).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/ready", nil))
+	newHandler(registry, &manifest.ParsedSchema{}, ah, hh, cfg, db).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/ready", nil))
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("ready status = %d: %s", recorder.Code, recorder.Body.String())
 	}
@@ -324,7 +521,8 @@ func TestAuthEndpointsRegistered(t *testing.T) {
 	registry := manifest.NewRegistry()
 	ah, db := testAuth(t)
 	hh := testHealth(t, db)
-	handler := newHandler(registry, &manifest.ParsedSchema{}, ah, hh)
+	cfg := testConfig(t)
+	handler := newHandler(registry, &manifest.ParsedSchema{}, ah, hh, cfg, db)
 
 	// POST /api/v1/auth/login should exist (even if it returns 403 for missing CSRF).
 	rec := httptest.NewRecorder()

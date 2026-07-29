@@ -243,10 +243,925 @@ paths:
               schema:
                 $ref: "#/components/schemas/APIError"
 
+  # --- Library metadata endpoints ---
+  # Every library mutation requires a valid CSRF double-submit cookie/header.
+  # All library routes require an authenticated owner session.
+
+  /api/v1/libraries:
+    get:
+      summary: List all libraries
+      description: Returns an empty array when no libraries exist.
+      security: [{ sessionCookie: [] }]
+      responses:
+        "200":
+          description: Library list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Library"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/Internal"
+
+    post:
+      summary: Create a library
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LibraryCreate"
+      responses:
+        "201":
+          description: Library created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Library"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/Internal"
+  /api/v1/libraries/{id}:
+    get:
+      summary: Get a library
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ULID" }
+      responses:
+        "200":
+          description: Library record.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Library"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/Internal"
+
+    put:
+      summary: Update a library
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ULID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LibraryUpdate"
+      responses:
+        "200":
+          description: Library updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Library"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/Internal"
+
+    delete:
+      summary: Delete a library
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ULID" }
+      responses:
+        "200":
+          description: Library deleted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OKResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/Internal"
+  /api/v1/libraries/{id}/works:
+    get:
+      summary: List works in a library
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ULID" }
+      responses:
+        "200":
+          description: Work list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Work"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/Internal"
+
+    post:
+      summary: Create a work in a library
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ULID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkCreate"
+      responses:
+        "201":
+          description: Work created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Work"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/Internal"
+  /api/v1/works/{id}:
+    get:
+      summary: Get a work
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ULID" }
+      responses:
+        "200":
+          description: Work record.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Work"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/Internal"
+
+    put:
+      summary: Update a work
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ULID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkUpdate"
+      responses:
+        "200":
+          description: Work updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Work"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/Internal"
+
+    delete:
+      summary: Delete a work
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ULID" }
+      responses:
+        "200":
+          description: Work deleted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OKResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/Internal"
+  /api/v1/works/{id}/editions:
+    get:
+      summary: List editions in a work
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ULID" }
+      responses:
+        "200":
+          description: Edition list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Edition"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/Internal"
+
+    post:
+      summary: Create an edition in a work
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ULID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EditionCreate"
+      responses:
+        "201":
+          description: Edition created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Edition"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/Internal"
+  /api/v1/editions/{id}:
+    get:
+      summary: Get an edition
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ULID" }
+      responses:
+        "200":
+          description: Edition record.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Edition"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/Internal"
+
+    put:
+      summary: Update an edition
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ULID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EditionUpdate"
+      responses:
+        "200":
+          description: Edition updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Edition"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/Internal"
+
+    delete:
+      summary: Delete an edition
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ULID" }
+      responses:
+        "200":
+          description: Edition deleted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OKResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/Internal"
+  /api/v1/editions/{id}/chapters:
+    get:
+      summary: List chapters in an edition
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ULID" }
+      responses:
+        "200":
+          description: Chapter list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Chapter"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/Internal"
+
+    post:
+      summary: Create a chapter in an edition
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ULID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChapterCreate"
+      responses:
+        "201":
+          description: Chapter created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Chapter"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/Internal"
+  /api/v1/chapters/{id}:
+    get:
+      summary: Get a chapter
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ULID" }
+      responses:
+        "200":
+          description: Chapter record.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Chapter"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/Internal"
+
+    put:
+      summary: Update a chapter
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ULID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChapterUpdate"
+      responses:
+        "200":
+          description: Chapter updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Chapter"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/Internal"
+
+    delete:
+      summary: Delete a chapter
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ULID" }
+      responses:
+        "200":
+          description: Chapter deleted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OKResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/Internal"
+  /api/v1/chapters/{id}/assets:
+    get:
+      summary: List source assets in a chapter
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ULID" }
+      responses:
+        "200":
+          description: Source asset list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SourceAsset"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/Internal"
+
+    post:
+      summary: Create a source asset in a chapter
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ULID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SourceAssetCreate"
+      responses:
+        "201":
+          description: Source asset created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceAsset"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/Internal"
+  /api/v1/assets/{id}:
+    get:
+      summary: Get a source asset
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ULID" }
+      responses:
+        "200":
+          description: Source asset record.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceAsset"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/Internal"
+
+    put:
+      summary: Update a source asset
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ULID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SourceAssetUpdate"
+      responses:
+        "200":
+          description: Source asset updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceAsset"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/Internal"
+
+    delete:
+      summary: Delete a source asset
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ULID" }
+      responses:
+        "200":
+          description: Source asset deleted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OKResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/Internal"
+
+  # --- Media endpoint ---
+  /api/v1/media/{id}:
+    get:
+      summary: Download media bytes
+      description: |
+        Returns the content-addressed blob for a source asset. Supports
+        byte-range requests (Range header), conditional requests
+        (If-None-Match), and ETag based on SHA-256 digest.
+        When X-Accel-Redirect is configured the server returns an internal
+        redirect header instead of streaming bytes directly.
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Source asset ULID.
+          schema: { $ref: "#/components/schemas/ULID" }
+        - name: Range
+          in: header
+          required: false
+          schema: { $ref: "#/components/schemas/SingleByteRange" }
+          example: bytes=0-1023
+        - name: If-None-Match
+          in: header
+          required: false
+          schema: { $ref: "#/components/schemas/ConditionalETag" }
+      responses:
+        "200":
+          description: Full media bytes.
+          headers:
+            ETag:
+              schema: { $ref: "#/components/schemas/StrongSHA256ETag" }
+            Content-Type:
+              schema: { $ref: "#/components/schemas/MediaType" }
+            Accept-Ranges:
+              schema: { $ref: "#/components/schemas/ByteRangeUnit" }
+            Content-Length:
+              schema: { $ref: "#/components/schemas/ByteLength" }
+            X-Accel-Redirect:
+              description: Optional opaque internal redirect location.
+              schema: { $ref: "#/components/schemas/InternalRedirectURI" }
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "206":
+          description: Partial content (byte range).
+          headers:
+            ETag:
+              schema: { $ref: "#/components/schemas/StrongSHA256ETag" }
+            Content-Type:
+              schema: { $ref: "#/components/schemas/MediaType" }
+            Accept-Ranges:
+              schema: { $ref: "#/components/schemas/ByteRangeUnit" }
+            Content-Range:
+              schema: { $ref: "#/components/schemas/ContentByteRange" }
+            Content-Length:
+              schema: { $ref: "#/components/schemas/ByteLength" }
+            X-Accel-Redirect:
+              description: Optional opaque internal redirect location.
+              schema: { $ref: "#/components/schemas/InternalRedirectURI" }
+        "304":
+          description: Not modified (If-None-Match).
+          headers:
+            ETag:
+              schema: { $ref: "#/components/schemas/StrongSHA256ETag" }
+            Content-Type:
+              schema: { $ref: "#/components/schemas/MediaType" }
+            Accept-Ranges:
+              schema: { $ref: "#/components/schemas/ByteRangeUnit" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "416":
+          description: Range not satisfiable.
+          headers:
+            ETag:
+              schema: { $ref: "#/components/schemas/StrongSHA256ETag" }
+            Content-Type:
+              schema: { $ref: "#/components/schemas/MediaType" }
+            Accept-Ranges:
+              schema: { $ref: "#/components/schemas/ByteRangeUnit" }
+            Content-Range:
+              schema: { $ref: "#/components/schemas/ContentByteRange" }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIError"
+        "500":
+          $ref: "#/components/responses/Internal"
+    head:
+      summary: Media metadata (no body)
+      description: Same headers as GET without the response body.
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ULID" }
+        - name: Range
+          in: header
+          required: false
+          schema: { $ref: "#/components/schemas/SingleByteRange" }
+        - name: If-None-Match
+          in: header
+          required: false
+          schema: { $ref: "#/components/schemas/ConditionalETag" }
+      responses:
+        "200":
+          description: Media metadata.
+          headers:
+            ETag:
+              schema: { $ref: "#/components/schemas/StrongSHA256ETag" }
+            Content-Type:
+              schema: { $ref: "#/components/schemas/MediaType" }
+            Accept-Ranges:
+              schema: { $ref: "#/components/schemas/ByteRangeUnit" }
+            Content-Length:
+              schema: { $ref: "#/components/schemas/ByteLength" }
+            X-Accel-Redirect:
+              description: Optional opaque internal redirect location.
+              schema: { $ref: "#/components/schemas/InternalRedirectURI" }
+        "206":
+          description: Partial media metadata.
+          headers:
+            ETag:
+              schema: { $ref: "#/components/schemas/StrongSHA256ETag" }
+            Content-Type:
+              schema: { $ref: "#/components/schemas/MediaType" }
+            Accept-Ranges:
+              schema: { $ref: "#/components/schemas/ByteRangeUnit" }
+            Content-Range:
+              schema: { $ref: "#/components/schemas/ContentByteRange" }
+            Content-Length:
+              schema: { $ref: "#/components/schemas/ByteLength" }
+            X-Accel-Redirect:
+              description: Optional opaque internal redirect location.
+              schema: { $ref: "#/components/schemas/InternalRedirectURI" }
+        "304":
+          description: Not modified (If-None-Match).
+          headers:
+            ETag:
+              schema: { $ref: "#/components/schemas/StrongSHA256ETag" }
+            Content-Type:
+              schema: { $ref: "#/components/schemas/MediaType" }
+            Accept-Ranges:
+              schema: { $ref: "#/components/schemas/ByteRangeUnit" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "416":
+          description: Range not satisfiable.
+          headers:
+            ETag:
+              schema: { $ref: "#/components/schemas/StrongSHA256ETag" }
+            Content-Type:
+              schema: { $ref: "#/components/schemas/MediaType" }
+            Accept-Ranges:
+              schema: { $ref: "#/components/schemas/ByteRangeUnit" }
+            Content-Range:
+              schema: { $ref: "#/components/schemas/ContentByteRange" }
+        "500":
+          $ref: "#/components/responses/Internal"
 components:
   schemas:
     APIError:
       type: object
+      additionalProperties: false
       required: [error, code]
       properties:
         error:
@@ -255,6 +1170,68 @@ components:
         code:
           type: string
           description: Versioned machine-readable error code (for example v1.csrf_error).
+
+    ULID:
+      type: string
+      pattern: '^[0-9A-HJKMNP-TV-Z]{26}$'
+      description: Canonical uppercase Crockford ULID.
+
+    SHA256:
+      type: string
+      pattern: '^[0-9a-f]{64}$'
+      description: Lowercase hexadecimal SHA-256 digest.
+
+    SingleByteRange:
+      type: string
+      pattern: '^bytes=(?:[0-9]+-[0-9]*|-[0-9]+)$'
+      description: One HTTP byte range; multiple ranges are not accepted.
+
+    ConditionalETag:
+      type: string
+      minLength: 1
+      description: If-None-Match input; strong, weak, list, and wildcard forms are accepted.
+
+    StrongSHA256ETag:
+      type: string
+      pattern: '^"[0-9a-f]{64}"$'
+      description: Strong quoted ETag derived from the lowercase SHA-256 digest.
+
+    MediaType:
+      type: string
+      minLength: 1
+      description: Stored source-asset media value returned verbatim as Content-Type; production does not enforce MIME type/subtype structure.
+
+    ByteRangeUnit:
+      type: string
+      enum: [bytes]
+
+    ByteLength:
+      type: integer
+      format: int64
+      minimum: 0
+
+    ContentByteRange:
+      type: string
+      pattern: '^bytes (?:[0-9]+-[0-9]+/[0-9]+|\*/[0-9]+)$'
+
+    InternalRedirectURI:
+      type: string
+      pattern: '^/[^\r\n]*$'
+      description: Opaque validated same-origin internal redirect URI, never a filesystem path.
+
+    LanguageTag:
+      type: string
+      minLength: 2
+      pattern: '^[A-Za-z][A-Za-z0-9-]+$'
+      description: |
+        BCP-47 syntactic pre-check only. Canonical acceptance and normalization
+        are decided by the production BCP-47 parser.
+
+    Milliseconds:
+      type: integer
+      format: int64
+      minimum: 0
+      description: Non-negative timing value; when start_ms and end_ms coexist, end_ms must be at least start_ms.
 
     OKResponse:
       type: object
@@ -310,3 +1287,214 @@ components:
       properties:
         ok:
           type: boolean
+
+    # --- Library domain schemas ---
+
+    Library:
+      type: object
+      required: [id, name, source_language, target_language, created_at, updated_at]
+      properties:
+        id:          { $ref: "#/components/schemas/ULID" }
+        name:        { type: string }
+        source_language: { $ref: "#/components/schemas/LanguageTag" }
+        target_language: { $ref: "#/components/schemas/LanguageTag" }
+        description: { type: string }
+        created_at:  { type: string, description: "ISO 8601 UTC" }
+        updated_at:  { type: string, description: "ISO 8601 UTC" }
+
+    LibraryCreate:
+      type: object
+      additionalProperties: false
+      required: [name, source_language, target_language]
+      properties:
+        name:            { type: string }
+        source_language: { $ref: "#/components/schemas/LanguageTag" }
+        target_language: { $ref: "#/components/schemas/LanguageTag" }
+        description:     { type: string }
+
+    LibraryUpdate:
+      type: object
+      additionalProperties: false
+      properties:
+        name:            { type: string }
+        source_language: { $ref: "#/components/schemas/LanguageTag" }
+        target_language: { $ref: "#/components/schemas/LanguageTag" }
+        description:     { type: string }
+
+    Work:
+      type: object
+      required: [id, library_id, title, author, kind, created_at, updated_at]
+      properties:
+        id:         { $ref: "#/components/schemas/ULID" }
+        library_id: { $ref: "#/components/schemas/ULID" }
+        title:      { type: string }
+        author:     { type: string }
+        kind:       { type: string }
+        source_url: { type: string }
+        created_at: { type: string }
+        updated_at: { type: string }
+
+    WorkCreate:
+      type: object
+      additionalProperties: false
+      required: [title, kind]
+      properties:
+        title:     { type: string }
+        author:    { type: string }
+        kind:      { type: string }
+        source_url: { type: string }
+
+    WorkUpdate:
+      type: object
+      additionalProperties: false
+      properties:
+        library_id: { $ref: "#/components/schemas/ULID" }
+        title:      { type: string }
+        author:     { type: string }
+        kind:       { type: string }
+        source_url: { type: string }
+
+    Edition:
+      type: object
+      required: [id, work_id, name, language, format, created_at, updated_at]
+      properties:
+        id:         { $ref: "#/components/schemas/ULID" }
+        work_id:    { $ref: "#/components/schemas/ULID" }
+        name:       { type: string }
+        language:   { $ref: "#/components/schemas/LanguageTag" }
+        format:     { type: string }
+        created_at: { type: string }
+        updated_at: { type: string }
+
+    EditionCreate:
+      type: object
+      additionalProperties: false
+      required: [name, language, format]
+      properties:
+        name:     { type: string }
+        language: { $ref: "#/components/schemas/LanguageTag" }
+        format:   { type: string }
+
+    EditionUpdate:
+      type: object
+      additionalProperties: false
+      properties:
+        work_id:  { $ref: "#/components/schemas/ULID" }
+        name:     { type: string }
+        language: { $ref: "#/components/schemas/LanguageTag" }
+        format:   { type: string }
+
+    Chapter:
+      type: object
+      required: [id, edition_id, title, chapter_number, start_ms, end_ms, duration_ms, created_at, updated_at]
+      properties:
+        id:            { $ref: "#/components/schemas/ULID" }
+        edition_id:    { $ref: "#/components/schemas/ULID" }
+        title:         { type: string }
+        chapter_number: { type: integer }
+        start_ms:      { $ref: "#/components/schemas/Milliseconds" }
+        end_ms:        { $ref: "#/components/schemas/Milliseconds" }
+        duration_ms:   { $ref: "#/components/schemas/Milliseconds" }
+        created_at:    { type: string }
+        updated_at:    { type: string }
+
+    ChapterCreate:
+      type: object
+      additionalProperties: false
+      required: [title, chapter_number, start_ms, end_ms, duration_ms]
+      properties:
+        title:         { type: string }
+        chapter_number: { type: integer }
+        start_ms:      { $ref: "#/components/schemas/Milliseconds" }
+        end_ms:        { $ref: "#/components/schemas/Milliseconds" }
+        duration_ms:   { $ref: "#/components/schemas/Milliseconds" }
+
+    ChapterUpdate:
+      type: object
+      additionalProperties: false
+      properties:
+        edition_id:    { $ref: "#/components/schemas/ULID" }
+        title:         { type: string }
+        chapter_number: { type: integer }
+        start_ms:      { $ref: "#/components/schemas/Milliseconds" }
+        end_ms:        { $ref: "#/components/schemas/Milliseconds" }
+        duration_ms:   { $ref: "#/components/schemas/Milliseconds" }
+
+    SourceAsset:
+      type: object
+      required: [id, chapter_id, url, mime_type, size_bytes, sha256_hash, created_at, updated_at]
+      properties:
+        id:          { $ref: "#/components/schemas/ULID" }
+        chapter_id:  { $ref: "#/components/schemas/ULID" }
+        url:         { type: string }
+        mime_type:   { type: string }
+        size_bytes:  { type: integer, format: int64, minimum: 0 }
+        sha256_hash: { $ref: "#/components/schemas/SHA256" }
+        start_ms:    { $ref: "#/components/schemas/Milliseconds" }
+        end_ms:      { $ref: "#/components/schemas/Milliseconds" }
+        duration_ms: { $ref: "#/components/schemas/Milliseconds" }
+        created_at:  { type: string }
+        updated_at:  { type: string }
+
+    SourceAssetCreate:
+      type: object
+      additionalProperties: false
+      required: [url, mime_type, size_bytes, sha256_hash]
+      properties:
+        url:         { type: string }
+        mime_type:   { type: string }
+        size_bytes:  { type: integer, format: int64, minimum: 0 }
+        sha256_hash: { $ref: "#/components/schemas/SHA256" }
+        start_ms:    { $ref: "#/components/schemas/Milliseconds" }
+        end_ms:      { $ref: "#/components/schemas/Milliseconds" }
+        duration_ms: { $ref: "#/components/schemas/Milliseconds" }
+
+    SourceAssetUpdate:
+      type: object
+      additionalProperties: false
+      properties:
+        chapter_id:  { $ref: "#/components/schemas/ULID" }
+        url:         { type: string }
+        mime_type:   { type: string }
+        size_bytes:  { type: integer, format: int64, minimum: 0 }
+        sha256_hash: { $ref: "#/components/schemas/SHA256" }
+        start_ms:    { $ref: "#/components/schemas/Milliseconds" }
+        end_ms:      { $ref: "#/components/schemas/Milliseconds" }
+        duration_ms: { $ref: "#/components/schemas/Milliseconds" }
+
+  responses:
+    BadRequest:
+      description: Validation error.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/APIError" }
+    Unauthorized:
+      description: Authentication required.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/APIError" }
+    Forbidden:
+      description: Missing or invalid CSRF token.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/APIError" }
+    NotFound:
+      description: Resource not found.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/APIError" }
+    Conflict:
+      description: Foreign-key or uniqueness constraint violated.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/APIError" }
+    Internal:
+      description: Unexpected server failure.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/APIError" }
+    MethodNotAllowed:
+      description: Method not allowed.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/APIError" }
