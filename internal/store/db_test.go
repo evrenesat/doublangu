@@ -3,9 +3,12 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"testing"
 	"testing/fstest"
+
+	"doublangu/internal/library"
 )
 
 const (
@@ -595,6 +598,149 @@ func TestMigration002_UpgradeFromV1ToV2(t *testing.T) {
 	assertCP8Rows(t, db)
 	assertMigration002Schema(t, db)
 	assertMigrationVersion(t, db, 2)
+}
+
+func TestMetadataStoreCRUDOnCleanAndUpgradedDatabases(t *testing.T) {
+	t.Run("clean", func(t *testing.T) {
+		db, err := OpenTest()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer db.Close()
+		exerciseMetadataStoreCRUD(t, db)
+	})
+	t.Run("upgraded", func(t *testing.T) {
+		db := openPopulatedV1DB(t)
+		if err := migrateWithSource(db, migrationFS); err != nil {
+			t.Fatalf("upgrade through checked-in migration: %v", err)
+		}
+		assertCP8Rows(t, db)
+		exerciseMetadataStoreCRUD(t, db)
+		assertCP8Rows(t, db)
+	})
+}
+
+func exerciseMetadataStoreCRUD(t *testing.T, db *DB) {
+	t.Helper()
+	ctx, metadata := context.Background(), &library.Store{}
+	err := db.WithTransaction(ctx, func(tx *sql.Tx) error {
+		libraryRecord, err := library.NewLibrary("metadata", "NL-nl", "EN-us", "")
+		if err != nil {
+			return err
+		}
+		if err := metadata.CreateLibrary(ctx, tx, &libraryRecord); err != nil {
+			return err
+		}
+		work, err := library.NewWork(libraryRecord.ID, "work", "author", "ebook", "")
+		if err != nil {
+			return err
+		}
+		if err := metadata.CreateWork(ctx, tx, &work); err != nil {
+			return err
+		}
+		edition, err := library.NewEdition(work.ID, "edition", "NL-nl", "epub")
+		if err != nil {
+			return err
+		}
+		if err := metadata.CreateEdition(ctx, tx, &edition); err != nil {
+			return err
+		}
+		chapter, err := library.NewChapter(edition.ID, "chapter", 1, 0, 1, 1)
+		if err != nil {
+			return err
+		}
+		if err := metadata.CreateChapter(ctx, tx, &chapter); err != nil {
+			return err
+		}
+		asset, err := library.NewSourceAsset(chapter.ID, "file:///metadata.mp3", "audio/mpeg", 1, "hash", 0, 1, 1)
+		if err != nil {
+			return err
+		}
+		if err := metadata.CreateSourceAsset(ctx, tx, &asset); err != nil {
+			return err
+		}
+		if _, err := metadata.GetLibrary(ctx, tx, libraryRecord.ID); err != nil {
+			return err
+		}
+		if _, err := metadata.GetWork(ctx, tx, work.ID); err != nil {
+			return err
+		}
+		if _, err := metadata.GetEdition(ctx, tx, edition.ID); err != nil {
+			return err
+		}
+		if _, err := metadata.GetChapter(ctx, tx, chapter.ID); err != nil {
+			return err
+		}
+		if _, err := metadata.GetSourceAsset(ctx, tx, asset.ID); err != nil {
+			return err
+		}
+		if records, err := metadata.ListLibraries(ctx, tx); err != nil || len(records) != 1 {
+			return fmt.Errorf("list libraries = %d, %w", len(records), err)
+		}
+		if records, err := metadata.ListWorksByLibrary(ctx, tx, libraryRecord.ID); err != nil || len(records) != 1 {
+			return fmt.Errorf("list works = %d, %w", len(records), err)
+		}
+		if records, err := metadata.ListEditionsByWork(ctx, tx, work.ID); err != nil || len(records) != 1 {
+			return fmt.Errorf("list editions = %d, %w", len(records), err)
+		}
+		if records, err := metadata.ListChaptersByEdition(ctx, tx, edition.ID); err != nil || len(records) != 1 {
+			return fmt.Errorf("list chapters = %d, %w", len(records), err)
+		}
+		if records, err := metadata.ListSourceAssetsByChapter(ctx, tx, chapter.ID); err != nil || len(records) != 1 {
+			return fmt.Errorf("list source assets = %d, %w", len(records), err)
+		}
+		libraryRecord.Name, work.Title, edition.Name, chapter.Title, asset.URL = "updated library", "updated work", "updated edition", "updated chapter", "file:///updated.mp3"
+		for _, update := range []func() error{
+			func() error { return metadata.UpdateLibrary(ctx, tx, &libraryRecord) },
+			func() error { return metadata.UpdateWork(ctx, tx, &work) },
+			func() error { return metadata.UpdateEdition(ctx, tx, &edition) },
+			func() error { return metadata.UpdateChapter(ctx, tx, &chapter) },
+			func() error { return metadata.UpdateSourceAsset(ctx, tx, &asset) },
+		} {
+			if err := update(); err != nil {
+				return err
+			}
+		}
+		updatedLibrary, err := metadata.GetLibrary(ctx, tx, libraryRecord.ID)
+		if err != nil || updatedLibrary.Name != libraryRecord.Name {
+			return fmt.Errorf("updated library = %#v, %w", updatedLibrary, err)
+		}
+		updatedWork, err := metadata.GetWork(ctx, tx, work.ID)
+		if err != nil || updatedWork.Title != work.Title {
+			return fmt.Errorf("updated work = %#v, %w", updatedWork, err)
+		}
+		updatedEdition, err := metadata.GetEdition(ctx, tx, edition.ID)
+		if err != nil || updatedEdition.Name != edition.Name {
+			return fmt.Errorf("updated edition = %#v, %w", updatedEdition, err)
+		}
+		updatedChapter, err := metadata.GetChapter(ctx, tx, chapter.ID)
+		if err != nil || updatedChapter.Title != chapter.Title {
+			return fmt.Errorf("updated chapter = %#v, %w", updatedChapter, err)
+		}
+		updatedAsset, err := metadata.GetSourceAsset(ctx, tx, asset.ID)
+		if err != nil || updatedAsset.URL != asset.URL {
+			return fmt.Errorf("updated source asset = %#v, %w", updatedAsset, err)
+		}
+		if err := metadata.DeleteLibrary(ctx, tx, libraryRecord.ID); err != nil {
+			return err
+		}
+		for _, get := range []func() error{
+			func() error { _, err := metadata.GetLibrary(ctx, tx, libraryRecord.ID); return err },
+			func() error { _, err := metadata.GetWork(ctx, tx, work.ID); return err },
+			func() error { _, err := metadata.GetEdition(ctx, tx, edition.ID); return err },
+			func() error { _, err := metadata.GetChapter(ctx, tx, chapter.ID); return err },
+			func() error { _, err := metadata.GetSourceAsset(ctx, tx, asset.ID); return err },
+		} {
+			var storeErr *library.Error
+			if err := get(); !errors.As(err, &storeErr) || storeErr.Kind != library.KindNotFound {
+				return fmt.Errorf("cascade error = %v", err)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("metadata CRUD: %v", err)
+	}
 }
 
 func TestMigration002_RollbackLeavesNoLibraryTables(t *testing.T) {
