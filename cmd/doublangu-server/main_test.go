@@ -3,8 +3,12 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -13,14 +17,55 @@ import (
 	"testing"
 	"time"
 
+	"doublangu/internal/auth"
+	"doublangu/internal/httpapi"
 	manifest "doublangu/internal/plugins"
+	"doublangu/internal/store"
 	v1 "doublangu/pkg/pluginapi/v1"
 )
 
+// testAuth creates a lightweight AuthHandler backed by an in-memory database
+// with a pre-created owner.
+func testAuth(t *testing.T) (*auth.AuthHandler, *store.DB) {
+	t.Helper()
+	db, err := store.OpenTest()
+	if err != nil {
+		t.Fatalf("OpenTest: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+
+	ownerMgr := auth.NewOwnerManager(db)
+	if err := ownerMgr.CreateOwner(t.Context(), "test-password-123", false); err != nil {
+		t.Fatalf("CreateOwner: %v", err)
+	}
+
+	secret := make([]byte, 32)
+	for i := range secret {
+		secret[i] = byte(i)
+	}
+
+	return &auth.AuthHandler{
+		Sessions:      auth.NewSessionStore(db),
+		OwnerManager:  ownerMgr,
+		CSRF:          auth.NewCSRF(secret),
+		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		SessionMaxAge: time.Hour,
+		Secure:        false,
+	}, db
+}
+
+func testHealth(t *testing.T, db *store.DB) *httpapi.HealthHandler {
+	t.Helper()
+	return httpapi.NewHealthHandler(db)
+}
+
 func TestServerHandlerAssemblyDoesNotUseGlobalMux(t *testing.T) {
 	registry := manifest.NewRegistry()
-	first := newHandler(registry, &manifest.ParsedSchema{})
-	second := newHandler(registry, &manifest.ParsedSchema{})
+	ah, db := testAuth(t)
+	hh := testHealth(t, db)
+
+	first := newHandler(registry, &manifest.ParsedSchema{}, ah, hh)
+	second := newHandler(registry, &manifest.ParsedSchema{}, ah, hh)
 
 	health := httptest.NewRecorder()
 	first.ServeHTTP(health, httptest.NewRequest(http.MethodGet, "/health", nil))
@@ -55,8 +100,26 @@ func TestUIContributionsEndpointReturnsVersionedSnakeCasePayload(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	ah, db := testAuth(t)
+	hh := testHealth(t, db)
+	handler := newHandler(registry, &manifest.ParsedSchema{}, ah, hh)
+	unauthorized := httptest.NewRecorder()
+	handler.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/api/v1/ui/contributions", nil))
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated UI contributions = %d", unauthorized.Code)
+	}
+	var apiError httpapi.APIError
+	if err := json.NewDecoder(unauthorized.Body).Decode(&apiError); err != nil || apiError.Code != httpapi.ErrCodeAuth {
+		t.Fatalf("unauthenticated error = %+v err=%v", apiError, err)
+	}
+	session, err := ah.Sessions.Create(t.Context(), time.Hour, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
 	recorder := httptest.NewRecorder()
-	newHandler(registry, &manifest.ParsedSchema{}).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/ui/contributions", nil))
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/ui/contributions", nil)
+	request.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: session})
+	handler.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d", recorder.Code)
 	}
@@ -65,6 +128,223 @@ func TestUIContributionsEndpointReturnsVersionedSnakeCasePayload(t *testing.T) {
 	}
 	if body := recorder.Body.String(); !strings.Contains(body, `"version":"v1"`) || !strings.Contains(body, `"source_url"`) || !strings.Contains(body, `"plugin_id":"plugin.sample"`) || strings.Contains(body, `"sourceUrl"`) {
 		t.Fatalf("payload = %s", body)
+	}
+}
+
+func TestAssembledPluginAssetsRequireOwnerSession(t *testing.T) {
+	root := t.TempDir()
+	body := []byte("export default 1;\n")
+	sum := sha256.Sum256(body)
+	digest := hex.EncodeToString(sum[:])
+	filename := filepath.Join(root, "v1", digest, "module.js")
+	if err := os.MkdirAll(filepath.Dir(filename), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filename, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DOUBLANGU_PLUGIN_ASSETS", root)
+	ah, db := testAuth(t)
+	handler := newHandler(manifest.NewRegistry(), &manifest.ParsedSchema{}, ah, testHealth(t, db))
+	path := "/api/v1/plugins/assets/v1/" + digest + "/module.js"
+
+	denied := httptest.NewRecorder()
+	handler.ServeHTTP(denied, httptest.NewRequest(http.MethodGet, path, nil))
+	if denied.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized plugin asset = %d", denied.Code)
+	}
+	session, err := ah.Sessions.Create(t.Context(), time.Hour, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowedRequest := httptest.NewRequest(http.MethodGet, path, nil)
+	allowedRequest.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: session})
+	allowed := httptest.NewRecorder()
+	handler.ServeHTTP(allowed, allowedRequest)
+	if allowed.Code != http.StatusOK || allowed.Body.String() != string(body) {
+		t.Fatalf("authorized plugin asset = %d %q", allowed.Code, allowed.Body.String())
+	}
+}
+
+func TestProductionCSRFBootstrapLoginFlow(t *testing.T) {
+	registry := manifest.NewRegistry()
+	ah, db := testAuth(t)
+	server := httptest.NewServer(newHandler(registry, &manifest.ParsedSchema{}, ah, testHealth(t, db)))
+	defer server.Close()
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Jar: jar}
+
+	bootstrap, err := client.Get(server.URL + "/api/v1/auth/csrf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bootstrap.Body.Close()
+	if bootstrap.StatusCode != http.StatusOK {
+		t.Fatalf("csrf bootstrap = %d", bootstrap.StatusCode)
+	}
+	var csrfToken string
+	for _, item := range jar.Cookies(bootstrap.Request.URL) {
+		if item.Name == auth.CSRFCookie {
+			csrfToken = item.Value
+		}
+	}
+	if csrfToken == "" {
+		t.Fatal("production bootstrap did not populate CSRF cookie jar")
+	}
+
+	postLogin := func(password string) *http.Response {
+		t.Helper()
+		request, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/auth/login", strings.NewReader(`{"password":"`+password+`"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set(auth.CSRFHeader, csrfToken)
+		response, err := client.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return response
+	}
+	wrong := postLogin("wrong-password")
+	if wrong.StatusCode != http.StatusUnauthorized {
+		wrong.Body.Close()
+		t.Fatalf("wrong login = %d", wrong.StatusCode)
+	}
+	var wrongError httpapi.APIError
+	if err := json.NewDecoder(wrong.Body).Decode(&wrongError); err != nil || wrongError.Code != httpapi.ErrCodeAuth {
+		wrong.Body.Close()
+		t.Fatalf("wrong login error = %+v err=%v", wrongError, err)
+	}
+	wrong.Body.Close()
+
+	success := postLogin("test-password-123")
+	if success.StatusCode != http.StatusOK {
+		success.Body.Close()
+		t.Fatalf("correct login = %d", success.StatusCode)
+	}
+	success.Body.Close()
+	status, err := client.Get(server.URL + "/api/v1/auth/session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer status.Body.Close()
+	var session map[string]bool
+	if err := json.NewDecoder(status.Body).Decode(&session); err != nil || !session["authenticated"] {
+		t.Fatalf("session status = %+v err=%v", session, err)
+	}
+}
+
+func TestOwnerCLIUsesPasswordInputWithoutLeakingIt(t *testing.T) {
+	secret := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte("s"), 32))
+	databasePath := filepath.Join(t.TempDir(), "nested", "owner.db")
+	t.Setenv("DOUBLANGU_SECRET", secret)
+	t.Setenv("DOUBLANGU_DB_PATH", databasePath)
+
+	runOwner := func(args []string, input string) (int, string, string) {
+		var stdout, stderr bytes.Buffer
+		code := run(args, strings.NewReader(input), &stdout, &stderr)
+		return code, stdout.String(), stderr.String()
+	}
+	password := "owner-secret-password"
+	if code, stdout, stderr := runOwner([]string{"--create-owner"}, password+"\n"); code != 0 || !strings.Contains(stdout, "created") || strings.Contains(stdout+stderr, password) {
+		t.Fatalf("create code=%d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	if code, _, stderr := runOwner([]string{"--create-owner"}, password+"\n"); code != 1 || !strings.Contains(stderr, "already exists") || strings.Contains(stderr, password) {
+		t.Fatalf("duplicate create code=%d stderr=%q", code, stderr)
+	}
+	if code, stdout, stderr := runOwner([]string{"--reset-owner"}, "replacement-secret\n"); code != 0 || !strings.Contains(stdout, "reset") || strings.Contains(stdout+stderr, "replacement-secret") {
+		t.Fatalf("reset code=%d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	if code, _, stderr := runOwner([]string{"--create-owner", "--reset-owner"}, "ignored\n"); code != 2 || strings.Contains(stderr, "ignored") {
+		t.Fatalf("conflict code=%d stderr=%q", code, stderr)
+	}
+	if code, _, stderr := runOwner([]string{"--create-owner=argv-secret"}, "ignored\n"); code != 2 || strings.Contains(stderr, "argv-secret") {
+		t.Fatalf("argv redaction code=%d stderr=%q", code, stderr)
+	}
+	if code, _, stderr := runOwner([]string{"--create-owner"}, ""); code != 1 || !strings.Contains(stderr, "EOF") || strings.Contains(stderr, password) {
+		t.Fatalf("EOF code=%d stderr=%q", code, stderr)
+	}
+	if code, _, stderr := runOwner([]string{"--create-owner"}, "short\n"); code != 1 || strings.Contains(stderr, "short") {
+		t.Fatalf("short-password redaction code=%d stderr=%q", code, stderr)
+	}
+	if _, err := os.Stat(filepath.Dir(databasePath)); err != nil {
+		t.Fatalf("database parent was not created: %v", err)
+	}
+	startupSecret := "startup-secret-must-not-leak"
+	t.Setenv("DOUBLANGU_SECRET", startupSecret)
+	var startupOut, startupErr bytes.Buffer
+	if code := run(nil, strings.NewReader(""), &startupOut, &startupErr); code != 1 || strings.Contains(startupOut.String()+startupErr.String(), startupSecret) {
+		t.Fatalf("startup redaction code=%d stdout=%q stderr=%q", code, startupOut.String(), startupErr.String())
+	}
+}
+
+func TestLiveEndpoint(t *testing.T) {
+	registry := manifest.NewRegistry()
+	ah, db := testAuth(t)
+	hh := testHealth(t, db)
+
+	recorder := httptest.NewRecorder()
+	newHandler(registry, &manifest.ParsedSchema{}, ah, hh).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/live", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("live status = %d: %s", recorder.Code, recorder.Body.String())
+	}
+	var resp httpapi.LivenessResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode live: %v", err)
+	}
+	if resp.Status != "ok" {
+		t.Errorf("live status = %q", resp.Status)
+	}
+}
+
+func TestReadyEndpoint(t *testing.T) {
+	registry := manifest.NewRegistry()
+	ah, db := testAuth(t)
+	hh := testHealth(t, db)
+
+	recorder := httptest.NewRecorder()
+	newHandler(registry, &manifest.ParsedSchema{}, ah, hh).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/ready", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("ready status = %d: %s", recorder.Code, recorder.Body.String())
+	}
+	var resp httpapi.ReadinessResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode ready: %v", err)
+	}
+	if resp.Status != "ok" {
+		t.Errorf("ready status = %q", resp.Status)
+	}
+}
+
+func TestAuthEndpointsRegistered(t *testing.T) {
+	registry := manifest.NewRegistry()
+	ah, db := testAuth(t)
+	hh := testHealth(t, db)
+	handler := newHandler(registry, &manifest.ParsedSchema{}, ah, hh)
+
+	// POST /api/v1/auth/login should exist (even if it returns 403 for missing CSRF).
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{}`)))
+	if rec.Code == http.StatusNotFound {
+		t.Fatal("login endpoint not found")
+	}
+
+	// POST /api/v1/auth/logout should exist.
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil))
+	if rec.Code == http.StatusNotFound {
+		t.Fatal("logout endpoint not found")
+	}
+
+	// GET /api/v1/auth/session should exist.
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/auth/session", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("session endpoint status = %d", rec.Code)
 	}
 }
 
@@ -77,9 +357,20 @@ func TestZeroPluginServerSmoke(t *testing.T) {
 		t.Fatalf("build server: %v\n%s", err, output)
 	}
 
+	// Generate a valid SECRET for the smoke test.
+	secret := make([]byte, 32)
+	for i := range secret {
+		secret[i] = byte(i)
+	}
+	secretEnv := base64.StdEncoding.EncodeToString(secret)
+
 	command := exec.Command(binary)
 	command.Dir = repositoryRoot
-	command.Env = append(os.Environ(), "DOUBLANGU_LISTEN=127.0.0.1:0")
+	command.Env = append(os.Environ(),
+		"DOUBLANGU_LISTEN=127.0.0.1:0",
+		"DOUBLANGU_SECRET="+secretEnv,
+		"DOUBLANGU_DB_PATH="+filepath.Join(t.TempDir(), "server", "doublangu.db"),
+	)
 	var stderr bytes.Buffer
 	command.Stderr = &stderr
 	stdout, err := command.StdoutPipe()
@@ -120,6 +411,7 @@ func TestZeroPluginServerSmoke(t *testing.T) {
 		}
 	}
 
+	// Check /health endpoint.
 	endpoint := "http:" + "//" + address + "/health"
 	response, err := (&http.Client{Timeout: 5 * time.Second}).Get(endpoint)
 	if err != nil {
@@ -138,6 +430,31 @@ func TestZeroPluginServerSmoke(t *testing.T) {
 	if !report.CoreReady || !report.LoaderReady || !report.SchemaAvailable || report.RegistryState != "empty" || report.PluginCount != 0 || report.RegistrationCount != 0 || len(report.PluginIDs) != 0 {
 		t.Errorf("health report = %+v", report)
 	}
+
+	// Check /live endpoint.
+	liveResp, err := (&http.Client{Timeout: 5 * time.Second}).Get("http:" + "//" + address + "/live")
+	if err != nil {
+		_ = command.Process.Kill()
+		_, _ = command.Process.Wait()
+		t.Fatalf("request live: %v", err)
+	}
+	liveResp.Body.Close()
+	if liveResp.StatusCode != http.StatusOK {
+		t.Errorf("live status = %d", liveResp.StatusCode)
+	}
+
+	// Check /ready endpoint.
+	readyResp, err := (&http.Client{Timeout: 5 * time.Second}).Get("http:" + "//" + address + "/ready")
+	if err != nil {
+		_ = command.Process.Kill()
+		_, _ = command.Process.Wait()
+		t.Fatalf("request ready: %v", err)
+	}
+	readyResp.Body.Close()
+	if readyResp.StatusCode != http.StatusOK {
+		t.Errorf("ready status = %d", readyResp.StatusCode)
+	}
+
 	if err := command.Process.Signal(os.Interrupt); err != nil {
 		t.Fatalf("interrupt server: %v", err)
 	}
@@ -154,6 +471,9 @@ func TestZeroPluginServerSmoke(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(startup, "\n"), "feature plugins: 0") {
 		t.Errorf("startup banner = %q", startup)
+	}
+	if !strings.Contains(strings.Join(startup, "\n"), "database: ok") {
+		t.Errorf("startup banner missing database line: %q", startup)
 	}
 	if stderr.Len() != 0 {
 		t.Errorf("server stderr = %q", stderr.String())

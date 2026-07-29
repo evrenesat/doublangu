@@ -18,7 +18,9 @@ export default defineConfig({
 				return id === '$app/navigation' ? '\u0000test-sveltekit-navigation' : undefined;
 			},
 			load(id) {
-				return id === '\u0000test-sveltekit-navigation' ? 'export async function goto() {}' : undefined;
+				return id === '\u0000test-sveltekit-navigation'
+					? 'export async function goto(path) { globalThis.__doublanguLastNavigation = path; }'
+					: undefined;
 			}
 		},
 		svelte({

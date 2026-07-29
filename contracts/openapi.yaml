@@ -1,0 +1,312 @@
+openapi: "3.0.3"
+info:
+  title: Doublangu API
+  version: "v1"
+  description: |
+    Single-owner language-learning media system. JSON API endpoints return
+    structured error envelopes for non-2xx responses; plugin asset file
+    responses retain their content-serving contract.
+servers:
+  - url: http://localhost:8080
+    description: Local development server.
+
+paths:
+  /live:
+    get:
+      summary: Liveness check
+      description: Returns 200 OK as long as the server can respond.
+      responses:
+        "200":
+          description: Server is alive.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LivenessResponse"
+        "405":
+          description: Method not allowed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIError"
+
+  /ready:
+    get:
+      summary: Readiness check
+      description: |
+        Checks database connectivity. Returns 200 OK when healthy,
+        503 Service Unavailable when degraded.
+      responses:
+        "200":
+          description: All checks pass.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
+        "503":
+          description: One or more checks failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIError"
+        "405":
+          description: Method not allowed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIError"
+
+  /health:
+    get:
+      summary: Plugin diagnostics
+      description: Returns core and loader readiness plus plugin counts.
+      responses:
+        "200":
+          description: Diagnostics report.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DiagnosticsReport"
+        "405":
+          description: Method not allowed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIError"
+
+  /api/v1/auth/login:
+    post:
+      summary: Authenticate as the single owner
+      description: |
+        Requires a CSRF token (X-CSRF-Token header + csrf_token cookie).
+        Rate-limited to 5 attempts per minute per IP.
+        Sets doublangu_session cookie on success.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password:
+                  type: string
+                  description: Owner password.
+      responses:
+        "200":
+          description: Login successful.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        "401":
+          description: Invalid password.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIError"
+        "400":
+          description: Invalid JSON request body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIError"
+        "403":
+          description: Missing or invalid CSRF token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIError"
+        "429":
+          description: Rate limited.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIError"
+        "405":
+          description: Method not allowed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIError"
+        "500":
+          description: Session or CSRF refresh failure.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIError"
+
+  /api/v1/auth/csrf:
+    get:
+      summary: Bootstrap browser CSRF protection
+      description: |
+        Issues the same-origin csrf_token cookie required by login and logout.
+        The token is read by the browser and echoed in X-CSRF-Token.
+      responses:
+        "200":
+          description: CSRF cookie issued.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OKResponse"
+        "405":
+          description: Method not allowed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIError"
+        "500":
+          description: CSRF bootstrap failure.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIError"
+  /api/v1/auth/logout:
+    post:
+      summary: End the current session
+      description: |
+        Requires the same CSRF cookie/header pair as login. Deletes the session
+        from the database and clears the cookie after CSRF validation.
+      responses:
+        "200":
+          description: Logout complete.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OKResponse"
+        "403":
+          description: Missing or invalid CSRF token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIError"
+        "405":
+          description: Method not allowed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIError"
+        "500":
+          description: Session deletion failure.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIError"
+
+  /api/v1/auth/session:
+    get:
+      summary: Check session validity
+      description: Returns whether the current doublangu_session cookie is valid.
+      responses:
+        "200":
+          description: Session status.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  authenticated:
+                    type: boolean
+        "405":
+          description: Method not allowed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIError"
+
+  /api/v1/ui/contributions:
+    get:
+      summary: Read enabled UI plugin contributions
+      description: Requires an authenticated owner session.
+      responses:
+        "200":
+          description: Versioned plugin contribution snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+        "401":
+          description: Owner session required.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIError"
+        "405":
+          description: Method not allowed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIError"
+        "500":
+          description: Contribution registry failure.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIError"
+
+components:
+  schemas:
+    APIError:
+      type: object
+      required: [error, code]
+      properties:
+        error:
+          type: string
+          description: Human-readable error message.
+        code:
+          type: string
+          description: Versioned machine-readable error code (for example v1.csrf_error).
+
+    OKResponse:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+
+    LivenessResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+
+    ReadinessResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        checks:
+          type: object
+          additionalProperties:
+            type: string
+        database:
+          type: string
+
+    DiagnosticsReport:
+      type: object
+      properties:
+        core_ready:
+          type: boolean
+        loader_ready:
+          type: boolean
+        schema_available:
+          type: boolean
+        registry_state:
+          type: string
+        plugin_count:
+          type: integer
+        registration_count:
+          type: integer
+        plugin_ids:
+          type: array
+          items:
+            type: string
+
+    LoginResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean

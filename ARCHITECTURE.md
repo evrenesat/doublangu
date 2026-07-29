@@ -199,13 +199,37 @@ errors, and frozen theme-token snapshots.
 
 ### Plugin Assets Serving
 
-`pluginassets.New` requires an authorization callback. The current zero-plugin
-server assembles an explicit temporary allow policy; CP8 replaces that policy
-with owner sessions. The handler accepts only GET/HEAD regular files beneath a
+`pluginassets.New` requires an authorization callback. The server assembles the
+owner-session policy, so UI contribution metadata and plugin assets are private.
+The handler accepts only GET/HEAD regular files beneath a
 canonical symlink-resolved root and mounted prefix. It deterministically returns
 401/403/404/405 for authorization, escape, missing, and method controls. Only
 `v1/<sha256>/<file>` URLs whose bytes match the digest receive immutable caching;
 unversioned files are served with `no-store`.
+
+## Owner Authentication And SQLite Foundation (Checkpoint 8)
+
+`internal/config` accepts a required 32-byte-minimum decoded server secret,
+validated listen/public URL values, database/media/data paths, and a bounded
+session lifetime. Local loopback HTTP keeps secure cookies off by default; an
+HTTPS public URL cannot override them off. Startup creates the configured
+database parent rather than an unrelated data directory.
+
+The browser obtains a signed, non-HttpOnly, strict-SameSite CSRF cookie from
+`GET /api/v1/auth/csrf`. Login and logout require its matching
+`X-CSRF-Token` header. Login uses the immediate remote peer for throttling,
+never untrusted forwarding headers; it atomically replaces a valid presented
+session and refreshes the CSRF cookie. A password reset updates the owner hash
+and deletes all sessions in one transaction. Owner bootstrap/reset action flags
+accept no values: passwords are hidden on a TTY or read from explicit stdin.
+
+SQLite opens with WAL, foreign keys, and a 5-second busy timeout before applying
+numbered transactional migrations. The migration runner exposes only a test
+source seam, which proves older populated schemas retain data and failed DDL or
+version records roll back together. CP8 JSON endpoints route all non-2xx
+responses through `httpapi.APIError`, containing human `error` and a versioned
+machine `code`; CP7 plugin asset responses intentionally retain their established
+non-JSON file/error contract.
 
 ### Sample Fixtures
 

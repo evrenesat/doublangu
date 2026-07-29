@@ -135,3 +135,29 @@ All verification commands pass:
 - `go test ./pkg/pluginapi/v1 ./internal/plugins -run 'Manifest|Schema' -count=1`
 - No `npx` or `https?://` in scoped files
 - `make verify`
+
+## 2026-07-29 — Checkpoint 8 Repair: Secure Owner And SQLite Foundation
+
+### Decisions
+
+- **Browser login contract**: a public same-origin CSRF bootstrap issues the
+  signed double-submit cookie before login; login/logout reject missing,
+  mismatched, or tampered token pairs without mutating logout state.
+- **Session and owner boundaries**: login atomically replaces a presented valid
+  session; forced owner reset updates the password hash and revokes all sessions
+  in one transaction. Owner action flags have no password values and use hidden
+  TTY input or explicit stdin automation.
+- **Trusted network/config boundary**: login throttling keys on `RemoteAddr`,
+  not arbitrary forwarding headers. HTTPS public URLs cannot disable secure
+  cookies, and startup creates the configured database parent.
+- **SQLite and API evidence**: file databases enable WAL, foreign keys, and a
+  5-second busy timeout. Injected migration sources prove upgrade preservation
+  and transactional failure rollback. CP8 JSON failures share the versioned
+  `error`/`code` envelope; CP7 plugin asset file responses remain non-JSON.
+
+### Verification
+
+The repair matrix covers assembled clean-cookie login, logout negative controls,
+session rotation/reset rollback, forwarded-header spoofing, migration
+upgrade/rollback/PRAGMA evidence, frontend type/behavior tests, module tidiness,
+race checks, and the repository Make targets.

@@ -8,6 +8,32 @@ Audiobookshelf and its Capacitor app are design references for library scanning,
 
 The native backend plugin mechanism intentionally uses Go's `plugin` package. Because native Go plugins require an exact toolchain, build configuration, and common dependency graph match, the server/agent and every native plugin in a release must be built together. Plugins are trusted and unsandboxed. Compatibility contracts provide modularity and deterministic behavior, not a security boundary.
 
+## Local owner foundation
+
+The Go core requires `DOUBLANGU_SECRET`: a base64-encoded random value that
+decodes to at least 32 bytes. `DOUBLANGU_DB_PATH` defaults to
+`data/doublangu.db`; its parent is created at startup, so a custom path does
+not depend on `DOUBLANGU_DATA_PATH`. `DOUBLANGU_PUBLIC_URL` defaults to
+loopback HTTP for development. HTTPS public URLs always require secure session
+cookies; `DOUBLANGU_SESSION_SECURE=false` is rejected in that configuration.
+
+Create the only owner without placing a password in shell history or process
+arguments; the command hides terminal input and accepts stdin deliberately for
+automation. `--create-owner` and `--reset-owner` are mutually exclusive. A
+reset replaces the password and revokes every existing session.
+
+```sh
+go run ./cmd/doublangu-server --create-owner
+printf '%s\n' "$DOUBLANGU_OWNER_PASSWORD" | go run ./cmd/doublangu-server --reset-owner
+```
+
+The login page first requests `GET /api/v1/auth/csrf`, reads its same-origin
+`csrf_token` cookie, and sends it back in `X-CSRF-Token` for login and logout.
+Successful login sets an HttpOnly `doublangu_session` cookie, rotates any valid
+presented session, and refreshes CSRF. Owner-only UI contribution metadata and
+plugin assets require that session. JSON API failures use the `error` plus
+versioned `code` envelope documented in `contracts/openapi.yaml`.
+
 ```mermaid
 flowchart LR
     Browser["Svelte PWA / Android shell"] -->|HTTPS + events| Server["Linux Go core"]
