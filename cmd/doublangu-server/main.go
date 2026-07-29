@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"doublangu/internal/httpapi/pluginassets"
 	manifest "doublangu/internal/plugins"
 )
 
@@ -42,7 +43,35 @@ func newHandler(registry *manifest.Registry, schema *manifest.ParsedSchema) http
 		writer.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(writer).Encode(manifest.CollectDiagnostics(registry, schema))
 	})
+	mux.HandleFunc("GET /api/v1/ui/contributions", func(writer http.ResponseWriter, request *http.Request) {
+		snapshot, err := registry.UIContributions()
+		if err != nil {
+			http.Error(writer, "invalid UI contribution registry", http.StatusInternalServerError)
+			return
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(writer).Encode(snapshot)
+	})
+	assets, err := pluginassets.New(pluginAssetsRoot(), pluginassets.DefaultPrefix, func(*http.Request) bool {
+		// CP8 replaces this explicit zero-plugin policy with the owner session
+		// policy. The handler itself never treats a missing callback as allow.
+		return true
+	})
+	if err != nil {
+		mux.HandleFunc(pluginassets.DefaultPrefix, func(writer http.ResponseWriter, request *http.Request) {
+			http.Error(writer, "plugin assets unavailable", http.StatusInternalServerError)
+		})
+	} else {
+		mux.Handle(pluginassets.DefaultPrefix, assets)
+	}
 	return mux
+}
+
+func pluginAssetsRoot() string {
+	if root := os.Getenv("DOUBLANGU_PLUGIN_ASSETS"); root != "" {
+		return root
+	}
+	return "web/static/plugin-assets"
 }
 
 func serve(address string, registry *manifest.Registry, schema *manifest.ParsedSchema, output *os.File) error {

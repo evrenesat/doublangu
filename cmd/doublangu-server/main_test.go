@@ -14,6 +14,7 @@ import (
 	"time"
 
 	manifest "doublangu/internal/plugins"
+	v1 "doublangu/pkg/pluginapi/v1"
 )
 
 func TestServerHandlerAssemblyDoesNotUseGlobalMux(t *testing.T) {
@@ -38,6 +39,32 @@ func TestServerHandlerAssemblyDoesNotUseGlobalMux(t *testing.T) {
 	second.ServeHTTP(unknown, httptest.NewRequest(http.MethodGet, "/not-registered", nil))
 	if unknown.Code != http.StatusNotFound {
 		t.Errorf("separate mux status = %d, want 404", unknown.Code)
+	}
+}
+
+func TestUIContributionsEndpointReturnsVersionedSnakeCasePayload(t *testing.T) {
+	registry := manifest.NewRegistry()
+	transaction := registry.Begin("plugin.sample")
+	if err := transaction.AddUI(v1.UIRegistration{
+		ID: "sample", Label: "Sample", Type: v1.UITypePanel, Priority: 10,
+		SourceURL: "/api/v1/plugins/assets/v1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/module.js",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := transaction.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	recorder := httptest.NewRecorder()
+	newHandler(registry, &manifest.ParsedSchema{}).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/ui/contributions", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d", recorder.Code)
+	}
+	if got := recorder.Header().Get("Content-Type"); got != "application/json" {
+		t.Fatalf("Content-Type = %q", got)
+	}
+	if body := recorder.Body.String(); !strings.Contains(body, `"version":"v1"`) || !strings.Contains(body, `"source_url"`) || !strings.Contains(body, `"plugin_id":"plugin.sample"`) || strings.Contains(body, `"sourceUrl"`) {
+		t.Fatalf("payload = %s", body)
 	}
 }
 

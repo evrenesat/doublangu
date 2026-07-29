@@ -62,6 +62,42 @@ All verification commands pass:
 - No stale artifacts in `bin/plugins/`
 - `make verify`
 
+## 2026-07-29 — Checkpoint 7: Trusted Svelte UI Plugin Host
+
+### Decisions
+
+- **Single contract and validated adapter**: Runtime code imports
+  `contracts/ui-plugin-v1.ts` through `$contracts`. The Go snapshot endpoint
+  emits exact `v1` snake_case JSON; the browser rejects malformed, duplicate,
+  unauthorized, or invalid-priority descriptors before import.
+- **Concurrent bounded module lifecycle**: A default export must have the
+  descriptor owner ID plus `mount` and `destroy`. The host publishes one shared
+  in-flight record per `(plugin ID, source URL)`, so concurrent contributions
+  invoke one loader. Per-handle registration scopes are removed independently;
+  the module destroy hook runs once after the final pending or mounted owner is
+  released, and rejected loads cleanly permit retry.
+- **Failure isolation**: Svelte context is installed during provider creation,
+  each contribution uses Svelte 5's native boundary for render errors, and
+  asynchronous import/mount failures retain the shell and healthy siblings.
+- **Shared command/navigation state**: Plugin-scoped context methods reject
+  conflicts. The same command registry drives linear and radial controls and all
+  owner state is removed during unload despite dispose/destroy errors.
+- **Asset boundary**: The assembled Go route requires a non-nil authorization
+  callback, restricts GET/HEAD files to a canonical root/prefix, and grants
+  immutable caching only after a `v1/<sha256>` URL matches the served bytes.
+  The temporary server policy is explicitly allow-all until CP8 sessions exist.
+
+### Verification
+
+Repair-overlay verification is recorded in the active plan. It covers focused
+Go/race checks, frontend check/unit tests, four real-browser lifecycle tests,
+the repository verifier, artifact absence, and diff/budget checks.
+
+### Sample Fixtures
+
+Three content-addressed production-path fixtures under `web/static/plugin-assets/`:
+one healthy multi-surface module, one throwing module, and one malformed module.
+
 ## 2026-07-28 — Checkpoint 2: Plugin Manifest And Schema Contract
 
 ### Decisions

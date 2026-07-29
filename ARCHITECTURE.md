@@ -161,3 +161,56 @@ Source revision follows a four-tier fallback: explicit build-tool option →
 `git rev-parse HEAD` → `"unknown"`.
 Explicit revisions must be 7–64 ASCII hex characters; empty, whitespace,
 control-character, and leading-dash values are rejected.
+
+## Trusted Svelte UI Plugin Host (Checkpoint 7)
+
+### Contracts
+
+| Layer | File | Role |
+|---|---|---|
+| Backend registration | `pkg/pluginapi/v1/registration.go` | `UIRegistration` DTO with `SourceURL` |
+| Read-only HTTP view | `internal/plugins/ui_snapshot.go` | deterministic `v1` snake_case contribution payload |
+| Frontend contract | `contracts/ui-plugin-v1.ts` | sole TypeScript contract, imported as `$contracts` |
+| Runtime host | `web/src/lib/plugins/UIHostV1.ts` | descriptor validation, module lifecycle, registries |
+
+### Lifecycle
+
+1. `/api/v1/ui/contributions` emits exact versioned snake_case registrations,
+   which the host validates and adapts to camelCase before an import.
+2. A source URL must resolve to the current origin beneath
+   `/api/v1/plugins/assets/`; credentials, queries, fragments, traversal,
+   protocol-relative, `data:`, and foreign-origin forms are rejected.
+3. The imported namespace must default-export a module whose ID equals the
+   descriptor owner. The host publishes one in-flight record before loading, so
+   concurrent contributions for a `(plugin ID, source URL)` await one loader
+   promise; a conflicting URL or failed waiter cannot replace sibling state.
+4. Each contribution handle owns its exact command/navigation scope. Disposal
+   removes that scope even if the handle throws, while the shared module destroy
+   hook runs exactly once after the final pending or mounted contribution is
+   gone. A rejected shared load leaves no host state and a later mount may retry.
+   The Svelte provider installs context before rendering children;
+   `PluginContainer` uses Svelte 5's `<svelte:boundary>` for render failures and
+   explicit promise handling for import/mount failures.
+
+The shared `CommandRegistry` rejects duplicate IDs. Its data drives both the
+linear and radial command controls. Plugin contexts receive scoped registration
+methods, SvelteKit navigation, URL-escaped settings/event paths, non-2xx write
+errors, and frozen theme-token snapshots.
+
+### Plugin Assets Serving
+
+`pluginassets.New` requires an authorization callback. The current zero-plugin
+server assembles an explicit temporary allow policy; CP8 replaces that policy
+with owner sessions. The handler accepts only GET/HEAD regular files beneath a
+canonical symlink-resolved root and mounted prefix. It deterministically returns
+401/403/404/405 for authorization, escape, missing, and method controls. Only
+`v1/<sha256>/<file>` URLs whose bytes match the digest receive immutable caching;
+unversioned files are served with `no-store`.
+
+### Sample Fixtures
+
+Content-addressed browser fixtures live under `web/static/plugin-assets/`: one
+healthy module proves route, panel, settings, command, reader, and radial
+contributions; the other fixtures throw during mount or have a malformed default
+export. Browser tests exercise these assets through the production host and Go
+asset route.
