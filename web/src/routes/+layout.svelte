@@ -14,7 +14,10 @@
   <header>
     <nav>
       <a class="brand" href="/">Doublangu</a>
+      <a href="/library">Library</a>
+      <a href="/settings">Settings</a>
       <a href="/plugins">Plugins</a>
+	  <a href="/login">Sign in</a>
     </nav>
   </header>
 

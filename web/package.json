@@ -17,6 +17,7 @@
 		"test:unit:watch": "vitest",
 		"test:e2e": "playwright test",
 		"validate:openapi": "node scripts/validate-openapi.mjs",
+		"generate:api": "openapi-typescript ../contracts/openapi.yaml -o src/lib/api/generated.ts",
 		"format": "prettier --write 'src/**/*.{ts,svelte,css}' --plugin prettier-plugin-svelte"
 	},
 	"devDependencies": {
@@ -27,6 +28,7 @@
 		"@sveltejs/vite-plugin-svelte": "^7.1.2",
 		"@testing-library/svelte": "^5.4.2",
 		"jsdom": "^29.1.1",
+		"openapi-typescript": "7.6.1",
 		"prettier": "^3.6.2",
 		"prettier-plugin-svelte": "^3.5.1",
 		"svelte": "^5.56.1",
