@@ -70,6 +70,59 @@ func assertCP8Rows(t *testing.T, db *DB) {
 	}
 }
 
+func assertMigration003Schema(t *testing.T, db *DB) {
+	t.Helper()
+	ctx := context.Background()
+	expected := []string{
+		"blob", "blob_reference",
+		"idx_blob_reference_source_asset", "idx_blob_reference_digest",
+	}
+	for _, name := range expected {
+		var count int
+		if err := db.QueryRow(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE name = ?", name).Scan(&count); err != nil {
+			t.Fatalf("find schema object %s: %v", name, err)
+		}
+		if count != 1 {
+			t.Errorf("schema object %s count = %d, want 1", name, count)
+		}
+	}
+
+	type foreignKey struct {
+		table    string
+		from     string
+		to       string
+		onDelete string
+	}
+	want := map[string]foreignKey{
+		"source_asset_id": {table: "source_asset", from: "source_asset_id", to: "id", onDelete: "CASCADE"},
+		"blob_digest":     {table: "blob", from: "blob_digest", to: "digest", onDelete: "RESTRICT"},
+	}
+	rows, err := db.Query(ctx, `PRAGMA foreign_key_list(blob_reference)`)
+	if err != nil {
+		t.Fatalf("list blob_reference foreign keys: %v", err)
+	}
+	defer rows.Close()
+	found := make(map[string]foreignKey)
+	for rows.Next() {
+		var id, sequence int
+		var key foreignKey
+		var onUpdate, match string
+		if err := rows.Scan(&id, &sequence, &key.table, &key.from, &key.to, &onUpdate, &key.onDelete, &match); err != nil {
+			t.Fatalf("scan blob_reference foreign key: %v", err)
+		}
+		found[key.from] = key
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate blob_reference foreign keys: %v", err)
+	}
+	for from, expected := range want {
+		actual, ok := found[from]
+		if !ok || actual != expected {
+			t.Errorf("foreign key %s = %+v, want %+v", from, actual, expected)
+		}
+	}
+}
+
 func assertMigration002Schema(t *testing.T, db *DB) {
 	t.Helper()
 	ctx := context.Background()
@@ -145,7 +198,7 @@ func TestOpenInMemoryCreatesTables(t *testing.T) {
 	for _, t := range tables {
 		found[t] = true
 	}
-	expected := []string{"chapter", "device", "edition", "library", "outbox", "owner", "plugin_settings", "schema_version", "session", "source_asset", "work"}
+	expected := []string{"blob", "blob_reference", "chapter", "device", "edition", "library", "outbox", "owner", "plugin_settings", "schema_version", "session", "source_asset", "work"}
 	for _, name := range expected {
 		if !found[name] {
 			t.Errorf("missing table %q (found: %v)", name, tables)
@@ -165,8 +218,8 @@ func TestMigrationVersionRecorded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("version query: %v", err)
 	}
-	if version != 2 {
-		t.Errorf("expected version 2, got %d", version)
+	if version != 3 {
+		t.Errorf("expected version 3, got %d", version)
 	}
 }
 
@@ -190,8 +243,8 @@ func TestMigrationFreshInMemoryAlwaysApplies(t *testing.T) {
 		t.Fatalf("version count: %v", err)
 	}
 	// Each in-memory OpenTest starts fresh — all migrations run once per open.
-	if count != 2 {
-		t.Errorf("expected 2 migration records, got %d", count)
+	if count != 3 {
+		t.Errorf("expected 3 migration records, got %d", count)
 	}
 }
 
@@ -377,8 +430,8 @@ func TestFileBasedDBDoesNotReapplyMigrations(t *testing.T) {
 	if err := db2.QueryRow(context.Background(), "SELECT COUNT(*) FROM schema_version").Scan(&count); err != nil {
 		t.Fatalf("count: %v", err)
 	}
-	if count != 2 {
-		t.Errorf("expected 2 migration records, got %d (migrations should not reapply)", count)
+	if count != 3 {
+		t.Errorf("expected 3 migration records, got %d (migrations should not reapply)", count)
 	}
 }
 
@@ -389,7 +442,7 @@ func TestMigrationRollbackLeavesNoPartialSchemaDataOrVersion(t *testing.T) {
 	}
 	defer db.Close()
 	failing := fstest.MapFS{
-		"migrations/003_probe.sql": {Data: []byte(`
+		"migrations/004_probe.sql": {Data: []byte(`
 			CREATE TABLE migration_probe (value TEXT NOT NULL);
 			INSERT INTO migration_probe (value) VALUES ('partial');
 			THIS IS NOT SQL;
@@ -402,7 +455,7 @@ func TestMigrationRollbackLeavesNoPartialSchemaDataOrVersion(t *testing.T) {
 	if err := db.QueryRow(context.Background(), "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='migration_probe'").Scan(&tableCount); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.QueryRow(context.Background(), "SELECT COUNT(*) FROM schema_version WHERE version = 3").Scan(&versionCount); err != nil {
+	if err := db.QueryRow(context.Background(), "SELECT COUNT(*) FROM schema_version WHERE version = 4").Scan(&versionCount); err != nil {
 		t.Fatal(err)
 	}
 	if tableCount != 0 || versionCount != 0 {
@@ -410,7 +463,7 @@ func TestMigrationRollbackLeavesNoPartialSchemaDataOrVersion(t *testing.T) {
 	}
 
 	corrected := fstest.MapFS{
-		"migrations/003_probe.sql": {Data: []byte(`
+		"migrations/004_probe.sql": {Data: []byte(`
 			CREATE TABLE migration_probe (value TEXT NOT NULL);
 			INSERT INTO migration_probe (value) VALUES ('complete');
 		`)},
@@ -597,7 +650,8 @@ func TestMigration002_UpgradeFromV1ToV2(t *testing.T) {
 
 	assertCP8Rows(t, db)
 	assertMigration002Schema(t, db)
-	assertMigrationVersion(t, db, 2)
+	assertMigration003Schema(t, db)
+	assertMigrationVersion(t, db, 3)
 }
 
 func TestMetadataStoreCRUDOnCleanAndUpgradedDatabases(t *testing.T) {
@@ -775,7 +829,8 @@ func TestMigration002_RollbackLeavesNoLibraryTables(t *testing.T) {
 	}
 	assertCP8Rows(t, db)
 	assertMigration002Schema(t, db)
-	assertMigrationVersion(t, db, 2)
+	assertMigration003Schema(t, db)
+	assertMigrationVersion(t, db, 3)
 }
 
 func TestFileDatabaseUsesWALForeignKeysBusyTimeoutAndCurrentVersion(t *testing.T) {
@@ -799,7 +854,7 @@ func TestFileDatabaseUsesWALForeignKeysBusyTimeoutAndCurrentVersion(t *testing.T
 	if err := db.QueryRow(ctx, "SELECT MAX(version) FROM schema_version").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if journal != "wal" || foreignKeys != 1 || busyTimeout != 5000 || version != 2 {
+	if journal != "wal" || foreignKeys != 1 || busyTimeout != 5000 || version != 3 {
 		t.Fatalf("journal=%q foreign_keys=%d busy_timeout=%d version=%d", journal, foreignKeys, busyTimeout, version)
 	}
 }
