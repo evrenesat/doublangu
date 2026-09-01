@@ -1,5 +1,5 @@
 import type { components } from './generated';
-import { appPath } from '$lib/paths';
+import { appAudioPath, appPath } from '$lib/paths';
 
 export type Library = components['schemas']['Library'];
 export type LibraryCreate = components['schemas']['LibraryCreate'];
@@ -72,6 +72,41 @@ function isAPIError(value: unknown): value is APIError {
 		typeof (value as Record<string, unknown>).error === 'string' &&
 		typeof (value as Record<string, unknown>).code === 'string'
 	);
+}
+
+function appAudioRef(ref: AudioRef | null): AudioRef | null {
+	if (!ref) return null;
+	return { ...ref, url: appAudioPath(ref.url) };
+}
+
+function appArticleAudio(article: Article): Article {
+	const result = { ...article };
+	if (article.blocks) {
+		result.blocks = article.blocks.map((block) => {
+			const next = { ...block };
+			if (Array.isArray(block.sentences)) {
+				next.sentences = block.sentences.map((sentence) => ({ ...sentence, audio: appAudioRef(sentence.audio) }));
+			}
+			if (Array.isArray(block.occurrences)) {
+				next.occurrences = block.occurrences.map((occurrence) => ({ ...occurrence, pronunciation: appAudioRef(occurrence.pronunciation) }));
+			}
+			return next;
+		});
+	}
+	if (Array.isArray(article.sentences)) {
+		result.sentences = article.sentences.map((sentence) => ({ ...sentence, audio: appAudioRef(sentence.audio) }));
+	}
+	if (Array.isArray(article.occurrences)) {
+		result.occurrences = article.occurrences.map((occurrence) => ({ ...occurrence, pronunciation: appAudioRef(occurrence.pronunciation) }));
+	}
+	return result;
+}
+
+function appNarrationAudio(narration: Narration): Narration {
+	return {
+		...narration,
+		clips: narration.clips.map((clip) => ({ ...clip, audio: appAudioRef(clip.audio) }))
+	};
 }
 
 async function throwResponseError(response: Response, context = 'Request'): Promise<never> {
@@ -202,27 +237,27 @@ export async function listArticles(): Promise<ArticleSummary[]> {
 }
 
 export async function createArticle(data: ArticleCreate): Promise<Article> {
-	return apiFetch('/api/v1/articles', { method: 'POST', body: JSON.stringify(data), csrf: true });
+	return appArticleAudio(await apiFetch<Article>('/api/v1/articles', { method: 'POST', body: JSON.stringify(data), csrf: true }));
 }
 
 export async function getArticle(articleId: string): Promise<Article> {
-	return apiFetch(`/api/v1/articles/${id(articleId)}`);
+	return appArticleAudio(await apiFetch<Article>(`/api/v1/articles/${id(articleId)}`));
 }
 
 export async function enrichArticle(articleId: string): Promise<Article> {
-	return apiFetch(`/api/v1/articles/${id(articleId)}/enrich`, { method: 'POST', csrf: true });
+	return appArticleAudio(await apiFetch<Article>(`/api/v1/articles/${id(articleId)}/enrich`, { method: 'POST', csrf: true }));
 }
 
 export async function reanalyzeArticle(articleId: string): Promise<Article> {
-	return apiFetch(`/api/v1/articles/${id(articleId)}/reanalyze`, { method: 'POST', csrf: true });
+	return appArticleAudio(await apiFetch<Article>(`/api/v1/articles/${id(articleId)}/reanalyze`, { method: 'POST', csrf: true }));
 }
 
 export async function getNarration(articleId: string): Promise<Narration> {
-	return apiFetch(`/api/v1/articles/${id(articleId)}/narration`);
+	return appNarrationAudio(await apiFetch<Narration>(`/api/v1/articles/${id(articleId)}/narration`));
 }
 
 export async function generateNarration(articleId: string): Promise<Article> {
-	return apiFetch(`/api/v1/articles/${id(articleId)}/narration`, { method: 'POST', csrf: true });
+	return appArticleAudio(await apiFetch<Article>(`/api/v1/articles/${id(articleId)}/narration`, { method: 'POST', csrf: true }));
 }
 
 export async function clearNarration(articleId: string): Promise<NarrationClearResult> {

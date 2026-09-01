@@ -529,6 +529,53 @@ func (e *NondeterministicResultError) Error() string {
 	return fmt.Sprintf("audio render %s has a different accepted digest", e.RenderID.String())
 }
 
+// ReconcileTerminalJobTx marks a speech render failed when its final leased
+// attempt expires. The callback is invoked by jobs.RecoverExpired inside that
+// transaction, keeping the job, render, and every bound article consistent.
+func (s *Store) ReconcileTerminalJobTx(ctx context.Context, tx *sql.Tx, job jobs.Job) error {
+	if s == nil || tx == nil {
+		return errors.New("speech: nil recovery transaction")
+	}
+	if job.State != jobs.StateFailed || job.OwnerType != "audio_render" || (job.JobType != jobs.AVSpeechJobType && job.JobType != jobs.ChatterboxJobType) {
+		return nil
+	}
+
+	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT article_id FROM article_sentence_audio WHERE audio_render_id = ?`, job.OwnerID)
+	if err != nil {
+		return err
+	}
+	var articleIDs []string
+	for rows.Next() {
+		var articleID string
+		if err := rows.Scan(&articleID); err != nil {
+			rows.Close()
+			return err
+		}
+		articleIDs = append(articleIDs, articleID)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+
+	errorCode := job.ErrorCode
+	if !validSpeechErrorCode(errorCode) {
+		errorCode = jobs.LeaseExpiredErrorCode
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE audio_render SET state = 'failed', error_code = ?, updated_at = ? WHERE id = ? AND state IN ('queued', 'generating')`, errorCode, store.NowUTC(), job.OwnerID); err != nil {
+		return err
+	}
+	for _, articleID := range articleIDs {
+		if err := recomputeNarrationStatusTx(ctx, tx, articleID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Store) RecomputeNarrationStatus(ctx context.Context, articleID library.ULID) error {
 	if s == nil || s.db == nil {
 		return errors.New("speech: nil database")
@@ -550,6 +597,7 @@ func recomputeNarrationStatusTx(ctx context.Context, tx *sql.Tx, articleID strin
 		return err
 	}
 	status := string(NarrationNotRequested)
+	errorCode := ""
 	if total > 0 {
 		switch {
 		case ready == total:
@@ -561,8 +609,20 @@ func recomputeNarrationStatusTx(ctx context.Context, tx *sql.Tx, articleID strin
 		default:
 			status = NarrationQueued
 		}
+		if failed > 0 {
+			if err := tx.QueryRowContext(ctx, `
+				SELECT COALESCE((
+					SELECT r.error_code
+					FROM article_sentence_audio a JOIN audio_render r ON r.id = a.audio_render_id
+					WHERE a.article_id = ? AND r.state = 'failed' AND r.error_code <> ''
+					ORDER BY r.updated_at DESC, r.id DESC LIMIT 1
+				), '')
+			`, articleID).Scan(&errorCode); err != nil {
+				return err
+			}
+		}
 	}
-	_, err := tx.ExecContext(ctx, `UPDATE article SET narration_status = ?, updated_at = ? WHERE id = ?`, status, store.NowUTC(), articleID)
+	_, err := tx.ExecContext(ctx, `UPDATE article SET narration_status = ?, narration_error_code = ?, updated_at = ? WHERE id = ?`, status, errorCode, store.NowUTC(), articleID)
 	return err
 }
 

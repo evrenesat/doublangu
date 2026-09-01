@@ -29,6 +29,7 @@ import (
 	"doublangu/internal/media"
 	manifest "doublangu/internal/plugins"
 	"doublangu/internal/reader"
+	"doublangu/internal/speech"
 	"doublangu/internal/store"
 	"doublangu/internal/workers"
 	"golang.org/x/term"
@@ -106,7 +107,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		SessionMaxAge: cfg.Session.MaxAge,
 		Secure:        cfg.Session.Secure,
 	}
-	if _, err := jobs.NewStore(db).RecoverExpired(context.Background()); err != nil {
+	speechStore := speech.NewStore(db)
+	if _, err := jobs.NewStore(db, speechStore.ReconcileTerminalJobTx).RecoverExpired(context.Background()); err != nil {
 		fmt.Fprintf(stderr, "job recovery: %v\n", err)
 		return 1
 	}

@@ -1,5 +1,38 @@
 # Development Log
 
+## 2026-09-01 — Audio base-path and terminal speech recovery fixes
+
+- Added base-aware audio URL normalization at the SvelteKit web boundary. Article
+  and narration API responses now give browser audio controls `/beta/api/...`
+  URLs when the app is built under `/beta`, preserve absolute URLs, and avoid
+  double-prefixing an already-prefixed path. Legacy article responses without
+  v2 arrays remain compatible.
+- Added a transactional terminal-job recovery hook. When the third leased speech
+  attempt expires, recovery marks queued/generating renders failed and recomputes
+  every bound article's narration status and error code in the same SQLite
+  transaction. Startup, server analysis, and speech-worker recovery all use it.
+- Added `/beta` path coverage and a three-expiry generating-render regression.
+
+### Verification
+
+All Go commands below used `/tmp/doublangu-go1.26.5/bin` on `PATH`; web commands
+used `/tmp/doublangu-node-v24.20.0/bin` on `PATH`.
+
+- `test -z "$(gofmt -l internal cmd/doublangu-server)"` — passed.
+- `go mod tidy -diff` — passed.
+- `go test ./... -count=1 -buildvcs=false` — passed.
+- `go test ./internal/reader ./internal/semantics ./internal/jobs ./internal/speech ./internal/workers ./internal/media ./internal/httpapi ./internal/store ./cmd/doublangu-server -count=1 -buildvcs=false` — passed.
+- `go test -race ./internal/reader ./internal/semantics ./internal/jobs ./internal/speech ./internal/workers ./internal/media ./internal/httpapi -count=1 -buildvcs=false` — passed.
+- `npm --prefix web run validate:openapi` — passed.
+- `npm --prefix web run generate:api` twice — passed; generated output remained unchanged at SHA-256 `74db595e4e1562560b18509ec6144b14e045702b7ffe5f69a546f7c648cd1b58`.
+- Standalone Ajv compilation of both JSON Schema contracts — passed.
+- `npm --prefix web run check` — 0 errors and 0 warnings.
+- `npm --prefix web run test:unit -- --run` — 66 tests passed.
+- `npm --prefix web run test:e2e -- reader.spec.ts` — 8 tests passed.
+- `make verify` — passed with the temporary Git `safe.directory` environment override required by this checkout's ownership guard.
+- `DOUBLANGU_TEST_CODEX_LIVE=1 go test ./internal/annotator -run Live -count=1 -v` — passed.
+- `git diff --check` — passed.
+
 ## 2026-08-31 — Audible article reader backend and web handoff
 
 - Implemented migration 005 for durable reader analysis/audio jobs, semantic

@@ -28,6 +28,8 @@ const (
 	TargetServer = "server"
 	TargetMacOS  = "macos"
 
+	LeaseExpiredErrorCode = "v1.job_lease_expired"
+
 	StateQueued    = "queued"
 	StateLeased    = "leased"
 	StateRunning   = "running"
@@ -113,9 +115,23 @@ type HeartbeatResult struct {
 	Job             Job
 }
 
-type Store struct{ db *store.DB }
+// TerminalJobRecovery synchronizes domain-owned state after the scheduler
+// terminally fails an expired job. It runs inside the same transaction as the
+// job update, so a recovered job cannot commit without its dependent state.
+type TerminalJobRecovery func(context.Context, *sql.Tx, Job) error
 
-func NewStore(db *store.DB) *Store { return &Store{db: db} }
+type Store struct {
+	db               *store.DB
+	terminalRecovery TerminalJobRecovery
+}
+
+func NewStore(db *store.DB, terminalRecovery ...TerminalJobRecovery) *Store {
+	var recovery TerminalJobRecovery
+	if len(terminalRecovery) > 0 {
+		recovery = terminalRecovery[0]
+	}
+	return &Store{db: db, terminalRecovery: recovery}
+}
 
 func (s *Store) Enqueue(ctx context.Context, spec Spec) (*Job, error) {
 	if s == nil || s.db == nil {
@@ -536,19 +552,20 @@ func (s *Store) RecoverExpired(ctx context.Context) (int64, error) {
 	var affected int64
 	err := s.db.WithTransaction(ctx, func(tx *sql.Tx) error {
 		now := store.NowUTC()
-		rows, err := tx.QueryContext(ctx, `SELECT id, attempt_count, max_attempts FROM job WHERE state IN ('leased', 'running') AND lease_expires_at <> '' AND lease_expires_at <= ?`, now)
+		rows, err := tx.QueryContext(ctx, `SELECT id, job_type, owner_type, owner_id, attempt_count, max_attempts FROM job WHERE state IN ('leased', 'running') AND lease_expires_at <> '' AND lease_expires_at <= ?`, now)
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
 		type expiredJob struct {
-			id           string
-			attempt, max int
+			id                          string
+			jobType, ownerType, ownerID string
+			attempt, max                int
 		}
 		var expired []expiredJob
 		for rows.Next() {
 			var item expiredJob
-			if err := rows.Scan(&item.id, &item.attempt, &item.max); err != nil {
+			if err := rows.Scan(&item.id, &item.jobType, &item.ownerType, &item.ownerID, &item.attempt, &item.max); err != nil {
 				return err
 			}
 			expired = append(expired, item)
@@ -566,12 +583,20 @@ func (s *Store) RecoverExpired(ctx context.Context) (int64, error) {
 				state = StateQueued
 				available = time.Now().UTC().Add(backoffForAttempt(item.attempt)).Format("2006-01-02T15:04:05.000Z")
 			}
-			result, err := tx.ExecContext(ctx, `UPDATE job SET state = ?, available_at = ?, error_code = 'v1.job_lease_expired', lease_owner = '', lease_token_hash = '', lease_expires_at = '', updated_at = ?, completed_at = CASE WHEN ? = 'failed' THEN ? ELSE completed_at END WHERE id = ? AND state IN ('leased', 'running') AND lease_expires_at <= ?`, state, available, now, state, now, item.id, now)
+			result, err := tx.ExecContext(ctx, `UPDATE job SET state = ?, available_at = ?, error_code = ?, lease_owner = '', lease_token_hash = '', lease_expires_at = '', updated_at = ?, completed_at = CASE WHEN ? = 'failed' THEN ? ELSE completed_at END WHERE id = ? AND state IN ('leased', 'running') AND lease_expires_at <= ?`, state, available, LeaseExpiredErrorCode, now, state, now, item.id, now)
 			if err != nil {
 				return err
 			}
 			count, _ := result.RowsAffected()
 			affected += count
+			if count == 1 && state == StateFailed && s.terminalRecovery != nil {
+				if err := s.terminalRecovery(ctx, tx, Job{
+					ID: library.ULID(item.id), JobType: item.jobType, OwnerType: item.ownerType, OwnerID: item.ownerID,
+					State: state, AttemptCount: item.attempt, MaxAttempts: item.max, ErrorCode: LeaseExpiredErrorCode,
+				}); err != nil {
+					return err
+				}
+			}
 		}
 		return reconcileDependencyFailuresTx(ctx, tx, now)
 	})

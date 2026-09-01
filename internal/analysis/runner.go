@@ -16,6 +16,7 @@ import (
 	"doublangu/internal/media"
 	"doublangu/internal/reader"
 	"doublangu/internal/semantics"
+	"doublangu/internal/speech"
 	"doublangu/internal/store"
 )
 
@@ -33,7 +34,8 @@ func NewRunner(db *store.DB, provider annotator.SemanticAnnotator) *Runner {
 // NewRunnerWithMedia enables post-commit cleanup of superseded article audio
 // while retaining the durable analysis runner's database-only test seam.
 func NewRunnerWithMedia(db *store.DB, provider annotator.SemanticAnnotator, mediaStore *media.Store) *Runner {
-	return &Runner{jobs: jobs.NewStore(db), reader: reader.NewStoreWithMedia(db, mediaStore), provider: provider, owner: "server-analysis"}
+	speechStore := speech.NewStore(db)
+	return &Runner{jobs: jobs.NewStore(db, speechStore.ReconcileTerminalJobTx), reader: reader.NewStoreWithMedia(db, mediaStore), provider: provider, owner: "server-analysis"}
 }
 
 // Run polls SQLite until ctx is canceled. A short idle wait keeps local tests

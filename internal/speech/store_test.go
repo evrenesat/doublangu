@@ -101,6 +101,98 @@ func TestQueueAudioDeduplicatesUnitsAndPrioritizesFirstSentence(t *testing.T) {
 	}
 }
 
+func TestTerminalSpeechLeaseExpiryFailsRenderAndNarrationAfterThreeAttempts(t *testing.T) {
+	db, err := store.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	articleID := "01J00000000000000000000150"
+	seedSpeechArticle(t, db, articleID, "01J00000000000000000000151", "01J00000000000000000000152", "01J00000000000000000000153", "01J00000000000000000000154", "zin")
+
+	speechStore := NewStore(db)
+	if err := speechStore.QueueArticleAudio(ctx, library.ULID(articleID), false); err != nil {
+		t.Fatal(err)
+	}
+	var jobID, renderID string
+	if err := db.QueryRow(ctx, `
+		SELECT j.id, r.id
+		FROM job j JOIN audio_render r ON r.id = j.owner_id
+		JOIN article_sentence_audio a ON a.audio_render_id = r.id
+		WHERE j.job_type = ? AND j.owner_type = 'audio_render' AND a.article_id = ?
+	`, jobs.ChatterboxJobType, articleID).Scan(&jobID, &renderID); err != nil {
+		t.Fatal(err)
+	}
+	var status, errorCode string
+	if err := db.QueryRow(ctx, `SELECT narration_status, narration_error_code FROM article WHERE id = ?`, articleID).Scan(&status, &errorCode); err != nil {
+		t.Fatal(err)
+	}
+	if status != NarrationQueued || errorCode != "" {
+		t.Fatalf("initial narration state = %q/%q", status, errorCode)
+	}
+
+	jobStore := jobs.NewStore(db, speechStore.ReconcileTerminalJobTx)
+	for expectedAttempt := 1; expectedAttempt <= 3; expectedAttempt++ {
+		lease, err := jobStore.ClaimMatching(ctx, jobs.TargetMacOS, "expiry-worker", func(candidate jobs.Job) bool {
+			return candidate.ID.String() == jobID
+		})
+		if err != nil {
+			t.Fatalf("claim attempt %d: %v", expectedAttempt, err)
+		}
+		if lease.AttemptCount != expectedAttempt {
+			t.Fatalf("attempt count = %d, want %d", lease.AttemptCount, expectedAttempt)
+		}
+		if err := speechStore.SetRenderGenerating(ctx, library.ULID(renderID)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(ctx, `UPDATE job SET lease_expires_at = '2000-01-01T00:00:00.000Z' WHERE id = ?`, jobID); err != nil {
+			t.Fatal(err)
+		}
+		affected, err := jobStore.RecoverExpired(ctx)
+		if err != nil {
+			t.Fatalf("recover attempt %d: %v", expectedAttempt, err)
+		}
+		if affected != 1 {
+			t.Fatalf("recovered jobs on attempt %d = %d, want 1", expectedAttempt, affected)
+		}
+		job, err := jobStore.Get(ctx, library.ULID(jobID))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if expectedAttempt < 3 {
+			if job.State != jobs.StateQueued || job.ErrorCode != jobs.LeaseExpiredErrorCode {
+				t.Fatalf("retry job after attempt %d = %+v", expectedAttempt, job)
+			}
+			if _, err := db.Exec(ctx, `UPDATE job SET available_at = ? WHERE id = ?`, store.NowUTC(), jobID); err != nil {
+				t.Fatal(err)
+			}
+		} else if job.State != jobs.StateFailed || job.ErrorCode != jobs.LeaseExpiredErrorCode {
+			t.Fatalf("terminal job = %+v", job)
+		}
+	}
+
+	if err := db.QueryRow(ctx, `SELECT state, error_code FROM audio_render WHERE id = ?`, renderID).Scan(&status, &errorCode); err != nil {
+		t.Fatal(err)
+	}
+	if status != RenderFailed || errorCode != jobs.LeaseExpiredErrorCode {
+		t.Fatalf("terminal render state = %q/%q", status, errorCode)
+	}
+	if err := db.QueryRow(ctx, `SELECT narration_status, narration_error_code FROM article WHERE id = ?`, articleID).Scan(&status, &errorCode); err != nil {
+		t.Fatal(err)
+	}
+	if status != NarrationFailed || errorCode != jobs.LeaseExpiredErrorCode {
+		t.Fatalf("terminal article state = %q/%q", status, errorCode)
+	}
+	narration, err := speechStore.GetNarration(ctx, library.ULID(articleID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if narration.Status != NarrationFailed || narration.ErrorCode != jobs.LeaseExpiredErrorCode || narration.ReadyCount != 0 {
+		t.Fatalf("terminal narration = %+v", narration)
+	}
+}
+
 func TestClearNarrationCountsBindingsAndPreservesSharedThenPurges(t *testing.T) {
 	db, err := store.OpenTest()
 	if err != nil {

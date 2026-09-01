@@ -47,7 +47,8 @@ type Service struct {
 }
 
 func NewService(db *store.DB, mediaStore *media.Store) *Service {
-	return &Service{db: db, jobs: jobs.NewStore(db), speech: speech.NewStore(db), media: mediaStore}
+	speechStore := speech.NewStore(db)
+	return &Service{db: db, jobs: jobs.NewStore(db, speechStore.ReconcileTerminalJobTx), speech: speechStore, media: mediaStore}
 }
 
 type Enrollment struct {
