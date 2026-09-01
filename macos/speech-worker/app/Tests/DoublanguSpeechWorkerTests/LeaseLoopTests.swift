@@ -5,6 +5,12 @@ import XCTest
 
 @MainActor
 final class LeaseLoopTests: XCTestCase {
+  func testLeaseExpiryAcceptsServerMillisecondsAndWholeSeconds() {
+    XCTAssertNotNil(parseLeaseExpiry("2026-09-01T18:58:36.104Z"))
+    XCTAssertNotNil(parseLeaseExpiry("2026-09-01T18:58:36Z"))
+    XCTAssertNil(parseLeaseExpiry("not-a-timestamp"))
+  }
+
   func testTransientCompletionRetainsReadyArtifactAndRetriesWithoutRenderingAgain() async throws {
     let root = temporaryRoot("lease-loop-upload-retry")
     defer { try? FileManager.default.removeItem(at: root) }

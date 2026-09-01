@@ -1,5 +1,12 @@
 import Foundation
 
+func parseLeaseExpiry(_ value: String) -> Date? {
+  let fractional = ISO8601DateFormatter()
+  fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+  if let date = fractional.date(from: value) { return date }
+  return ISO8601DateFormatter().date(from: value)
+}
+
 public enum WorkerLoopStatus: Equatable, Sendable {
   case stopped
   case ready
@@ -367,7 +374,7 @@ public final class LeaseLoop {
       requestHash(for: lease) == lease.requestHash,
       lease.limits.maxBytes == expectedLimits(for: lease.unitKind).maxBytes,
       lease.limits.maxDurationMS == expectedLimits(for: lease.unitKind).maxDurationMS,
-      ISO8601DateFormatter().date(from: lease.leaseExpiresAt).map({ $0 > clock() }) == true
+      parseLeaseExpiry(lease.leaseExpiresAt).map({ $0 > clock() }) == true
     else { throw ProtocolError.invalidValue("lease_identity") }
   }
 

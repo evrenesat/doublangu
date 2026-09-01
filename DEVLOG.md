@@ -1,5 +1,28 @@
 # Development Log
 
+## 2026-09-01 — macOS speech lease timestamp compatibility
+
+- Updated the native speech worker to accept the server's millisecond-precision
+  lease expiry timestamps while retaining whole-second compatibility. Valid
+  leases no longer stop the worker with the misleading `Profile mismatch`
+  status.
+- Rebuilt and reinstalled the configured local app without moving its private
+  model, reference audio, configuration, or Keychain state.
+- Live beta verification drained all 11 queued speech jobs. Every job completed
+  successfully and all 11 audio renders became ready; the two-sentence proof
+  article moved from narration `queued` to `ready`.
+
+### Verification
+
+- `xcrun swift-format lint --recursive app/Sources app/Tests` — passed.
+- `swift test --package-path app --parallel` — 24 tests passed.
+- `swift build --package-path app -c release` — passed.
+- `./build-app.sh --development` — passed.
+- `./verify-release.sh --app-only ../../dist/macos/Doublangu\ Speech\ Worker.app` — passed.
+- Installed-app deep code-signature verification and binary parity with the
+  verified build — passed.
+- `git diff --check` — passed.
+
 ## 2026-09-01 — Audio base-path and terminal speech recovery fixes
 
 - Added base-aware audio URL normalization at the SvelteKit web boundary. Article
