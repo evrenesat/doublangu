@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"doublangu/internal/semantics"
 )
 
 func TestBuildPromptQuotesArticleDataAndStatesDensityRules(t *testing.T) {
@@ -41,6 +43,23 @@ func TestOutputSchemaIsStrictAndMatchesCandidateContract(t *testing.T) {
 	required := item["required"].([]any)
 	if len(required) != 12 {
 		t.Fatalf("required fields = %d", len(required))
+	}
+}
+
+func TestOutputSchemaV2VersionIsTypedStringConst(t *testing.T) {
+	properties, ok := OutputSchemaV2()["properties"].(map[string]any)
+	if !ok {
+		t.Fatal("v2 schema properties have unexpected shape")
+	}
+	version, ok := properties["version"].(map[string]any)
+	if !ok {
+		t.Fatal("v2 version schema has unexpected shape")
+	}
+	if version["type"] != "string" {
+		t.Fatalf("v2 version type = %#v, want string", version["type"])
+	}
+	if version["const"] != semantics.AnalysisContractVersion {
+		t.Fatalf("v2 version const = %#v, want %q", version["const"], semantics.AnalysisContractVersion)
 	}
 }
 

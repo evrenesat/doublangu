@@ -126,7 +126,7 @@ func OutputSchemaV2() map[string]any {
 		"type": "object", "additionalProperties": false,
 		"required": []string{"version", "sentences", "tokens", "new_senses", "constructions"},
 		"properties": map[string]any{
-			"version":   map[string]any{"const": semantics.AnalysisContractVersion},
+			"version":   map[string]any{"type": "string", "const": semantics.AnalysisContractVersion},
 			"sentences": map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"source"}, "properties": map[string]any{"source": span}}},
 			"tokens": map[string]any{"type": "array", "items": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"token_id", "classification", "kind", "semantic_sense_id", "new_sense_ref", "shadow_text", "canonical_pronunciation_text", "context_pronunciation_key", "confidence_milli"}, "properties": map[string]any{
 				"token_id": boundedString(1, 120), "classification": boundedString(1, semantics.MaxNoteScalars), "kind": map[string]any{"type": "string", "enum": []string{"word", "phrase", "idiom", "expression", "proverb"}}, "semantic_sense_id": referenceField, "new_sense_ref": referenceField, "shadow_text": boundedString(0, semantics.MaxShadowScalars), "canonical_pronunciation_text": boundedString(0, semantics.MaxPronunciationScalars), "context_pronunciation_key": boundedString(0, semantics.MaxPronunciationScalars), "confidence_milli": map[string]any{"type": "integer", "minimum": 0, "maximum": 1000},
