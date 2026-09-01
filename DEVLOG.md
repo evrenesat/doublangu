@@ -398,3 +398,67 @@ All verification commands pass:
 - `go test ./internal/library ./internal/store -run 'ULID|BCP47|Milliseconds|Migration|Rollback' -count=30`
 - No forbidden patterns (`google/uuid`, `uuid.NewString`, `start_offset`, `end_offset`, `duration_seconds`, `float64`) in scoped files
 - `git diff --check && make verify`
+
+## 2026-09-01 — macOS Speech Worker Implementation
+
+### [1] Local Mac implementation
+
+- Added the native arm64 macOS 14+ menu-bar worker under
+  `macos/speech-worker`, with private Application Support/Cache/Logs state,
+  Keychain credentials, opt-in login launch, bounded private logs, and a
+  one-job lease loop.
+- Added Xander AVSpeech word/phrase rendering, AVFoundation mono 24 kHz AAC-LC
+  postprocessing, strict protocol models/client, journaled upload spool, and
+  cancellation-aware heartbeat/recovery behavior.
+- Added an on-demand loopback Chatterbox child with exact process identity
+  receipts, direct relocatable Python execution, bounded backoff, cancellation,
+  and 600-second idle unload.
+
+### [2] Pinned local voice/runtime evidence
+
+- The supplied `voice_nl.flac` was converted to the private canonical reference
+  WAV at 24 kHz mono PCM; its SHA-256 is
+  `1dd25cc2ea1aa8314af2ce2f062eb44beeb662482516177e098f58f6b6ce10f5`.
+- The bundled runtime is arm64 CPython 3.12.11 with `mlx-audio` 0.4.7, MLX
+  0.32.2, and a checked-in `uv.lock`. Chatterbox is pinned to model revision
+  `03565773edd72e949572557597af8063bb49a18a` and tokenizer revision
+  `e0c9886f0e1c35ae85b1f27277416fb1`.
+- The pinned model was prepared in the user-scoped model/cache paths and its
+  exact model/tokenizer tree receipt was written privately. The stable model
+  tree digest is `b5eeb1421a3da22aff80808a4f9ca0ccb0a6ce388965eaf53db9c6c4232e98ce`.
+  No model or reference audio is included in the app or DMG.
+
+### [3] Verification boundaries
+
+- Focused Go correction tests pass for real profiles, active cancellation, and
+  preferred lexical selection; the native Swift tests, format lint, runtime
+  relocation/import probe, arm64 app verification, and development DMG
+  verification pass locally on the target Mac. OpenAPI validation and generated
+  API parity pass, and the web check, 65 unit tests, and 28 reader E2E tests
+  pass.
+- Opt-in live Chatterbox generation, idle-unload, and Xander AVSpeech buffer
+  rendering tests pass locally; the child PID disappears after unload. The
+  repository `make verify` target still stops at its pre-existing plugin
+  integration module-graph mismatch (`host` versus `sidecar` fingerprints).
+- Beta server integration was not used to claim beta acceptance in this pass.
+- No beta deployment, enrollment, lease, authenticated media URL, login/reboot
+  acceptance, network-loss acceptance, or owner publication was performed.
+
+## 2026-09-01 — Speech Worker Review Repairs
+
+### [1] Focused corrections
+
+- Lease validation now accepts normal lowercase ASCII SHA-256 digests containing
+  digits as well as `a`-`f`.
+- Accepted Dutch regional source tags such as `nl-NL` are canonicalized to
+  `nl` before speech units and jobs are created, keeping queued payloads
+  leaseable by the single Dutch worker profile.
+- Startup recovery retries unresolved rendering journals with backoff and does
+  not acquire a new lease while recovery is unavailable.
+
+### [2] Verification
+
+- The focused Swift suite passes: 23 tests, 4 opt-in live tests skipped, 0
+  failures; the new mixed-digit lease and offline-recovery-gate tests pass.
+- Focused Go speech/worker tests pass, including the regional Dutch queue and
+  lease test. Formatting and `git diff --check` pass.

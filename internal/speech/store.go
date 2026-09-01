@@ -123,9 +123,12 @@ func getUnit(ctx context.Context, db *store.DB, id string) (*Unit, error) {
 // DefaultProfiles creates immutable local defaults only when an active profile
 // is absent. Real voice/model revisions can be installed as new profiles.
 func DefaultProfilesTx(ctx context.Context, tx *sql.Tx, language string) (avspeech, chatterbox *Profile, err error) {
+	if _, err := canonicalSpeechLanguage(language); err != nil {
+		return nil, nil, err
+	}
 	avspeech, err = ensureProfileTx(ctx, tx, Profile{
-		Engine: AVSpeechEngine, ModelRevision: "system", Language: language,
-		VoiceIdentifier: "com.apple.ttsbundle.Samantha-compact", MappingVersion: "speech-profile.v1",
+		Engine: AVSpeechEngine, ModelRevision: AVSpeechModelRevision, Language: "nl",
+		VoiceIdentifier: AVSpeechVoiceIdentifier, MappingVersion: AVSpeechMappingVersion,
 		MIMEType: AudioMIME, Codec: AudioCodec, SampleRateHz: AudioSampleRate, Channels: AudioChannels,
 		SpeedMilli: 1000, PitchCents: 0, Active: true,
 	})
@@ -133,12 +136,22 @@ func DefaultProfilesTx(ctx context.Context, tx *sql.Tx, language string) (avspee
 		return nil, nil, err
 	}
 	chatterbox, err = ensureProfileTx(ctx, tx, Profile{
-		Engine: ChatterboxEngine, ModelRevision: "worker-v3", Language: language,
-		VoiceIdentifier: "default", MappingVersion: "speech-profile.v1",
-		MIMEType: AudioMIME, Codec: AudioCodec, SampleRateHz: AudioSampleRate, Channels: AudioChannels,
+		Engine: ChatterboxEngine, ModelRevision: ChatterboxModelRevision, Language: "nl",
+		VoiceIdentifier: ChatterboxVoiceIdentifier, ReferenceAudioHash: ChatterboxReferenceAudioHash,
+		MappingVersion: ChatterboxMappingVersion,
+		MIMEType:       AudioMIME, Codec: AudioCodec, SampleRateHz: AudioSampleRate, Channels: AudioChannels,
 		SpeedMilli: 1000, PitchCents: 0, Active: true,
 	})
 	return avspeech, chatterbox, err
+}
+
+func canonicalSpeechLanguage(language string) (string, error) {
+	original := language
+	language = strings.ToLower(strings.TrimSpace(language))
+	if language == "nl" || strings.HasPrefix(language, "nl-") {
+		return "nl", nil
+	}
+	return "", fmt.Errorf("speech profiles are only available for Dutch, got %q", original)
 }
 
 func ensureProfileTx(ctx context.Context, tx *sql.Tx, profile Profile) (*Profile, error) {
@@ -264,6 +277,11 @@ func QueueArticleAudioTx(ctx context.Context, tx *sql.Tx, articleID library.ULID
 		if err := tx.QueryRowContext(ctx, `SELECT source_language FROM article WHERE id = ?`, articleID.String()).Scan(&language); err != nil {
 			return err
 		}
+		canonicalLanguage, err := canonicalSpeechLanguage(language)
+		if err != nil {
+			return err
+		}
+		language = canonicalLanguage
 		avProfile, narrationProfile, err := DefaultProfilesTx(ctx, tx, language)
 		if err != nil {
 			return err
@@ -331,7 +349,13 @@ func QueueArticleAudioTx(ctx context.Context, tx *sql.Tx, articleID library.ULID
 			if err := ensureSpeechJobTx(ctx, tx, *render, *unit, *avProfile, jobType, priority); err != nil {
 				return err
 			}
-			if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO article_occurrence_audio (article_occurrence_id, audio_render_id, purpose, preferred) VALUES (?, ?, 'pronunciation', 1)`, occurrence.id, render.ID.String()); err != nil {
+			// A new immutable profile creates a new render for the same
+			// occurrence. Keep old bindings for history, but expose exactly one
+			// preferred pronunciation to the reader.
+			if _, err := tx.ExecContext(ctx, `UPDATE article_occurrence_audio SET preferred = 0 WHERE article_occurrence_id = ? AND purpose = 'pronunciation'`, occurrence.id); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO article_occurrence_audio (article_occurrence_id, audio_render_id, purpose, preferred) VALUES (?, ?, 'pronunciation', 1) ON CONFLICT(article_occurrence_id, audio_render_id, purpose) DO UPDATE SET preferred = excluded.preferred`, occurrence.id, render.ID.String()); err != nil {
 				return err
 			}
 		}
@@ -642,7 +666,7 @@ func (s *Store) ClearNarration(ctx context.Context, articleID library.ULID) (*Cl
 				return err
 			}
 			if references == 0 {
-				if _, err := tx.ExecContext(ctx, `UPDATE job SET state = 'canceled', error_code = 'v1.narration_cleared', lease_owner = '', lease_token_hash = '', lease_expires_at = '', completed_at = ?, updated_at = ? WHERE owner_type = 'audio_render' AND owner_id = ? AND job_type = ? AND state IN ('queued', 'leased', 'running')`, store.NowUTC(), store.NowUTC(), info.id, jobs.ChatterboxJobType); err != nil {
+				if _, err := jobs.CancelOwnerJobsTx(ctx, tx, "audio_render", info.id, jobs.ChatterboxJobType, "v1.narration_cleared"); err != nil {
 					return err
 				}
 				if info.digest != "" {

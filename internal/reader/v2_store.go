@@ -193,7 +193,7 @@ func (s *Store) QueueAnalysis(ctx context.Context, id library.ULID, force bool) 
 		if force {
 			// An explicit reanalysis supersedes any older queued attempt. The
 			// accepted materialization remains readable until the new job commits.
-			if _, err := tx.ExecContext(ctx, `UPDATE job SET state = 'canceled', error_code = 'v1.analysis_superseded', lease_owner = '', lease_token_hash = '', lease_expires_at = '', completed_at = ?, updated_at = ? WHERE owner_type = 'article' AND owner_id = ? AND job_type = ? AND state IN ('queued', 'leased', 'running')`, store.NowUTC(), store.NowUTC(), id.String(), jobs.AnalysisJobType); err != nil {
+			if _, err := jobs.CancelOwnerJobsTx(ctx, tx, "article", id.String(), jobs.AnalysisJobType, "v1.analysis_superseded"); err != nil {
 				return err
 			}
 		}
@@ -507,7 +507,7 @@ func retireUnboundNarrationRendersTx(ctx context.Context, tx *sql.Tx, renderIDs 
 		if references != 0 {
 			continue
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE job SET state = 'canceled', error_code = 'v1.article_reanalyzed', lease_owner = '', lease_token_hash = '', lease_expires_at = '', completed_at = ?, updated_at = ? WHERE owner_type = 'audio_render' AND owner_id = ? AND job_type = ? AND state IN ('queued', 'leased', 'running')`, store.NowUTC(), store.NowUTC(), renderID, jobs.ChatterboxJobType); err != nil {
+		if _, err := jobs.CancelOwnerJobsTx(ctx, tx, "audio_render", renderID, jobs.ChatterboxJobType, "v1.article_reanalyzed"); err != nil {
 			return nil, err
 		}
 		var digest string

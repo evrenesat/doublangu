@@ -1,0 +1,12 @@
+[project]
+name = "doublangu-speech-worker-runtime"
+version = "0.1.0"
+description = "Private loopback Chatterbox runtime for the Doublangu macOS speech worker"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "mlx-audio==0.4.7",
+  "mlx==0.32.2",
+]
+
+[tool.uv]
+package = false

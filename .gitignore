@@ -6,3 +6,8 @@ media/
 test-results/
 *.db
 run.sh
+macos/speech-worker/python/.venv/
+macos/speech-worker/python/__pycache__/
+macos/speech-worker/.build/
+macos/speech-worker/app/.build/
+dist/macos/

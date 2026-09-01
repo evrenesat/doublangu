@@ -60,9 +60,11 @@ mono 24 kHz AAC-LC M4A metadata plus bytes. The server validates the live lease,
 request hash, digest, signature, limits, and metadata, then commits the blob,
 `audio_blob_reference`, render, and job outcome atomically. The browser reads
 authenticated server audio URLs with strong ETags and single-range GET/HEAD;
-it never reads a worker-local path. The macOS companion process is specified in
-`plans/macos-speech-worker-handoff.md` but is not source shipped by this
-repository.
+it never reads a worker-local path. The macOS companion process is implemented
+under `macos/speech-worker` from the root handoff
+`macos-speech-worker-handoff.md`. It is a separate native Mac application
+source tree; its private model, reference audio, credentials, logs, and upload
+spool remain outside the repository app bundle.
 
 Narration clearing cancels active long-form jobs, removes only article sentence
 bindings, tombstones unreferenced narration renders, and runs crash-safe orphan
