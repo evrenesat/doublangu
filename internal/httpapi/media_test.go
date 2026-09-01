@@ -377,6 +377,66 @@ func TestMediaHEADWithRange(t *testing.T) {
 	}
 }
 
+func TestAudioGetHeadRangeAndETagUseReadyServerBlob(t *testing.T) {
+	h, db, mediaRoot := newMediaHandler(t)
+	articleID := "01J00000000000000000000100"
+	profileID := "01J00000000000000000000101"
+	unitID := "01J00000000000000000000102"
+	renderID := "01J00000000000000000000103"
+	data := []byte("m4a-server-audio")
+	digestBytes := sha256.Sum256(data)
+	digest := hex.EncodeToString(digestBytes[:])
+	if err := os.WriteFile(filepath.Join(mediaRoot, "blobs", digest), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx := t.Context()
+	for _, statement := range []struct {
+		query string
+		args  []any
+	}{
+		{`INSERT INTO article (id, title, source_language, target_language, enrichment_status) VALUES (?, 'Audio', 'nl', 'en', 'draft')`, []any{articleID}},
+		{`INSERT INTO speech_profile (id, engine, model_revision, language, voice_identifier, speed_milli, pitch_cents, mapping_version, mime_type, codec, sample_rate_hz, channels, active) VALUES (?, 'avspeech', 'test', 'nl', 'voice', 1000, 0, 'test', 'audio/mp4', 'aac-lc', 24000, 1, 1)`, []any{profileID}},
+		{`INSERT INTO speech_unit (id, language, unit_kind, spoken_text, normalized_text_hash, context_pronunciation_key) VALUES (?, 'nl', 'word', 'audio', 'unit-hash', '')`, []any{unitID}},
+		{`INSERT INTO blob (digest, size_bytes, mime_type) VALUES (?, ?, 'audio/mp4')`, []any{digest, len(data)}},
+		{`INSERT INTO audio_render (id, speech_unit_id, speech_profile_id, request_hash, retention_class, state, duration_ms, size_bytes, ready_at) VALUES (?, ?, ?, 'request-hash', 'lexical_permanent', 'ready', 100, ?, '2026-01-01T00:00:00.000Z')`, []any{renderID, unitID, profileID, len(data)}},
+		{`INSERT INTO audio_blob_reference (audio_render_id, blob_digest) VALUES (?, ?)`, []any{renderID, digest}},
+	} {
+		if _, err := db.Exec(ctx, statement.query, statement.args...); err != nil {
+			t.Fatalf("seed audio: %v", err)
+		}
+	}
+
+	get := mediaRequest(http.MethodGet, "/api/v1/audio/"+renderID, "")
+	rec := httptest.NewRecorder()
+	h.ServeAudio(rec, get)
+	if rec.Code != http.StatusOK || rec.Body.String() != string(data) || rec.Header().Get("Content-Type") != "audio/mp4" || rec.Header().Get("ETag") != `"`+digest+`"` {
+		t.Fatalf("audio GET status=%d body=%q headers=%v", rec.Code, rec.Body.String(), rec.Header())
+	}
+
+	rangeRequest := mediaRequest(http.MethodGet, "/api/v1/audio/"+renderID, "")
+	rangeRequest.Header.Set("Range", "bytes=0-2")
+	rangeResponse := httptest.NewRecorder()
+	h.ServeAudio(rangeResponse, rangeRequest)
+	if rangeResponse.Code != http.StatusPartialContent || rangeResponse.Body.String() != "m4a" || rangeResponse.Header().Get("Content-Range") != "bytes 0-2/16" {
+		t.Fatalf("audio range status=%d body=%q content-range=%q", rangeResponse.Code, rangeResponse.Body.String(), rangeResponse.Header().Get("Content-Range"))
+	}
+
+	head := mediaRequest(http.MethodHead, "/api/v1/audio/"+renderID, "")
+	headResponse := httptest.NewRecorder()
+	h.ServeAudio(headResponse, head)
+	if headResponse.Code != http.StatusOK || headResponse.Body.Len() != 0 || headResponse.Header().Get("Content-Length") != "16" {
+		t.Fatalf("audio HEAD status=%d body=%d content-length=%q", headResponse.Code, headResponse.Body.Len(), headResponse.Header().Get("Content-Length"))
+	}
+
+	conditional := mediaRequest(http.MethodGet, "/api/v1/audio/"+renderID, "")
+	conditional.Header.Set("If-None-Match", `W/"`+digest+`"`)
+	conditionalResponse := httptest.NewRecorder()
+	h.ServeAudio(conditionalResponse, conditional)
+	if conditionalResponse.Code != http.StatusNotModified {
+		t.Fatalf("audio conditional status=%d", conditionalResponse.Code)
+	}
+}
+
 // TestMediaOpaqueContentType proves that media delivery returns the exact
 // stored source-asset mime_type as the Content-Type header, even when the
 // value does not conform to a strict MIME type/ subtype pattern.

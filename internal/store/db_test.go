@@ -141,6 +141,106 @@ func assertMigration002Schema(t *testing.T, db *DB) {
 	}
 }
 
+func assertMigration004Schema(t *testing.T, db *DB) {
+	t.Helper()
+	ctx := context.Background()
+	for _, name := range []string{
+		"article", "article_block", "article_annotation", "learning_state",
+		"idx_article_created", "idx_article_block_article", "idx_article_annotation_block_start",
+		"idx_article_annotation_learning", "idx_learning_state_source_key",
+	} {
+		var count int
+		if err := db.QueryRow(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE name = ?", name).Scan(&count); err != nil {
+			t.Fatalf("find reader schema object %s: %v", name, err)
+		}
+		if count != 1 {
+			t.Errorf("reader schema object %s count = %d, want 1", name, count)
+		}
+	}
+}
+
+func assertMigration005Schema(t *testing.T, db *DB) {
+	t.Helper()
+	ctx := context.Background()
+	for _, name := range []string{
+		"job", "job_dependency", "analysis_cache", "semantic_item", "semantic_sense",
+		"semantic_learning_state", "article_sentence", "article_occurrence",
+		"article_occurrence_span", "speech_unit", "speech_profile", "audio_render",
+		"audio_blob_reference", "article_occurrence_audio", "article_sentence_audio",
+		"speech_worker", "speech_worker_enrollment", "idx_job_claim",
+		"idx_audio_blob_reference_digest", "idx_article_sentence_audio_article", "idx_speech_unit_identity",
+	} {
+		var count int
+		if err := db.QueryRow(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE name = ?", name).Scan(&count); err != nil {
+			t.Fatalf("find audible-reader schema object %s: %v", name, err)
+		}
+		if count != 1 {
+			t.Errorf("audible-reader schema object %s count = %d, want 1", name, count)
+		}
+	}
+}
+
+func TestMigration004ReaderConstraintsAndCascades(t *testing.T) {
+	db, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	articleID := "01J00000000000000000000000"
+	blockID := "01J00000000000000000000001"
+	annotationID := "01J00000000000000000000002"
+
+	if _, err := db.Exec(ctx, `INSERT INTO article (id, title, source_language, target_language, enrichment_status) VALUES (?, 'Test', 'nl', 'en', 'draft')`, articleID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO article_block (id, article_id, block_index, kind, source_text) VALUES (?, ?, 0, 'paragraph', 'Een woord.')`, blockID, articleID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO article_annotation (id, article_block_id, start_utf16, end_utf16, source_text, kind, learning_key, primary_translation, suggest_shadow) VALUES (?, ?, 4, 9, 'woord', 'word', 'woord', 'word', 1)`, annotationID, blockID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO learning_state (source_language, kind, learning_key, status, updated_at) VALUES ('nl', 'word', 'woord', 'learned', 'now')`); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, statement := range map[string]string{
+		"article status":  `INSERT INTO article (id, title, source_language, target_language, enrichment_status) VALUES ('01J00000000000000000000003', 'Bad', 'nl', 'en', 'unknown')`,
+		"block kind":      `INSERT INTO article_block (id, article_id, block_index, kind, source_text) VALUES ('01J00000000000000000000003', '01J00000000000000000000000', 1, 'heading', 'Bad')`,
+		"annotation kind": `INSERT INTO article_annotation (id, article_block_id, start_utf16, end_utf16, source_text, kind, learning_key, primary_translation, suggest_shadow) VALUES ('01J00000000000000000000003', '01J00000000000000000000001', 0, 1, 'E', 'clause', 'e', 'e', 0)`,
+		"learning status": `INSERT INTO learning_state (source_language, kind, learning_key, status, updated_at) VALUES ('nl', 'word', 'e', 'unknown', 'now')`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := db.Exec(ctx, statement); err == nil {
+				t.Fatal("invalid reader row unexpectedly accepted")
+			}
+		})
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO article_block (id, article_id, block_index, kind, source_text) VALUES ('01J00000000000000000000003', '01J00000000000000000000000', 0, 'paragraph', 'Duplicate index')`); err == nil {
+		t.Fatal("duplicate article block index unexpectedly accepted")
+	}
+
+	if _, err := db.Exec(ctx, `DELETE FROM article WHERE id = ?`, articleID); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range []struct {
+		table  string
+		column string
+		value  string
+	}{
+		{"article_block", "article_id", articleID},
+		{"article_annotation", "id", annotationID},
+	} {
+		var count int
+		if err := db.QueryRow(ctx, "SELECT COUNT(*) FROM "+item.table+" WHERE "+item.column+" = ?", item.value).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 0 {
+			t.Fatalf("cascade left %s row count %d", item.table, count)
+		}
+	}
+}
+
 func assertMigrationVersion(t *testing.T, db *DB, want int) {
 	t.Helper()
 	ctx := context.Background()
@@ -198,7 +298,7 @@ func TestOpenInMemoryCreatesTables(t *testing.T) {
 	for _, t := range tables {
 		found[t] = true
 	}
-	expected := []string{"blob", "blob_reference", "chapter", "device", "edition", "library", "outbox", "owner", "plugin_settings", "schema_version", "session", "source_asset", "work"}
+	expected := []string{"article", "article_annotation", "article_block", "blob", "blob_reference", "chapter", "device", "edition", "learning_state", "library", "outbox", "owner", "plugin_settings", "schema_version", "session", "source_asset", "work", "job", "semantic_sense", "audio_render", "speech_worker"}
 	for _, name := range expected {
 		if !found[name] {
 			t.Errorf("missing table %q (found: %v)", name, tables)
@@ -218,8 +318,8 @@ func TestMigrationVersionRecorded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("version query: %v", err)
 	}
-	if version != 3 {
-		t.Errorf("expected version 3, got %d", version)
+	if version != 5 {
+		t.Errorf("expected version 5, got %d", version)
 	}
 }
 
@@ -243,8 +343,8 @@ func TestMigrationFreshInMemoryAlwaysApplies(t *testing.T) {
 		t.Fatalf("version count: %v", err)
 	}
 	// Each in-memory OpenTest starts fresh — all migrations run once per open.
-	if count != 3 {
-		t.Errorf("expected 3 migration records, got %d", count)
+	if count != 5 {
+		t.Errorf("expected 5 migration records, got %d", count)
 	}
 }
 
@@ -430,8 +530,8 @@ func TestFileBasedDBDoesNotReapplyMigrations(t *testing.T) {
 	if err := db2.QueryRow(context.Background(), "SELECT COUNT(*) FROM schema_version").Scan(&count); err != nil {
 		t.Fatalf("count: %v", err)
 	}
-	if count != 3 {
-		t.Errorf("expected 3 migration records, got %d (migrations should not reapply)", count)
+	if count != 5 {
+		t.Errorf("expected 5 migration records, got %d (migrations should not reapply)", count)
 	}
 }
 
@@ -442,7 +542,7 @@ func TestMigrationRollbackLeavesNoPartialSchemaDataOrVersion(t *testing.T) {
 	}
 	defer db.Close()
 	failing := fstest.MapFS{
-		"migrations/004_probe.sql": {Data: []byte(`
+		"migrations/006_probe.sql": {Data: []byte(`
 			CREATE TABLE migration_probe (value TEXT NOT NULL);
 			INSERT INTO migration_probe (value) VALUES ('partial');
 			THIS IS NOT SQL;
@@ -455,7 +555,7 @@ func TestMigrationRollbackLeavesNoPartialSchemaDataOrVersion(t *testing.T) {
 	if err := db.QueryRow(context.Background(), "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='migration_probe'").Scan(&tableCount); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.QueryRow(context.Background(), "SELECT COUNT(*) FROM schema_version WHERE version = 4").Scan(&versionCount); err != nil {
+	if err := db.QueryRow(context.Background(), "SELECT COUNT(*) FROM schema_version WHERE version = 6").Scan(&versionCount); err != nil {
 		t.Fatal(err)
 	}
 	if tableCount != 0 || versionCount != 0 {
@@ -463,7 +563,7 @@ func TestMigrationRollbackLeavesNoPartialSchemaDataOrVersion(t *testing.T) {
 	}
 
 	corrected := fstest.MapFS{
-		"migrations/004_probe.sql": {Data: []byte(`
+		"migrations/006_probe.sql": {Data: []byte(`
 			CREATE TABLE migration_probe (value TEXT NOT NULL);
 			INSERT INTO migration_probe (value) VALUES ('complete');
 		`)},
@@ -651,7 +751,9 @@ func TestMigration002_UpgradeFromV1ToV2(t *testing.T) {
 	assertCP8Rows(t, db)
 	assertMigration002Schema(t, db)
 	assertMigration003Schema(t, db)
-	assertMigrationVersion(t, db, 3)
+	assertMigration004Schema(t, db)
+	assertMigration005Schema(t, db)
+	assertMigrationVersion(t, db, 5)
 }
 
 func TestMetadataStoreCRUDOnCleanAndUpgradedDatabases(t *testing.T) {
@@ -830,7 +932,9 @@ func TestMigration002_RollbackLeavesNoLibraryTables(t *testing.T) {
 	assertCP8Rows(t, db)
 	assertMigration002Schema(t, db)
 	assertMigration003Schema(t, db)
-	assertMigrationVersion(t, db, 3)
+	assertMigration004Schema(t, db)
+	assertMigration005Schema(t, db)
+	assertMigrationVersion(t, db, 5)
 }
 
 func TestFileDatabaseUsesWALForeignKeysBusyTimeoutAndCurrentVersion(t *testing.T) {
@@ -854,7 +958,7 @@ func TestFileDatabaseUsesWALForeignKeysBusyTimeoutAndCurrentVersion(t *testing.T
 	if err := db.QueryRow(ctx, "SELECT MAX(version) FROM schema_version").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if journal != "wal" || foreignKeys != 1 || busyTimeout != 5000 || version != 3 {
+	if journal != "wal" || foreignKeys != 1 || busyTimeout != 5000 || version != 5 {
 		t.Fatalf("journal=%q foreign_keys=%d busy_timeout=%d version=%d", journal, foreignKeys, busyTimeout, version)
 	}
 }

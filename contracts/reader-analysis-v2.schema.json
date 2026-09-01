@@ -1,0 +1,88 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "doublangu://contracts/reader-analysis-v2.schema.json",
+  "title": "Doublangu reader semantic analysis v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "sentences", "tokens", "new_senses", "constructions"],
+  "properties": {
+    "version": { "const": "reader.analysis.v2" },
+    "sentences": { "type": "array", "minItems": 1, "items": { "$ref": "#/definitions/sentence" } },
+    "tokens": { "type": "array", "items": { "$ref": "#/definitions/token" } },
+    "new_senses": { "type": "array", "items": { "$ref": "#/definitions/newSense" } },
+    "constructions": { "type": "array", "items": { "$ref": "#/definitions/construction" } }
+  },
+  "definitions": {
+    "span": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["block_index", "source_text", "occurrence"],
+      "properties": {
+        "block_index": { "type": "integer", "minimum": 0 },
+        "source_text": { "type": "string", "minLength": 1 },
+        "occurrence": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "sentence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source"],
+      "properties": { "source": { "$ref": "#/definitions/span" } }
+    },
+    "token": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["token_id", "classification", "kind", "semantic_sense_id", "new_sense_ref", "shadow_text", "canonical_pronunciation_text", "context_pronunciation_key", "confidence_milli"],
+      "properties": {
+        "token_id": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "classification": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "kind": { "$ref": "#/definitions/kind" },
+        "semantic_sense_id": { "type": "string", "maxLength": 120 },
+        "new_sense_ref": { "type": "string", "maxLength": 120 },
+        "shadow_text": { "type": "string", "maxLength": 160 },
+        "canonical_pronunciation_text": { "type": "string", "maxLength": 640 },
+        "context_pronunciation_key": { "type": "string", "maxLength": 640 },
+        "confidence_milli": { "type": "integer", "minimum": 0, "maximum": 1000 }
+      }
+    },
+    "kind": { "type": "string", "enum": ["word", "phrase", "idiom", "expression", "proverb"] },
+    "newSense": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ref", "kind", "canonical_form", "normalized_form", "lemma", "part_of_speech", "sense_discriminator", "primary_translation", "alternatives", "literal_translation", "meaning_note", "usage_note", "parts_note", "canonical_pronunciation_text"],
+      "properties": {
+        "ref": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "kind": { "$ref": "#/definitions/kind" },
+        "canonical_form": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "normalized_form": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "lemma": { "type": "string", "maxLength": 1000 },
+        "part_of_speech": { "type": "string", "maxLength": 1000 },
+        "sense_discriminator": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "primary_translation": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "alternatives": { "type": "array", "maxItems": 3, "items": { "type": "string", "minLength": 1, "maxLength": 1000 } },
+        "literal_translation": { "type": "string", "maxLength": 1000 },
+        "meaning_note": { "type": "string", "maxLength": 1000 },
+        "usage_note": { "type": "string", "maxLength": 1000 },
+        "parts_note": { "type": "string", "maxLength": 1000 },
+        "canonical_pronunciation_text": { "type": "string", "maxLength": 640 }
+      }
+    },
+    "construction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "role", "semantic_sense_id", "new_sense_ref", "shadow_text", "canonical_pronunciation_text", "context_pronunciation_key", "confidence_milli", "token_ids", "spans"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["phrase", "idiom", "expression", "proverb"] },
+        "role": { "type": "string", "enum": ["contiguous_construction", "discontinuous_construction"] },
+        "semantic_sense_id": { "type": "string", "maxLength": 120 },
+        "new_sense_ref": { "type": "string", "maxLength": 120 },
+        "shadow_text": { "type": "string", "maxLength": 160 },
+        "canonical_pronunciation_text": { "type": "string", "maxLength": 640 },
+        "context_pronunciation_key": { "type": "string", "maxLength": 640 },
+        "confidence_milli": { "type": "integer", "minimum": 0, "maximum": 1000 },
+        "token_ids": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1, "maxLength": 120 } },
+        "spans": { "type": "array", "minItems": 1, "items": { "$ref": "#/definitions/span" } }
+      }
+    }
+  }
+}

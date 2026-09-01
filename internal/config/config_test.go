@@ -40,6 +40,9 @@ func TestLoadDefaultsSucceedWithValidSecret(t *testing.T) {
 	if cfg.Paths.Data != "data" {
 		t.Errorf("Paths.Data = %q", cfg.Paths.Data)
 	}
+	if cfg.Annotator != "codex" || cfg.CodexEffort != "medium" || cfg.CodexModel != "" {
+		t.Errorf("Codex defaults = annotator %q effort %q model %q", cfg.Annotator, cfg.CodexEffort, cfg.CodexModel)
+	}
 	if cfg.Session.MaxAge != 24*time.Hour {
 		t.Errorf("Session.MaxAge = %v", cfg.Session.MaxAge)
 	}
@@ -92,6 +95,9 @@ func TestConfigCustomValues(t *testing.T) {
 	t.Setenv("DOUBLANGU_DATA_PATH", "/data")
 	t.Setenv("DOUBLANGU_SESSION_MAX_AGE", "2h")
 	t.Setenv("DOUBLANGU_SESSION_SECURE", "true")
+	t.Setenv("DOUBLANGU_ANNOTATOR", "disabled")
+	t.Setenv("DOUBLANGU_CODEX_MODEL", "gpt-test")
+	t.Setenv("DOUBLANGU_CODEX_EFFORT", "low")
 
 	cfg, err := Load()
 	if err != nil {
@@ -111,6 +117,18 @@ func TestConfigCustomValues(t *testing.T) {
 	}
 	if !cfg.Session.Secure {
 		t.Errorf("Session.Secure should be true for HTTPS public URLs")
+	}
+	if cfg.Annotator != "disabled" || cfg.CodexModel != "gpt-test" || cfg.CodexEffort != "low" {
+		t.Errorf("Codex custom values = annotator %q effort %q model %q", cfg.Annotator, cfg.CodexEffort, cfg.CodexModel)
+	}
+}
+
+func TestLoadRejectsUnknownAnnotator(t *testing.T) {
+	t.Setenv("DOUBLANGU_SECRET", validSecret(t))
+	t.Setenv("DOUBLANGU_ANNOTATOR", "other")
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "annotator must be codex or disabled") {
+		t.Fatalf("expected annotator validation error, got: %v", err)
 	}
 }
 

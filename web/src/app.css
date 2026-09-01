@@ -1,0 +1,126 @@
+:root {
+	font-family:
+		Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+	color-scheme: dark;
+	--color-bg: #11131d;
+	--color-bg-header: rgba(17, 19, 29, 0.94);
+	--color-surface: #191c29;
+	--color-surface-raised: #202434;
+	--color-surface-hover: #282d40;
+	--color-border: #353b52;
+	--color-text: #eef0f8;
+	--color-muted: #a9afc3;
+	--color-accent: #9c8cff;
+	--color-accent-strong: #b8adff;
+	--color-danger-bg: #351c24;
+	--color-danger: #ffb4c3;
+	--color-warning-bg: #342819;
+	--color-warning: #ffd18a;
+	--reader-page-bg: #151827;
+	--reader-page-surface: #1d2131;
+	--reader-page-raised: #252a3d;
+	--reader-page-border: #3b4260;
+	--reader-page-text: #eef0f8;
+	--reader-page-muted: #aeb5cc;
+	--reader-page-accent: #a897ff;
+	--reader-page-construction: #f0b36b;
+	--reader-page-shadow: #b9c2de;
+	background: var(--color-bg);
+	color: var(--color-text);
+	font-synthesis: none;
+	text-rendering: optimizeLegibility;
+}
+
+html[data-reader-theme='paper'] {
+	color-scheme: light;
+	--reader-page-bg: #fbf7ed;
+	--reader-page-surface: #f3ecdc;
+	--reader-page-raised: #fffdf7;
+	--reader-page-border: #d7c9ad;
+	--reader-page-text: #302a21;
+	--reader-page-muted: #756957;
+	--reader-page-accent: #815d27;
+	--reader-page-construction: #ad5e2a;
+	--reader-page-shadow: #756957;
+}
+
+html[data-reader-theme='high-contrast'] {
+	color-scheme: dark;
+	--reader-page-bg: #000;
+	--reader-page-surface: #050505;
+	--reader-page-raised: #111;
+	--reader-page-border: #fff;
+	--reader-page-text: #fff;
+	--reader-page-muted: #f0f0f0;
+	--reader-page-accent: #00ffff;
+	--reader-page-construction: #ffea00;
+	--reader-page-shadow: #fff;
+}
+
+* {
+	box-sizing: border-box;
+}
+
+html {
+	min-width: 320px;
+	background: var(--color-bg);
+}
+
+body {
+	min-width: 320px;
+	min-height: 100vh;
+	margin: 0;
+	background:
+		radial-gradient(circle at 15% -10%, rgba(126, 105, 255, 0.16), transparent 34rem),
+		var(--color-bg);
+	color: var(--color-text);
+	font-size: 16px;
+	line-height: 1.55;
+}
+
+button,
+input,
+select,
+textarea {
+	font: inherit;
+}
+
+button,
+input,
+select,
+textarea {
+	color: var(--color-text);
+}
+
+input,
+select,
+textarea {
+	border: 1px solid var(--color-border);
+	border-radius: 0.55rem;
+	background: var(--color-surface);
+}
+
+a {
+	color: var(--color-accent-strong);
+	text-underline-offset: 0.18em;
+}
+
+a:hover {
+	color: #d2ccff;
+}
+
+:focus-visible {
+	outline: 2px solid var(--color-accent-strong);
+	outline-offset: 3px;
+}
+
+h1,
+h2,
+h3,
+p {
+	margin-top: 0;
+}
+
+::selection {
+	background: rgba(156, 140, 255, 0.36);
+}

@@ -13,14 +13,18 @@ export default defineConfig({
 	},
 	plugins: [
 		{
-			name: 'test-sveltekit-navigation',
+			name: 'test-sveltekit-runtime',
 			resolveId(id) {
-				return id === '$app/navigation' ? '\u0000test-sveltekit-navigation' : undefined;
+				if (id === '$app/navigation') return '\u0000test-sveltekit-navigation';
+				if (id === '$app/paths') return '\u0000test-sveltekit-paths';
+				return undefined;
 			},
 			load(id) {
-				return id === '\u0000test-sveltekit-navigation'
-					? 'export async function goto(path) { globalThis.__doublanguLastNavigation = path; }'
-					: undefined;
+				if (id === '\u0000test-sveltekit-navigation') {
+					return 'export async function goto(path) { globalThis.__doublanguLastNavigation = path; }';
+				}
+				if (id === '\u0000test-sveltekit-paths') return 'export const base = "";';
+				return undefined;
 			}
 		},
 		svelte({

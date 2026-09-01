@@ -505,6 +505,957 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/articles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List saved reader articles */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Article summaries, newest first. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ArticleSummary"][];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                405: components["responses"]["MethodNotAllowed"];
+                500: components["responses"]["Internal"];
+            };
+        };
+        put?: never;
+        /** Save a pasted reader article */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ArticleCreate"];
+                };
+            };
+            responses: {
+                /** @description Article saved immediately with background semantic analysis queued. */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Article"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                405: components["responses"]["MethodNotAllowed"];
+                500: components["responses"]["Internal"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/articles/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a reader article */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["schemas"]["ULID"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Article with ordered blocks and annotations. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Article"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                404: components["responses"]["NotFound"];
+                405: components["responses"]["MethodNotAllowed"];
+                500: components["responses"]["Internal"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/articles/{id}/enrich": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Queue reader analysis (compatibility alias)
+         * @description Deprecated compatibility alias for reanalyze. Returns immediately with a queued article.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["schemas"]["ULID"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Article queued for background analysis. */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Article"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                405: components["responses"]["MethodNotAllowed"];
+                409: components["responses"]["Conflict"];
+                500: components["responses"]["Internal"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/articles/{id}/reanalyze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Queue explicit background article reanalysis */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["schemas"]["ULID"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description New analysis work was queued; an older accepted analysis remains readable until replacement. */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Article"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                405: components["responses"]["MethodNotAllowed"];
+                409: components["responses"]["Conflict"];
+                500: components["responses"]["Internal"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/articles/{id}/narration": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get the ordered sentence narration manifest */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["schemas"]["ULID"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Narration status and ordered sentence clips. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Narration"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                404: components["responses"]["NotFound"];
+                405: components["responses"]["MethodNotAllowed"];
+                500: components["responses"]["Internal"];
+            };
+        };
+        put?: never;
+        /** Queue narration regeneration */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["schemas"]["ULID"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Missing or purged sentence renders were queued. */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Article"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                405: components["responses"]["MethodNotAllowed"];
+                409: components["responses"]["Conflict"];
+                500: components["responses"]["Internal"];
+            };
+        };
+        /** Clear article narration storage */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["schemas"]["ULID"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Narration bindings cleared and orphaned long-form bytes reclaimed. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["NarrationClearResult"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                405: components["responses"]["MethodNotAllowed"];
+                500: components["responses"]["Internal"];
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/learning-state": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Set an article annotation learning state */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["SemanticLearningStateInput"] | components["schemas"]["LearningStateInput"];
+                };
+            };
+            responses: {
+                /** @description Stored sense-keyed or legacy compatibility learning state. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SemanticLearningState"] | components["schemas"]["LearningState"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                405: components["responses"]["MethodNotAllowed"];
+                500: components["responses"]["Internal"];
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/audio/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Stream a ready authenticated speech render */
+        get: {
+            parameters: {
+                query?: never;
+                header?: {
+                    Range?: components["schemas"]["SingleByteRange"];
+                    "If-None-Match"?: components["schemas"]["ConditionalETag"];
+                };
+                path: {
+                    id: components["schemas"]["ULID"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description M4A audio bytes. */
+                200: {
+                    headers: {
+                        ETag?: components["schemas"]["StrongSHA256ETag"];
+                        "Content-Type"?: components["schemas"]["MediaType"];
+                        "Accept-Ranges"?: components["schemas"]["ByteRangeUnit"];
+                        "Content-Length"?: components["schemas"]["ByteLength"];
+                        "X-Accel-Redirect"?: components["schemas"]["InternalRedirectURI"];
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "audio/mp4": string;
+                    };
+                };
+                /** @description Partial M4A audio bytes. */
+                206: {
+                    headers: {
+                        ETag?: components["schemas"]["StrongSHA256ETag"];
+                        "Content-Type"?: components["schemas"]["MediaType"];
+                        "Accept-Ranges"?: components["schemas"]["ByteRangeUnit"];
+                        "Content-Range"?: components["schemas"]["ContentByteRange"];
+                        "Content-Length"?: components["schemas"]["ByteLength"];
+                        "X-Accel-Redirect"?: components["schemas"]["InternalRedirectURI"];
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "audio/mp4": string;
+                    };
+                };
+                /** @description Not modified. */
+                304: {
+                    headers: {
+                        ETag?: components["schemas"]["StrongSHA256ETag"];
+                        "Content-Type"?: components["schemas"]["MediaType"];
+                        "Accept-Ranges"?: components["schemas"]["ByteRangeUnit"];
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                404: components["responses"]["NotFound"];
+                405: components["responses"]["MethodNotAllowed"];
+                /** @description Range not satisfiable. */
+                416: {
+                    headers: {
+                        ETag?: components["schemas"]["StrongSHA256ETag"];
+                        "Content-Type"?: components["schemas"]["MediaType"];
+                        "Accept-Ranges"?: components["schemas"]["ByteRangeUnit"];
+                        "Content-Range"?: components["schemas"]["ContentByteRange"];
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["APIError"];
+                    };
+                };
+                500: components["responses"]["Internal"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        /** Get speech render headers without a body */
+        head: {
+            parameters: {
+                query?: never;
+                header?: {
+                    Range?: components["schemas"]["SingleByteRange"];
+                    "If-None-Match"?: components["schemas"]["ConditionalETag"];
+                };
+                path: {
+                    id: components["schemas"]["ULID"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Speech render headers. */
+                200: {
+                    headers: {
+                        ETag?: components["schemas"]["StrongSHA256ETag"];
+                        "Content-Type"?: components["schemas"]["MediaType"];
+                        "Accept-Ranges"?: components["schemas"]["ByteRangeUnit"];
+                        "Content-Length"?: components["schemas"]["ByteLength"];
+                        "X-Accel-Redirect"?: components["schemas"]["InternalRedirectURI"];
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Partial speech render headers. */
+                206: {
+                    headers: {
+                        ETag?: components["schemas"]["StrongSHA256ETag"];
+                        "Content-Type"?: components["schemas"]["MediaType"];
+                        "Accept-Ranges"?: components["schemas"]["ByteRangeUnit"];
+                        "Content-Range"?: components["schemas"]["ContentByteRange"];
+                        "Content-Length"?: components["schemas"]["ByteLength"];
+                        "X-Accel-Redirect"?: components["schemas"]["InternalRedirectURI"];
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not modified. */
+                304: {
+                    headers: {
+                        ETag?: components["schemas"]["StrongSHA256ETag"];
+                        "Content-Type"?: components["schemas"]["MediaType"];
+                        "Accept-Ranges"?: components["schemas"]["ByteRangeUnit"];
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                404: components["responses"]["NotFound"];
+                405: components["responses"]["MethodNotAllowed"];
+                /** @description Range not satisfiable. */
+                416: {
+                    headers: {
+                        ETag?: components["schemas"]["StrongSHA256ETag"];
+                        "Content-Type"?: components["schemas"]["MediaType"];
+                        "Accept-Ranges"?: components["schemas"]["ByteRangeUnit"];
+                        "Content-Range"?: components["schemas"]["ContentByteRange"];
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["APIError"];
+                    };
+                };
+                500: components["responses"]["Internal"];
+            };
+        };
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/speech-workers/enrollments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create a one-time speech worker enrollment secret */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Secret displayed once to the owner. */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["WorkerEnrollment"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                500: components["responses"]["Internal"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/speech-workers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List enrolled speech workers */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Worker status without credential hashes. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SpeechWorker"][];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                500: components["responses"]["Internal"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/speech-workers/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Revoke a speech worker and return its leases to the queue */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["schemas"]["ULID"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Worker revoked. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["OKResponse"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/speech-worker/enroll": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Exchange a one-time secret for a worker credential */
+        post: {
+            parameters: {
+                query?: never;
+                header: {
+                    "X-Doublangu-Enrollment-Token": string;
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["WorkerEnrollmentRequest"];
+                };
+            };
+            responses: {
+                /** @description Worker credential; shown only during enrollment. */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["WorkerEnrollmentResponse"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                /** @description Invalid or expired enrollment secret. */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["APIError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/speech-worker/lease": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Long-poll and lease one compatible speech job */
+        post: {
+            parameters: {
+                query?: never;
+                header: {
+                    "X-Doublangu-Worker-Token": string;
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["WorkerLeaseRequest"];
+                };
+            };
+            responses: {
+                /** @description One leased render job. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["WorkerLease"];
+                    };
+                };
+                /** @description No compatible work before the long-poll deadline. */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                400: components["responses"]["BadRequest"];
+                /** @description Worker credential required. */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["APIError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/speech-worker/jobs/{id}/heartbeat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Renew a speech job lease */
+        post: {
+            parameters: {
+                query?: never;
+                header: {
+                    "X-Doublangu-Worker-Token": string;
+                    "X-Doublangu-Lease-Token": string;
+                };
+                path: {
+                    id: components["schemas"]["ULID"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["WorkerHeartbeat"];
+                };
+            };
+            responses: {
+                /** @description Lease renewed. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["WorkerHeartbeatResponse"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                /** @description Worker credential required. */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["APIError"];
+                    };
+                };
+                /** @description Lease expired or canceled. */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["APIError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/speech-worker/jobs/{id}/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Upload and atomically publish a speech render */
+        post: {
+            parameters: {
+                query?: never;
+                header: {
+                    "X-Doublangu-Worker-Token": string;
+                };
+                path: {
+                    id: components["schemas"]["ULID"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "multipart/form-data": {
+                        /** @description JSON matching WorkerCompleteMetadata. */
+                        metadata: string;
+                        /** Format: binary */
+                        audio: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description Render accepted. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["OKResponse"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                /** @description Worker credential required. */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["APIError"];
+                    };
+                };
+                /** @description Stale lease or nondeterministic result. */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["APIError"];
+                    };
+                };
+                /** @description Audio exceeds the unit limit. */
+                413: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["APIError"];
+                    };
+                };
+                /** @description Audio metadata or bytes failed validation. */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["APIError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/speech-worker/jobs/{id}/fail": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Record a sanitized speech generation failure */
+        post: {
+            parameters: {
+                query?: never;
+                header: {
+                    "X-Doublangu-Worker-Token": string;
+                    "X-Doublangu-Lease-Token": string;
+                };
+                path: {
+                    id: components["schemas"]["ULID"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["WorkerFailure"];
+                };
+            };
+            responses: {
+                /** @description Failure recorded. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["OKResponse"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                /** @description Worker credential required. */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["APIError"];
+                    };
+                };
+                /** @description Lease expired. */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["APIError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/libraries": {
         parameters: {
             query?: never;
@@ -1627,6 +2578,352 @@ export interface components {
         };
         LoginResponse: {
             ok?: boolean;
+        };
+        /** @enum {string} */
+        AnnotationKind: "word" | "phrase" | "idiom" | "expression" | "proverb";
+        /** @enum {string} */
+        EnrichmentStatus: "draft" | "processing" | "ready" | "failed";
+        /** @enum {string} */
+        AnalysisStatus: "needs_analysis" | "queued" | "processing" | "ready" | "failed";
+        /** @enum {string} */
+        NarrationStatus: "not_requested" | "queued" | "generating" | "partial" | "ready" | "failed" | "purged";
+        /** @enum {string} */
+        ShadowPolicy: "token" | "group" | "marker" | "none";
+        /** @enum {string} */
+        OccurrenceRole: "token" | "contiguous_construction" | "discontinuous_construction";
+        /** @enum {string} */
+        LearningStatus: "learned" | "unlearned";
+        ArticleCreate: {
+            /** @description Trimmed title, limited to 200 Unicode scalar values by the server. */
+            title: string;
+            /** @description Pasted article body, limited to 100000 UTF-8 bytes by the server. */
+            body: string;
+            source_language: components["schemas"]["LanguageTag"];
+            target_language: components["schemas"]["LanguageTag"];
+        };
+        LearningStateInput: {
+            source_language: components["schemas"]["LanguageTag"];
+            kind: components["schemas"]["AnnotationKind"];
+            learning_key: string;
+            status: components["schemas"]["LearningStatus"];
+        };
+        SemanticLearningStateInput: {
+            semantic_sense_id: components["schemas"]["ULID"];
+            article_occurrence_id?: components["schemas"]["ULID"];
+            status: components["schemas"]["LearningStatus"];
+        };
+        SemanticLearningState: {
+            semantic_sense_id: components["schemas"]["ULID"];
+            status: components["schemas"]["LearningStatus"];
+            updated_at: string;
+        };
+        LearningState: {
+            source_language: components["schemas"]["LanguageTag"];
+            kind: components["schemas"]["AnnotationKind"];
+            learning_key: string;
+            status: components["schemas"]["LearningStatus"];
+            updated_at: string;
+        };
+        ArticleAnnotation: {
+            id: components["schemas"]["ULID"];
+            article_block_id: components["schemas"]["ULID"];
+            start_utf16: number;
+            end_utf16: number;
+            source_text: string;
+            kind: components["schemas"]["AnnotationKind"];
+            learning_key: string;
+            primary_translation: string;
+            alternatives: string[];
+            literal_translation: string;
+            meaning_note: string;
+            usage_note: string;
+            parts_note: string;
+            suggest_shadow: boolean;
+            learning_state: components["schemas"]["LearningState"] | null;
+            show_shadow: boolean;
+        };
+        AudioRef: {
+            render_id: components["schemas"]["ULID"];
+            url: string;
+            ready: boolean;
+            /** Format: int64 */
+            duration_ms: number;
+            /** Format: int64 */
+            size_bytes: number;
+            error_code: string;
+        };
+        SemanticSense: {
+            id: components["schemas"]["ULID"];
+            semantic_item_id: components["schemas"]["ULID"];
+            kind: components["schemas"]["AnnotationKind"];
+            canonical_form: string;
+            sense_discriminator: string;
+            primary_translation: string;
+            alternatives: string[];
+            literal_translation: string;
+            meaning_note: string;
+            usage_note: string;
+            parts_note: string;
+            canonical_pronunciation_text: string;
+        };
+        ArticleOccurrenceSpan: {
+            id: components["schemas"]["ULID"];
+            article_occurrence_id: components["schemas"]["ULID"];
+            span_index: number;
+            start_utf16: number;
+            end_utf16: number;
+            source_text: string;
+        };
+        ArticleSentence: {
+            id: components["schemas"]["ULID"];
+            article_block_id: components["schemas"]["ULID"];
+            sentence_index: number;
+            start_utf16: number;
+            end_utf16: number;
+            source_text: string;
+            source_hash: components["schemas"]["SHA256"];
+            audio: components["schemas"]["AudioRef"] | null;
+        };
+        ArticleOccurrence: {
+            id: components["schemas"]["ULID"];
+            article_block_id: components["schemas"]["ULID"];
+            article_sentence_id: components["schemas"]["ULID"] | null;
+            semantic_sense_id: components["schemas"]["ULID"] | null;
+            kind: components["schemas"]["AnnotationKind"];
+            role: components["schemas"]["OccurrenceRole"];
+            shadow_policy: components["schemas"]["ShadowPolicy"];
+            shadow_text: string;
+            canonical_pronunciation_text: string;
+            context_pronunciation_key: string;
+            confidence_milli: number;
+            sense: components["schemas"]["SemanticSense"] | null;
+            learning_state: components["schemas"]["SemanticLearningState"] | null;
+            show_shadow: boolean;
+            pronunciation: components["schemas"]["AudioRef"] | null;
+            spans: components["schemas"]["ArticleOccurrenceSpan"][];
+        };
+        ArticleBlock: {
+            id: components["schemas"]["ULID"];
+            article_id: components["schemas"]["ULID"];
+            block_index: number;
+            /** @enum {string} */
+            kind: "paragraph";
+            source_text: string;
+            annotations: components["schemas"]["ArticleAnnotation"][];
+            sentences: components["schemas"]["ArticleSentence"][];
+            occurrences: components["schemas"]["ArticleOccurrence"][];
+        };
+        ArticleSummary: {
+            id: components["schemas"]["ULID"];
+            title: string;
+            source_language: components["schemas"]["LanguageTag"];
+            target_language: components["schemas"]["LanguageTag"];
+            enrichment_status: components["schemas"]["EnrichmentStatus"];
+            enrichment_error_code: string;
+            created_at: string;
+            updated_at: string;
+            content_hash: components["schemas"]["SHA256"];
+            analysis_status: components["schemas"]["AnalysisStatus"];
+            analysis_error_code: string;
+            narration_status: components["schemas"]["NarrationStatus"];
+            narration_error_code: string;
+        };
+        Narration: {
+            article_id: components["schemas"]["ULID"];
+            status: components["schemas"]["NarrationStatus"];
+            error_code: string;
+            sentence_count: number;
+            ready_count: number;
+            /** Format: int64 */
+            duration_ms: number;
+            /** Format: int64 */
+            size_bytes: number;
+            /** Format: int64 */
+            reclaimable_bytes: number;
+            clips: components["schemas"]["NarrationClip"][];
+        };
+        NarrationClip: {
+            sentence_id: components["schemas"]["ULID"];
+            sequence_index: number;
+            audio: components["schemas"]["AudioRef"] | null;
+        };
+        NarrationClearResult: {
+            article_id: components["schemas"]["ULID"];
+            sentence_count: number;
+            /** Format: int64 */
+            reclaimed_bytes: number;
+            /** Format: int64 */
+            retained_bytes: number;
+            purged_render_count: number;
+            status: components["schemas"]["NarrationStatus"];
+        };
+        Article: {
+            id: components["schemas"]["ULID"];
+            title: string;
+            source_language: components["schemas"]["LanguageTag"];
+            target_language: components["schemas"]["LanguageTag"];
+            enrichment_status: components["schemas"]["EnrichmentStatus"];
+            enrichment_error_code: string;
+            created_at: string;
+            updated_at: string;
+            blocks: components["schemas"]["ArticleBlock"][];
+            content_hash: components["schemas"]["SHA256"];
+            analysis_status: components["schemas"]["AnalysisStatus"];
+            analysis_revision: string;
+            analysis_error_code: string;
+            narration_status: components["schemas"]["NarrationStatus"];
+            narration_error_code: string;
+            sentences: components["schemas"]["ArticleSentence"][];
+            occurrences: components["schemas"]["ArticleOccurrence"][];
+            narration: components["schemas"]["NarrationSummary"];
+        };
+        NarrationSummary: {
+            status: components["schemas"]["NarrationStatus"];
+            error_code?: string;
+            sentence_count: number;
+            ready_count: number;
+            /** Format: int64 */
+            duration_ms: number;
+            /** Format: int64 */
+            size_bytes: number;
+            /** Format: int64 */
+            reclaimable_bytes: number;
+        };
+        WorkerCapability: {
+            /** @enum {string} */
+            engine: "avspeech" | "chatterbox";
+            languages: string[];
+            unit_kinds: ("word" | "phrase" | "sentence" | "*")[];
+            /** Format: int64 */
+            max_bytes: number;
+            /** Format: int64 */
+            max_duration_ms: number;
+        };
+        SpeechWorker: {
+            id: components["schemas"]["ULID"];
+            name: string;
+            /** @enum {string} */
+            protocol_version: "speech-worker.v1";
+            revoked_at: string;
+            last_seen_at: string;
+            capabilities: components["schemas"]["WorkerCapability"][];
+            software_version: string;
+            created_at: string;
+            updated_at: string;
+        };
+        WorkerEnrollment: {
+            id: components["schemas"]["ULID"];
+            token: string;
+            expires_at: string;
+        };
+        WorkerEnrollmentRequest: {
+            name: string;
+            /** @enum {string} */
+            protocol_version: "speech-worker.v1";
+            capabilities: components["schemas"]["WorkerCapability"][];
+            software_version: string;
+        };
+        WorkerEnrollmentResponse: {
+            worker: components["schemas"]["SpeechWorker"];
+            worker_token: string;
+            /** @enum {string} */
+            protocol_version: "speech-worker.v1";
+        };
+        WorkerLeaseRequest: {
+            /** @enum {string} */
+            protocol_version: "speech-worker.v1";
+            capabilities: components["schemas"]["WorkerCapability"][];
+        };
+        SpeechProfile: {
+            id: components["schemas"]["ULID"];
+            /** @enum {string} */
+            engine: "avspeech" | "chatterbox";
+            model_revision: string;
+            language: string;
+            voice_identifier: string;
+            reference_audio_hash: string;
+            speed_milli: number;
+            pitch_cents: number;
+            mapping_version: string;
+            /** @enum {string} */
+            mime_type: "audio/mp4";
+            /** @enum {string} */
+            codec: "aac-lc";
+            /** @enum {integer} */
+            sample_rate_hz: 24000;
+            /** @enum {integer} */
+            channels: 1;
+            active: boolean;
+            created_at?: string;
+            updated_at?: string;
+        };
+        AudioLimits: {
+            /** Format: int64 */
+            max_bytes: number;
+            /** Format: int64 */
+            max_duration_ms: number;
+        };
+        WorkerLease: {
+            /** @enum {string} */
+            protocol_version: "speech-worker.v1";
+            job_id: components["schemas"]["ULID"];
+            attempt: number;
+            lease_token: string;
+            lease_expires_at: string;
+            /** @enum {string} */
+            job_type: "tts.avspeech.v1" | "tts.chatterbox.v3";
+            render_id: components["schemas"]["ULID"];
+            request_hash: components["schemas"]["SHA256"];
+            speech_unit_id: components["schemas"]["ULID"];
+            language: string;
+            /** @enum {string} */
+            unit_kind: "word" | "phrase" | "sentence";
+            spoken_text: string;
+            context_pronunciation_key: string;
+            profile: components["schemas"]["SpeechProfile"];
+            limits: components["schemas"]["AudioLimits"];
+        };
+        WorkerHeartbeat: {
+            /** @enum {string} */
+            protocol_version: "speech-worker.v1";
+            attempt: number;
+            progress_percent: number;
+        };
+        WorkerHeartbeatResponse: {
+            /** @enum {string} */
+            protocol_version: "speech-worker.v1";
+            cancel_requested: boolean;
+            lease_expires_at: string;
+            progress_percent: number;
+        };
+        WorkerFailure: {
+            /** @enum {string} */
+            protocol_version: "speech-worker.v1";
+            attempt: number;
+            error_code: string;
+            retry: boolean;
+        };
+        WorkerCompleteMetadata: {
+            /** @enum {string} */
+            protocol_version: "speech-worker.v1";
+            attempt: number;
+            lease_token: string;
+            artifact: {
+                request_hash: components["schemas"]["SHA256"];
+                sha256: components["schemas"]["SHA256"];
+                /** Format: int64 */
+                size_bytes: number;
+                /** @enum {string} */
+                mime_type: "audio/mp4";
+                /** @enum {string} */
+                codec: "aac-lc";
+                /** @enum {integer} */
+                sample_rate_hz: 24000;
+                /** @enum {integer} */
+                channels: 1;
+                /** Format: int64 */
+                duration_ms: number;
+            };
         };
         Library: {
             id: components["schemas"]["ULID"];

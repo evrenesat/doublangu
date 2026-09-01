@@ -1,5 +1,101 @@
 # Architecture
 
+## Audible Article Reader
+
+The article reader is backed by the legacy article tables from migration 004
+plus the additive semantic, job, speech, worker, and media-reference tables in
+migration 005. Legacy `article_annotation` and surface-keyed `learning_state`
+records remain readable for compatibility; the v2 reader writes semantic-sense
+learning state and does not infer new homonym identities from legacy rows.
+
+The request and processing flow is:
+
+1. Svelte `/reader/new` sends the title, exact body, and BCP-47 language tags to
+   `POST /api/v1/articles`.
+2. One transaction preserves the source blocks, computes the versioned
+   content hash, and queues `reader.analysis.v2`. The API returns `201`; no
+   browser request stays open for provider work.
+3. The server job runner first checks the validated analysis cache. On a miss,
+   it prepares deterministic Unicode word tokens and UTF-16 source anchors,
+   loads only local-lexicon candidates used by the article, and sends one
+   isolated read-only/no-tools Codex app-server turn with the strict v2 schema.
+4. The validator requires exact sentence/token/construction occurrences,
+   complete token coverage, legal UTF-16 boundaries, safe bounded strings, and
+   candidate-or-new-sense references. One corrective provider turn is allowed;
+   a second failure preserves the prior accepted analysis and records a stable
+   error code.
+5. A successful analysis transaction stores the cache, reusable semantic
+   items/senses, ordered sentences, layered occurrences/spans, sense-keyed
+   learning state, and deduplicated speech requests. The article remains
+   readable while speech is pending or unavailable.
+
+Semantic identity is `semantic_sense.id`, not spelling. An occurrence points to
+   one sense and carries its effective shadow and pronunciation identity. Every
+   deterministic word token is represented. A contiguous phrase/idiom is a
+   single group occurrence whose component token shadows are suppressed;
+   discontinuous constructions keep ordered multi-spans and marker styling
+   while their member word occurrences remain available. This layered model is
+   rendered directly instead of flattening spans into a non-overlapping list.
+
+The web reader reconstructs source text from stored spans without HTML
+injection. Source wrappers remain inline and shadows occupy a reserved visual
+band, so English labels do not drive Dutch line breaking. Hover/focus/click,
+keyboard, touch, and narration can open the compact popover or focus a sentence;
+focus reflow compensates the viewport delta. Midnight, paper, and high-contrast
+themes are local settings, and the UI polls only nonterminal analysis/speech
+states with visibility-aware backoff.
+
+Speech is independent of article playback. `speech_unit` deduplicates exact
+word, short-phrase, and sentence text plus context; immutable `audio_render`
+rows identify the complete byte-affecting speech profile and request hash.
+Word and short contiguous phrase requests use `tts.avspeech.v1` and
+`lexical_permanent` retention. Sentence requests use `tts.chatterbox.v3`, are
+bound to an ordered `article_sentence_audio` manifest, and use
+`article_narration` retention. There is no monolithic article audio file.
+
+The server owns the speech-worker queue and media publication boundary. An
+outbound macOS worker enrolls with a one-time secret, authenticates with a
+separate credential, long-polls HTTPS leases, heartbeats, and uploads strict
+mono 24 kHz AAC-LC M4A metadata plus bytes. The server validates the live lease,
+request hash, digest, signature, limits, and metadata, then commits the blob,
+`audio_blob_reference`, render, and job outcome atomically. The browser reads
+authenticated server audio URLs with strong ETags and single-range GET/HEAD;
+it never reads a worker-local path. The macOS companion process is specified in
+`plans/macos-speech-worker-handoff.md` but is not source shipped by this
+repository.
+
+Narration clearing cancels active long-form jobs, removes only article sentence
+bindings, tombstones unreferenced narration renders, and runs crash-safe orphan
+cleanup after commit. Lexical renders and blobs shared with another article are
+never deleted. Regeneration reuses the same request identity. If no capable
+worker is online, speech remains queued and the article reports
+`waiting_for_worker`; analysis and the text reader do not fail.
+
+Durable jobs use conditional SQLite leasing, 90-second leases, 30-second
+heartbeats, dependency checks, bounded automatic backoff, and startup/periodic
+recovery. Completion, failure, cancellation, and duplicate uploads are
+idempotent for the job attempt and lease token. The server does not treat an
+in-memory lock as the scheduling authority.
+
+The provider boundary is `annotator.SemanticAnnotator`; the explicit disabled
+mode returns `v1.annotator_unavailable`. Provider/model/prompt/contract
+provenance is stored in the cache and sense rows, while raw reasoning and
+provider diagnostics stay server-side. `/enrich` remains a documented `202`
+compatibility alias for `/reanalyze` during this API version.
+
+The SvelteKit client supports `DOUBLANGU_WEB_BASE_PATH`, and the shared path
+helper prefixes navigation, API/CSRF, health, plugin routes, and audio URLs.
+The root layout gates protected application routes through the owner session;
+worker credentials are never browser credentials. Legacy library, plugin-host,
+and diagnostics routes remain available for development but are not learner
+navigation.
+
+This slice deliberately excludes URL/ebook extraction, STT, forced alignment,
+spaced repetition, multi-user accounts, offline/mobile packaging, alternate
+providers, and the future audio-only lesson/session experience. Those features
+can reference reusable senses, speech units/renders, and jobs later without
+making an article their owner.
+
 ## Plugin Manifest Contract (Checkpoint 2)
 
 ### Manifest Structure

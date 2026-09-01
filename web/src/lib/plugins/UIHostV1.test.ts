@@ -49,6 +49,34 @@ describe("UIHostV1Impl", () => {
     expect(moduleLoads).toEqual([]);
   });
 
+  it("redirects unauthenticated contribution loads to sign-in without surfacing a plugin error", async () => {
+    const navigate = vi.fn(async () => {});
+    host = new UIHostV1Impl({
+      loadModule: async (url) => { moduleLoads.push(url); return { default: module }; },
+      navigate,
+    });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(
+      JSON.stringify({ error: "authentication required", code: "v1.authentication_error" }),
+      { status: 401, headers: { "Content-Type": "application/json" } },
+    )));
+
+    await expect(host.loadContributions()).resolves.toEqual([]);
+    expect(navigate).toHaveBeenCalledOnce();
+    expect(navigate).toHaveBeenCalledWith("/login");
+    expect(moduleLoads).toEqual([]);
+    vi.unstubAllGlobals();
+  });
+
+  it("retains material contribution request errors other than authentication", async () => {
+    const navigate = vi.fn(async () => {});
+    host = new UIHostV1Impl({ navigate });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("unavailable", { status: 503 })));
+
+    await expect(host.loadContributions()).rejects.toThrow("UI contributions request failed: 503");
+    expect(navigate).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
   it("shares one deferred load across concurrent contributions and destroys after either final handle", async () => {
     const loaded = deferred<unknown>();
     host = new UIHostV1Impl({

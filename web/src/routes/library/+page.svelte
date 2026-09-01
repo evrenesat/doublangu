@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
+	import { appPath } from '$lib/paths';
 	import { listLibraries, DoublanguAPIError, DoublanguNetworkError, type Library } from '$lib/api/client';
 
 	let libraries = $state<Library[]>([]);
@@ -30,7 +31,7 @@
 	}
 
 	function detailUrl(id: string): string {
-		return `/library/${encodeURIComponent(id)}`;
+		return appPath(`/library/${encodeURIComponent(id)}`);
 	}
 </script>
 
@@ -51,10 +52,10 @@
 	{:else if libraries.length === 0}
 		<div class="empty">
 			<p>No libraries yet.</p>
-			<a href="/library/new" class="button">Create your first library</a>
+			<a href={appPath('/library/new')} class="button">Create your first library</a>
 		</div>
 	{:else}
-		<a href="/library/new" class="button create-link">Create library</a>
+		<a href={appPath('/library/new')} class="button create-link">Create library</a>
 		<ul class="library-list" role="list">
 			{#each libraries as lib (lib.id)}
 				<li role="listitem" class="library-item">

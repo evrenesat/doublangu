@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { appPath } from '$lib/paths';
 	import { onMount } from 'svelte';
 
 	let password = $state('');
@@ -15,7 +16,7 @@
 		loading = true;
 		error = '';
 		try {
-			const response = await fetch('/api/v1/auth/csrf', { credentials: 'same-origin' });
+			const response = await fetch(appPath('/api/v1/auth/csrf'), { credentials: 'same-origin' });
 			if (!response.ok) {
 				throw new Error('bootstrap rejected');
 			}
@@ -40,7 +41,7 @@
 				await bootstrapCSRF();
 				if (!csrfToken) return;
 			}
-			const resp = await fetch('/api/v1/auth/login', {
+			const resp = await fetch(appPath('/api/v1/auth/login'), {
 				method: 'POST',
 				credentials: 'same-origin',
 				headers: {
@@ -57,7 +58,9 @@
 				return;
 			}
 
-			await goto('/');
+			const requested = new URLSearchParams(window.location.search).get('next');
+			const destination = requested?.startsWith('/') && !requested.startsWith('//') ? requested : '/reader';
+			await goto(appPath(destination as `/${string}`));
 		} catch {
 			error = 'Network error';
 			loading = false;
@@ -75,9 +78,10 @@
 </svelte:head>
 
 <div class="login-page">
-	<form class="login-form" onsubmit={handleSubmit}>
-		<h1>Doublangu</h1>
-		<p class="subtitle">Sign in to continue</p>
+		<form class="login-form" onsubmit={handleSubmit}>
+			<p class="eyebrow">Dutch → English reader</p>
+			<h1>Welcome back</h1>
+			<p class="subtitle">This unlocks your private Doublangu data. The browser’s earlier password prompt protects the beta site itself.</p>
 
 		{#if error}
 			<div class="error" role="alert">{error}</div>
@@ -107,34 +111,46 @@
 		align-items: center;
 		justify-content: center;
 		min-height: 100vh;
-		background: var(--color-surface, #f5f5f5);
+		padding: 1.25rem;
 	}
 
 	.login-form {
 		width: 100%;
 		max-width: 360px;
-		padding: 2rem;
-		background: var(--color-bg, #fff);
-		border-radius: 8px;
-		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+		padding: clamp(1.5rem, 5vw, 2.5rem);
+		border: 1px solid var(--color-border);
+		background: var(--color-surface);
+		border-radius: 0.9rem;
+		box-shadow: 0 24px 70px rgba(0, 0, 0, 0.28);
 	}
 
 	h1 {
 		margin: 0 0 0.25rem;
-		font-size: 1.5rem;
+		font-size: 2rem;
 		text-align: center;
+		letter-spacing: -0.035em;
 	}
 
 	.subtitle {
 		margin: 0 0 1.5rem;
 		text-align: center;
-		color: var(--color-muted, #666);
+		color: var(--color-muted);
 		font-size: 0.9rem;
 	}
 
+	.eyebrow {
+		margin: 0 0 0.55rem;
+		color: var(--color-accent-strong);
+		font-size: 0.75rem;
+		font-weight: 800;
+		letter-spacing: 0.12em;
+		text-align: center;
+		text-transform: uppercase;
+	}
+
 	.error {
-		background: #fee2e2;
-		color: #991b1b;
+		background: var(--color-danger-bg);
+		color: var(--color-danger);
 		padding: 0.5rem 0.75rem;
 		border-radius: 4px;
 		margin-bottom: 1rem;
@@ -155,21 +171,23 @@
 
 	input {
 		padding: 0.5rem 0.75rem;
-		border: 1px solid var(--color-border, #ccc);
+		border: 1px solid var(--color-border);
 		border-radius: 4px;
 		font-size: 1rem;
+		background: var(--color-bg);
 	}
 
 	input:focus {
-		outline: 2px solid var(--color-accent, #2563eb);
+		outline: 2px solid var(--color-accent-strong);
 		outline-offset: -1px;
 	}
 
 	button {
 		width: 100%;
 		padding: 0.6rem;
-		background: var(--color-accent, #2563eb);
-		color: #fff;
+		background: var(--color-accent);
+		color: #11131d;
+		font-weight: 750;
 		border: none;
 		border-radius: 4px;
 		font-size: 1rem;

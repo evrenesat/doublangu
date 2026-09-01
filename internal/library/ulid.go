@@ -28,6 +28,10 @@ func newULID() ULID {
 	return ULID(id.String())
 }
 
+// NewULID generates a canonical record identity for packages that own a
+// separate domain model but share the library identity contract.
+func NewULID() ULID { return newULID() }
+
 // ParseULID parses a 26-character uppercase ULID string into canonical form.
 // It rejects inputs that are not exactly 26 uppercase Crockford base32
 // characters (the alphabet excludes I, L, O, U).

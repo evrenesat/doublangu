@@ -1,4 +1,5 @@
 import type { components } from './generated';
+import { appPath } from '$lib/paths';
 
 export type Library = components['schemas']['Library'];
 export type LibraryCreate = components['schemas']['LibraryCreate'];
@@ -13,6 +14,29 @@ export type Chapter = components['schemas']['Chapter'];
 export type ChapterCreate = components['schemas']['ChapterCreate'];
 export type ChapterUpdate = components['schemas']['ChapterUpdate'];
 export type APIError = components['schemas']['APIError'];
+export type Article = components['schemas']['Article'];
+export type ArticleSummary = components['schemas']['ArticleSummary'];
+export type ArticleCreate = components['schemas']['ArticleCreate'];
+export type ArticleBlock = components['schemas']['ArticleBlock'];
+export type ArticleAnnotation = components['schemas']['ArticleAnnotation'];
+export type LearningState = components['schemas']['LearningState'];
+export type LearningStateInput = components['schemas']['LearningStateInput'];
+export type LearningStatus = components['schemas']['LearningStatus'];
+export type AnalysisStatus = components['schemas']['AnalysisStatus'];
+export type NarrationStatus = components['schemas']['NarrationStatus'];
+export type SemanticLearningState = components['schemas']['SemanticLearningState'];
+export type SemanticLearningStateInput = components['schemas']['SemanticLearningStateInput'];
+export type ArticleOccurrence = components['schemas']['ArticleOccurrence'];
+export type ArticleOccurrenceSpan = components['schemas']['ArticleOccurrenceSpan'];
+export type ArticleSentence = components['schemas']['ArticleSentence'];
+export type SemanticSense = components['schemas']['SemanticSense'];
+export type AudioRef = components['schemas']['AudioRef'];
+export type Narration = components['schemas']['Narration'];
+export type NarrationClearResult = components['schemas']['NarrationClearResult'];
+
+export interface SessionStatus {
+	authenticated: boolean;
+}
 
 export class DoublanguAPIError extends Error {
 	code: string;
@@ -66,7 +90,7 @@ async function throwResponseError(response: Response, context = 'Request'): Prom
 async function mutationHeaders(): Promise<Headers> {
 	let token = csrfToken();
 	if (!token) {
-		const response = await fetch('/api/v1/auth/csrf', { credentials: 'same-origin' });
+		const response = await fetch(appPath('/api/v1/auth/csrf'), { credentials: 'same-origin' });
 		if (!response.ok) await throwResponseError(response, 'CSRF bootstrap');
 		token = csrfToken();
 		if (!token) throw new DoublanguNetworkError('CSRF cookie not set after bootstrap');
@@ -79,10 +103,18 @@ async function apiFetch<T>(url: string, init?: RequestInit & { csrf?: boolean })
 	if (init?.csrf) {
 		for (const [name, value] of (await mutationHeaders()).entries()) headers.set(name, value);
 	}
-	const response = await fetch(url, { ...init, credentials: 'same-origin', headers });
+	const response = await fetch(appPath(url as `/${string}`), { ...init, credentials: 'same-origin', headers });
 	if (!response.ok) return throwResponseError(response);
 	if (response.status === 204 || response.headers.get('content-length') === '0') return undefined as T;
 	return (await response.json()) as T;
+}
+
+export async function getSession(): Promise<SessionStatus> {
+	return apiFetch('/api/v1/auth/session');
+}
+
+export async function logoutSession(): Promise<void> {
+	return apiFetch('/api/v1/auth/logout', { method: 'POST', csrf: true });
 }
 
 export async function listLibraries(): Promise<Library[]> {
@@ -163,4 +195,44 @@ export async function updateChapter(chapterId: string, data: ChapterUpdate): Pro
 
 export async function deleteChapter(chapterId: string): Promise<void> {
 	return apiFetch(`/api/v1/chapters/${id(chapterId)}`, { method: 'DELETE', csrf: true });
+}
+
+export async function listArticles(): Promise<ArticleSummary[]> {
+	return apiFetch('/api/v1/articles');
+}
+
+export async function createArticle(data: ArticleCreate): Promise<Article> {
+	return apiFetch('/api/v1/articles', { method: 'POST', body: JSON.stringify(data), csrf: true });
+}
+
+export async function getArticle(articleId: string): Promise<Article> {
+	return apiFetch(`/api/v1/articles/${id(articleId)}`);
+}
+
+export async function enrichArticle(articleId: string): Promise<Article> {
+	return apiFetch(`/api/v1/articles/${id(articleId)}/enrich`, { method: 'POST', csrf: true });
+}
+
+export async function reanalyzeArticle(articleId: string): Promise<Article> {
+	return apiFetch(`/api/v1/articles/${id(articleId)}/reanalyze`, { method: 'POST', csrf: true });
+}
+
+export async function getNarration(articleId: string): Promise<Narration> {
+	return apiFetch(`/api/v1/articles/${id(articleId)}/narration`);
+}
+
+export async function generateNarration(articleId: string): Promise<Article> {
+	return apiFetch(`/api/v1/articles/${id(articleId)}/narration`, { method: 'POST', csrf: true });
+}
+
+export async function clearNarration(articleId: string): Promise<NarrationClearResult> {
+	return apiFetch(`/api/v1/articles/${id(articleId)}/narration`, { method: 'DELETE', csrf: true });
+}
+
+export async function updateLearningState(data: LearningStateInput): Promise<LearningState> {
+	return apiFetch('/api/v1/learning-state', { method: 'PUT', body: JSON.stringify(data), csrf: true });
+}
+
+export async function updateSemanticLearningState(data: SemanticLearningStateInput): Promise<SemanticLearningState> {
+	return apiFetch('/api/v1/learning-state', { method: 'PUT', body: JSON.stringify(data), csrf: true });
 }

@@ -1,0 +1,194 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://doublangu.local/contracts/speech-worker-v1.schema.json",
+  "title": "Doublangu speech worker protocol v1",
+  "type": "object",
+  "definitions": {
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["engine", "languages", "unit_kinds", "max_bytes", "max_duration_ms"],
+      "properties": {
+        "engine": {"type": "string", "enum": ["avspeech", "chatterbox"]},
+        "languages": {"type": "array", "minItems": 1, "maxItems": 32, "items": {"type": "string", "minLength": 1}},
+        "unit_kinds": {"type": "array", "minItems": 1, "maxItems": 8, "items": {"type": "string", "enum": ["word", "phrase", "sentence", "*"]}},
+        "max_bytes": {"type": "integer", "minimum": 0},
+        "max_duration_ms": {"type": "integer", "minimum": 0}
+      }
+    },
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["engine", "model_revision", "language", "voice_identifier", "reference_audio_hash", "speed_milli", "pitch_cents", "mapping_version", "mime_type", "codec", "sample_rate_hz", "channels", "active"],
+      "properties": {
+        "id": {"type": "string"},
+        "engine": {"type": "string", "enum": ["avspeech", "chatterbox"]},
+        "model_revision": {"type": "string", "minLength": 1},
+        "language": {"type": "string", "minLength": 2},
+        "voice_identifier": {"type": "string", "minLength": 1},
+        "reference_audio_hash": {"type": "string"},
+        "speed_milli": {"type": "integer", "minimum": 1},
+        "pitch_cents": {"type": "integer"},
+        "mapping_version": {"type": "string", "minLength": 1},
+        "mime_type": {"const": "audio/mp4"},
+        "codec": {"const": "aac-lc"},
+        "sample_rate_hz": {"const": 24000},
+        "channels": {"const": 1},
+        "active": {"type": "boolean"},
+        "created_at": {"type": "string"},
+        "updated_at": {"type": "string"}
+      }
+    },
+    "worker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "protocol_version", "revoked_at", "last_seen_at", "capabilities", "software_version", "created_at", "updated_at"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"},
+        "name": {"type": "string", "minLength": 1, "maxLength": 120},
+        "protocol_version": {"const": "speech-worker.v1"},
+        "revoked_at": {"type": "string"},
+        "last_seen_at": {"type": "string"},
+        "capabilities": {"type": "array", "minItems": 1, "maxItems": 32, "items": {"$ref": "#/definitions/capability"}},
+        "software_version": {"type": "string", "maxLength": 120},
+        "created_at": {"type": "string"},
+        "updated_at": {"type": "string"}
+      }
+    },
+    "enrollment_response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["worker", "worker_token", "protocol_version"],
+      "properties": {
+        "worker": {"$ref": "#/definitions/worker"},
+        "worker_token": {"type": "string", "minLength": 32, "maxLength": 128},
+        "protocol_version": {"const": "speech-worker.v1"}
+      }
+    },
+    "lease": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol_version", "job_id", "attempt", "lease_token", "lease_expires_at", "job_type", "render_id", "request_hash", "speech_unit_id", "language", "unit_kind", "spoken_text", "context_pronunciation_key", "profile", "limits"],
+      "properties": {
+        "protocol_version": {"const": "speech-worker.v1"},
+        "job_id": {"type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"},
+        "attempt": {"type": "integer", "minimum": 1, "maximum": 3},
+        "lease_token": {"type": "string", "minLength": 32, "maxLength": 128},
+        "lease_expires_at": {"type": "string", "minLength": 1},
+        "job_type": {"type": "string", "enum": ["tts.avspeech.v1", "tts.chatterbox.v3"]},
+        "render_id": {"type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"},
+        "request_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "speech_unit_id": {"type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"},
+        "language": {"type": "string", "minLength": 2},
+        "unit_kind": {"type": "string", "enum": ["word", "phrase", "sentence"]},
+        "spoken_text": {"type": "string", "minLength": 1},
+        "context_pronunciation_key": {"type": "string"},
+        "profile": {"$ref": "#/definitions/profile"},
+        "limits": {"type": "object", "additionalProperties": false, "required": ["max_bytes", "max_duration_ms"], "properties": {"max_bytes": {"type": "integer", "minimum": 1}, "max_duration_ms": {"type": "integer", "minimum": 1}}}
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["request_hash", "sha256", "size_bytes", "mime_type", "codec", "sample_rate_hz", "channels", "duration_ms"],
+      "properties": {
+        "request_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "size_bytes": {"type": "integer", "minimum": 1},
+        "mime_type": {"const": "audio/mp4"},
+        "codec": {"const": "aac-lc"},
+        "sample_rate_hz": {"const": 24000},
+        "channels": {"const": 1},
+        "duration_ms": {"type": "integer", "minimum": 1}
+      }
+    },
+    "heartbeat": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol_version", "attempt", "progress_percent"],
+      "properties": {
+        "protocol_version": {"const": "speech-worker.v1"},
+        "attempt": {"type": "integer", "minimum": 1, "maximum": 3},
+        "progress_percent": {"type": "integer", "minimum": 0, "maximum": 100}
+      }
+    },
+    "heartbeat_response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol_version", "cancel_requested", "lease_expires_at", "progress_percent"],
+      "properties": {
+        "protocol_version": {"const": "speech-worker.v1"},
+        "cancel_requested": {"type": "boolean"},
+        "lease_expires_at": {"type": "string", "minLength": 1},
+        "progress_percent": {"type": "integer", "minimum": 0, "maximum": 100}
+      }
+    },
+    "failure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol_version", "attempt", "error_code", "retry"],
+      "properties": {
+        "protocol_version": {"const": "speech-worker.v1"},
+        "attempt": {"type": "integer", "minimum": 1, "maximum": 3},
+        "error_code": {"type": "string", "pattern": "^v1\\.[a-z0-9._-]{1,117}$"},
+        "retry": {"type": "boolean"}
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "title": "Worker enrollment",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "protocol_version", "capabilities", "software_version"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1, "maxLength": 120},
+        "protocol_version": {"const": "speech-worker.v1"},
+        "capabilities": {"type": "array", "minItems": 1, "maxItems": 32, "items": {"$ref": "#/definitions/capability"}},
+        "software_version": {"type": "string", "maxLength": 120}
+      }
+    },
+    {
+      "title": "Lease request",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol_version", "capabilities"],
+      "properties": {
+        "protocol_version": {"const": "speech-worker.v1"},
+        "capabilities": {"type": "array", "minItems": 1, "maxItems": 32, "items": {"$ref": "#/definitions/capability"}}
+      }
+    },
+    {
+      "title": "Audio completion metadata",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol_version", "attempt", "lease_token", "artifact"],
+      "properties": {
+        "protocol_version": {"const": "speech-worker.v1"},
+        "attempt": {"type": "integer", "minimum": 1, "maximum": 3},
+        "lease_token": {"type": "string", "minLength": 32, "maxLength": 128},
+        "artifact": {"$ref": "#/definitions/artifact"}
+      }
+    },
+    {
+      "title": "Worker heartbeat",
+      "$ref": "#/definitions/heartbeat"
+    },
+    {
+      "title": "Worker failure",
+      "$ref": "#/definitions/failure"
+    },
+    {
+      "title": "Worker enrollment response",
+      "$ref": "#/definitions/enrollment_response"
+    },
+    {
+      "title": "Worker lease response",
+      "$ref": "#/definitions/lease"
+    },
+    {
+      "title": "Worker heartbeat response",
+      "$ref": "#/definitions/heartbeat_response"
+    }
+  ]
+}

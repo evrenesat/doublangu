@@ -1,6 +1,6 @@
 # Doublangu Article Hover Shadows — MVP Handoff
 
-Status: ready for implementation
+Status: implemented; awaiting owner review
 
 ## Objective
 

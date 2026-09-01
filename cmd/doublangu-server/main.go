@@ -18,13 +18,19 @@ import (
 	"syscall"
 	"time"
 
+	"doublangu/internal/analysis"
+	"doublangu/internal/annotator"
 	"doublangu/internal/auth"
 	"doublangu/internal/config"
 	"doublangu/internal/httpapi"
 	"doublangu/internal/httpapi/pluginassets"
+	"doublangu/internal/jobs"
 	"doublangu/internal/library"
+	"doublangu/internal/media"
 	manifest "doublangu/internal/plugins"
+	"doublangu/internal/reader"
 	"doublangu/internal/store"
+	"doublangu/internal/workers"
 	"golang.org/x/term"
 )
 
@@ -100,13 +106,45 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		SessionMaxAge: cfg.Session.MaxAge,
 		Secure:        cfg.Session.Secure,
 	}
+	if _, err := jobs.NewStore(db).RecoverExpired(context.Background()); err != nil {
+		fmt.Fprintf(stderr, "job recovery: %v\n", err)
+		return 1
+	}
+	mediaStore, err := media.New(cfg.Paths.Media)
+	if err != nil {
+		fmt.Fprintf(stderr, "media: %v\n", err)
+		return 1
+	}
+	if err := mediaStore.Recover(context.Background(), db); err != nil {
+		fmt.Fprintf(stderr, "media recovery: %v\n", err)
+		return 1
+	}
+	articleStore := reader.NewStoreWithMedia(db, mediaStore)
+	if err := articleStore.RecoverInterrupted(context.Background()); err != nil {
+		fmt.Fprintf(stderr, "article enrichment recovery: %v\n", err)
+		return 1
+	}
+	var articleAnnotator annotator.Annotator
+	if cfg.Annotator == "disabled" {
+		articleAnnotator = annotator.Disabled{}
+	} else {
+		articleAnnotator = annotator.NewCodexAppServer(annotator.CodexConfig{
+			Model:  cfg.CodexModel,
+			Effort: cfg.CodexEffort,
+		})
+	}
 	healthHandler := httpapi.NewHealthHandler(db)
 	schema, err := manifest.LoadSchema()
 	if err != nil {
 		fmt.Fprintf(stderr, "WARNING: schema not available: %v\n", err)
 	}
 	registry := manifest.NewRegistry()
-	if err := serve(cfg.Listen, registry, schema, db, newHandler(registry, schema, authHandler, healthHandler, cfg, db), stdout); err != nil {
+	semanticProvider, _ := articleAnnotator.(annotator.SemanticAnnotator)
+	analysisRunner := analysis.NewRunnerWithMedia(db, semanticProvider, mediaStore)
+	analysisContext, stopAnalysis := context.WithCancel(context.Background())
+	go analysisRunner.Run(analysisContext)
+	defer stopAnalysis()
+	if err := serve(cfg.Listen, registry, schema, db, newHandlerWithMedia(registry, schema, authHandler, healthHandler, cfg, db, mediaStore, articleAnnotator), stdout); err != nil {
 		fmt.Fprintf(stderr, "server: %v\n", err)
 		return 1
 	}
@@ -128,8 +166,25 @@ func newHandler(
 	health *httpapi.HealthHandler,
 	cfg *config.Config,
 	db *store.DB,
+	providers ...annotator.Annotator,
+) http.Handler {
+	return newHandlerWithMedia(registry, schema, authHandler, health, cfg, db, nil, providers...)
+}
+
+func newHandlerWithMedia(
+	registry *manifest.Registry,
+	schema *manifest.ParsedSchema,
+	authHandler *auth.AuthHandler,
+	health *httpapi.HealthHandler,
+	cfg *config.Config,
+	db *store.DB,
+	mediaStore *media.Store,
+	providers ...annotator.Annotator,
 ) http.Handler {
 	mux := http.NewServeMux()
+	if mediaStore == nil {
+		mediaStore, _ = media.New(cfg.Paths.Media)
+	}
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -186,6 +241,34 @@ func newHandler(
 
 	mediaRoutes := authHandler.RequireAuth(mediaMux(mediaHandler))
 	mux.Handle("/api/v1/media/", mediaRoutes)
+	mux.Handle("/api/v1/audio/", mediaRoutes)
+
+	var articleAnnotator annotator.Annotator
+	if len(providers) > 0 {
+		articleAnnotator = providers[0]
+	}
+	articleHandler := httpapi.NewArticleHandler(db, authHandler.CSRF, articleAnnotator, mediaStore)
+	articleRoutes := authHandler.RequireAuth(articleMux(articleHandler))
+	mux.Handle("/api/v1/articles", articleRoutes)
+	mux.Handle("/api/v1/articles/", articleRoutes)
+	mux.Handle("/api/v1/learning-state", articleRoutes)
+
+	workerService := workers.NewService(db, mediaStore)
+	workerHandler := httpapi.NewSpeechWorkerHandler(workerService, authHandler.CSRF)
+	ownerWorkerMux := http.NewServeMux()
+	ownerWorkerMux.HandleFunc("POST /api/v1/speech-workers/enrollments", workerHandler.ServeOwnerEnrollments)
+	ownerWorkerMux.HandleFunc("GET /api/v1/speech-workers", workerHandler.ServeOwnerWorkers)
+	ownerWorkerMux.HandleFunc("DELETE /api/v1/speech-workers/{id}", workerHandler.ServeOwnerWorker)
+	mux.Handle("/api/v1/speech-workers", authHandler.RequireAuth(ownerWorkerMux))
+	mux.Handle("/api/v1/speech-workers/", authHandler.RequireAuth(ownerWorkerMux))
+
+	// These routes intentionally do not use browser-session or CSRF middleware.
+	// The worker service authenticates the independent application credential.
+	mux.HandleFunc("POST /api/v1/speech-worker/enroll", workerHandler.ServeEnroll)
+	mux.HandleFunc("POST /api/v1/speech-worker/lease", workerHandler.ServeLease)
+	mux.HandleFunc("POST /api/v1/speech-worker/jobs/{id}/heartbeat", workerHandler.ServeHeartbeat)
+	mux.HandleFunc("POST /api/v1/speech-worker/jobs/{id}/complete", workerHandler.ServeComplete)
+	mux.HandleFunc("POST /api/v1/speech-worker/jobs/{id}/fail", workerHandler.ServeFail)
 
 	return mux
 }
@@ -235,6 +318,20 @@ func libraryMux(h *httpapi.LibraryHandler) http.Handler {
 func mediaMux(h *httpapi.MediaHandler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/media/{id}", h.ServeMedia)
+	mux.HandleFunc("/api/v1/audio/{id}", h.ServeAudio)
+	return mux
+}
+
+func articleMux(h *httpapi.ArticleHandler) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/articles", h.ServeArticles)
+	mux.HandleFunc("/api/v1/articles/{id}", h.ServeArticle)
+	mux.HandleFunc("/api/v1/articles/{id}/enrich", h.ServeEnrichQueued)
+	mux.HandleFunc("/api/v1/articles/{id}/reanalyze", h.ServeReanalyze)
+	mux.HandleFunc("POST /api/v1/articles/{id}/narration", h.ServeGenerateNarration)
+	mux.HandleFunc("GET /api/v1/articles/{id}/narration", h.ServeNarration)
+	mux.HandleFunc("DELETE /api/v1/articles/{id}/narration", h.ServeClearNarration)
+	mux.HandleFunc("/api/v1/learning-state", h.ServeLearningState)
 	return mux
 }
 

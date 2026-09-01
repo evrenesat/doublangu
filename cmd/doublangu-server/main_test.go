@@ -18,11 +18,13 @@ import (
 	"testing"
 	"time"
 
+	"doublangu/internal/annotator"
 	"doublangu/internal/auth"
 	"doublangu/internal/config"
 	"doublangu/internal/httpapi"
 	"doublangu/internal/library"
 	manifest "doublangu/internal/plugins"
+	"doublangu/internal/reader"
 	"doublangu/internal/store"
 	v1 "doublangu/pkg/pluginapi/v1"
 )
@@ -203,6 +205,46 @@ func TestAssembledLibraryAndMediaAuthCSRF(t *testing.T) {
 	handler.ServeHTTP(rec, serverRequest(http.MethodGet, "/api/v1/media/%2E%2E", "", session, ""))
 	if rec.Code != http.StatusBadRequest || decodeServerError(t, rec).Code != httpapi.ErrCodeValidation {
 		t.Fatalf("escaped media traversal status=%d", rec.Code)
+	}
+}
+
+func TestAssembledArticleRoutesRequireOwnerAndCSRF(t *testing.T) {
+	ah, db := testAuth(t)
+	handler := newHandler(manifest.NewRegistry(), &manifest.ParsedSchema{}, ah, testHealth(t, db), testConfig(t), db, annotator.Disabled{})
+
+	unauthorized := httptest.NewRecorder()
+	handler.ServeHTTP(unauthorized, serverRequest(http.MethodGet, "/api/v1/articles", "", "", ""))
+	if unauthorized.Code != http.StatusUnauthorized || decodeServerError(t, unauthorized).Code != httpapi.ErrCodeAuth {
+		t.Fatalf("unauthorized article list = %d", unauthorized.Code)
+	}
+
+	session, err := ah.Sessions.Create(t.Context(), time.Hour, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	withoutCSRF := httptest.NewRecorder()
+	handler.ServeHTTP(withoutCSRF, serverRequest(http.MethodPost, "/api/v1/articles", `{}`, session, ""))
+	if withoutCSRF.Code != http.StatusForbidden || decodeServerError(t, withoutCSRF).Code != httpapi.ErrCodeCSRF {
+		t.Fatalf("article CSRF response = %d", withoutCSRF.Code)
+	}
+
+	csrf, err := ah.CSRF.GenerateToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	created := httptest.NewRecorder()
+	handler.ServeHTTP(created, serverRequest(http.MethodPost, "/api/v1/articles", `{"title":"Test","body":"Een zin.","source_language":"nl","target_language":"en"}`, session, csrf))
+	if created.Code != http.StatusCreated {
+		t.Fatalf("article create = %d %s", created.Code, created.Body.String())
+	}
+	var article reader.Article
+	if err := json.NewDecoder(created.Body).Decode(&article); err != nil || article.ID.IsZero() {
+		t.Fatalf("created article = %+v err=%v", article, err)
+	}
+	got := httptest.NewRecorder()
+	handler.ServeHTTP(got, serverRequest(http.MethodGet, "/api/v1/articles/"+article.ID.String(), "", session, ""))
+	if got.Code != http.StatusOK {
+		t.Fatalf("article get = %d %s", got.Code, got.Body.String())
 	}
 }
 
@@ -549,7 +591,7 @@ func TestAuthEndpointsRegistered(t *testing.T) {
 func TestZeroPluginServerSmoke(t *testing.T) {
 	repositoryRoot := findRepositoryRoot(t)
 	binary := filepath.Join(t.TempDir(), "doublangu-server")
-	build := exec.Command("go", "build", "-o", binary, "./cmd/doublangu-server")
+	build := exec.Command("go", "build", "-buildvcs=false", "-o", binary, "./cmd/doublangu-server")
 	build.Dir = repositoryRoot
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build server: %v\n%s", err, output)

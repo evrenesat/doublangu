@@ -109,6 +109,14 @@ func (p *PreparedWrite) Digest() string {
 	return p.state.digest
 }
 
+// Size returns the verified byte length captured by PrepareWrite.
+func (p *PreparedWrite) Size() int64 {
+	if p == nil || p.state == nil {
+		return 0
+	}
+	return p.state.size
+}
+
 func (p *PreparedWrite) begin(store *Store) error {
 	if p == nil || p.state == nil {
 		return ErrInvalidPreparedWrite
@@ -205,13 +213,24 @@ func (s *Store) failPrepare(lease *digestLease, tempPath string, primary error, 
 	return joinFailure(primary, cleanup)
 }
 
-// CommitWrite owns the database transaction and the final immutable
-// publication. The blob is promoted while the transaction is still open, but
-// Read takes the same digest lease and cannot observe it until metadata commit
-// succeeds. A failed promotion or commit removes only this attempt's artifact.
-func (s *Store) CommitWrite(ctx context.Context, db *store.DB, sourceAssetID, mimeType string, write *PreparedWrite) (digest string, returnErr error) {
+// CommitWrite publishes a source-asset reference using the generic prepared
+// write primitive. The wrapper preserves the original media API and behavior.
+func (s *Store) CommitWrite(ctx context.Context, db *store.DB, sourceAssetID, mimeType string, write *PreparedWrite) (string, error) {
+	return s.CommitPrepared(ctx, db, mimeType, write, func(tx *sql.Tx, digest string, size int64) error {
+		return s.storeDB(ctx, tx, sourceAssetID, mimeType, digest, size)
+	})
+}
+
+// CommitPrepared atomically promotes one verified prepared write and invokes
+// referenceCommit inside the same SQLite transaction. The callback owns the
+// domain reference (source_asset, audio_render, or a future reference table),
+// while this package owns blob metadata, digest serialization, and recovery.
+func (s *Store) CommitPrepared(ctx context.Context, db *store.DB, mimeType string, write *PreparedWrite, referenceCommit func(*sql.Tx, string, int64) error) (digest string, returnErr error) {
 	if db == nil {
 		return "", fmt.Errorf("media: commit: nil database")
+	}
+	if referenceCommit == nil {
+		return "", fmt.Errorf("media: commit: nil reference callback")
 	}
 	if err := write.begin(s); err != nil {
 		return "", err
@@ -235,7 +254,13 @@ func (s *Store) CommitWrite(ctx context.Context, db *store.DB, sourceAssetID, mi
 	if err != nil {
 		return "", s.cleanupAttempt(write, err)
 	}
-	if err := s.storeDB(ctx, tx, sourceAssetID, mimeType, write); err != nil {
+	if _, err := tx.ExecContext(ctx,
+		`INSERT OR IGNORE INTO blob (digest, size_bytes, mime_type) VALUES (?, ?, ?)`,
+		write.state.digest, write.state.size, mimeType,
+	); err != nil {
+		return "", s.cleanupAttempt(write, writeError("insert blob", err))
+	}
+	if err := referenceCommit(tx, write.state.digest, write.state.size); err != nil {
 		return "", s.cleanupAttempt(write, err)
 	}
 
@@ -250,7 +275,7 @@ func (s *Store) CommitWrite(ctx context.Context, db *store.DB, sourceAssetID, mi
 	if err := s.commitTransaction(tx); err != nil {
 		rollbackErr := tx.Rollback()
 		committed = true // the transaction has reached a terminal state.
-		parityErr := s.restoreAfterCommitFailure(ctx, db, sourceAssetID, write, published)
+		parityErr := s.restoreAfterGenericCommitFailure(ctx, db, write, published)
 		if rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
 			parityErr = joinFailure(parityErr, fmt.Errorf("media: rollback failed commit: %w", rollbackErr))
 		}
@@ -296,19 +321,31 @@ func (s *Store) AbandonWrite(write *PreparedWrite) error {
 	return nil
 }
 
-func (s *Store) storeDB(ctx context.Context, tx *sql.Tx, sourceAssetID, mimeType string, write *PreparedWrite) error {
-	if _, err := tx.ExecContext(ctx,
-		`INSERT OR IGNORE INTO blob (digest, size_bytes, mime_type) VALUES (?, ?, ?)`,
-		write.state.digest, write.state.size, mimeType,
-	); err != nil {
-		return writeError("insert blob", err)
-	}
+func (s *Store) storeDB(ctx context.Context, tx *sql.Tx, sourceAssetID, mimeType, digest string, size int64) error {
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO blob_reference (id, source_asset_id, blob_digest) VALUES (?, ?, ?)
 		ON CONFLICT(source_asset_id) DO UPDATE SET blob_digest = excluded.blob_digest`,
-		newULID(), sourceAssetID, write.state.digest,
+		newULID(), sourceAssetID, digest,
 	); err != nil {
 		return writeError("upsert blob reference", err)
+	}
+	_ = size
+	return nil
+}
+
+func (s *Store) restoreAfterGenericCommitFailure(ctx context.Context, db *store.DB, write *PreparedWrite, published bool) error {
+	if !published {
+		return s.cleanupAttempt(write, nil)
+	}
+	var count int
+	if err := db.QueryRow(ctx, `SELECT COUNT(*) FROM blob WHERE digest = ?`, write.state.digest).Scan(&count); err != nil {
+		return fmt.Errorf("media: verify failed generic commit parity: %w", err)
+	}
+	if count > 0 {
+		return nil
+	}
+	if err := s.removeFile(s.blobPath(write.state.digest)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("media: remove uncommitted blob %s: %w", write.state.digest, err)
 	}
 	return nil
 }
@@ -449,7 +486,7 @@ func (s *Store) CleanupOrphan(ctx context.Context, db *store.DB, digest string) 
 
 	var count int
 	if err := tx.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM blob_reference WHERE blob_digest = ?`, digest,
+		`SELECT (SELECT COUNT(*) FROM blob_reference WHERE blob_digest = ?) + (SELECT COUNT(*) FROM audio_blob_reference WHERE blob_digest = ?)`, digest, digest,
 	).Scan(&count); err != nil {
 		return false, fmt.Errorf("media: count references for %s: %w", digest, err)
 	}
@@ -626,7 +663,7 @@ func (s *Store) recoverCleanupArtifact(ctx context.Context, db *store.DB, digest
 // ListOrphanDigests returns digests of blobs that have no references.
 func (s *Store) ListOrphanDigests(ctx context.Context, tx *sql.Tx) ([]string, error) {
 	rows, err := tx.QueryContext(ctx,
-		`SELECT b.digest FROM blob b WHERE NOT EXISTS (SELECT 1 FROM blob_reference r WHERE r.blob_digest = b.digest) ORDER BY b.digest`,
+		`SELECT b.digest FROM blob b WHERE NOT EXISTS (SELECT 1 FROM blob_reference r WHERE r.blob_digest = b.digest) AND NOT EXISTS (SELECT 1 FROM audio_blob_reference r WHERE r.blob_digest = b.digest) ORDER BY b.digest`,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("media: list orphans: %w", err)

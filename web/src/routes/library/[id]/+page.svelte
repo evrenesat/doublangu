@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
+	import { appPath } from '$lib/paths';
 	import {
 		getLibrary,
 		listWorks,
@@ -59,7 +60,7 @@
 					error = 'Library not found.';
 				} else if (e.status === 401) {
 					error = 'Please sign in to view libraries.';
-					void goto('/login');
+					void goto(appPath('/login'));
 					return;
 				} else {
 					error = e.message;
@@ -148,7 +149,7 @@
 		if (!confirm('Delete this library and all its works?')) return;
 		try {
 			await deleteLibrary(libraryId);
-			void goto('/library');
+			void goto(appPath('/library'));
 		} catch (e) {
 			if (e instanceof DoublanguAPIError) {
 				error = e.message;
@@ -213,7 +214,7 @@
 </svelte:head>
 
 <div class="detail-page">
-	<a href="/library" class="back-link">← Back to library</a>
+	<a href={appPath('/library')} class="back-link">← Back to library</a>
 
 	{#if loading}
 		<p class="status" role="status">Loading library…</p>

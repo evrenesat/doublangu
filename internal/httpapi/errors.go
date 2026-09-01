@@ -15,14 +15,23 @@ type APIError struct {
 
 // Common error codes.
 const (
-	ErrCodeValidation     = "v1.validation_error"
-	ErrCodeAuth           = "v1.authentication_error"
-	ErrCodeCSRF           = "v1.csrf_error"
-	ErrCodeRateLimit      = "v1.rate_limit_error"
-	ErrCodeNotFound       = "v1.not_found"
-	ErrCodeMethodNotAllow = "v1.method_not_allowed"
-	ErrCodeUnavailable    = "v1.service_unavailable"
-	ErrCodeInternal       = "v1.internal_error"
+	ErrCodeValidation            = "v1.validation_error"
+	ErrCodeAuth                  = "v1.authentication_error"
+	ErrCodeCSRF                  = "v1.csrf_error"
+	ErrCodeRateLimit             = "v1.rate_limit_error"
+	ErrCodeNotFound              = "v1.not_found"
+	ErrCodeMethodNotAllow        = "v1.method_not_allowed"
+	ErrCodeUnavailable           = "v1.service_unavailable"
+	ErrCodeInternal              = "v1.internal_error"
+	ErrCodeEnrichmentInProgress  = "v1.enrichment_in_progress"
+	ErrCodeWorkerAuth            = "v1.worker_authentication_error"
+	ErrCodeWorkerProtocol        = "v1.worker_protocol_error"
+	ErrCodeWorkerOffline         = "v1.worker_offline"
+	ErrCodeAudioUploadRejected   = "v1.audio_upload_rejected"
+	ErrCodeAudioNondeterministic = "v1.audio_nondeterministic_result"
+	ErrCodeAudioGeneration       = "v1.audio_generation_failed"
+	ErrCodeNarrationPurged       = "v1.narration_purged"
+	ErrCodeAnalysisNotReady      = "v1.analysis_not_ready"
 )
 
 // WriteError writes a structured JSON error response.

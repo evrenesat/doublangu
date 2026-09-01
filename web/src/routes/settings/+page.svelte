@@ -5,6 +5,7 @@
 	 */
 	import { onMount } from 'svelte';
 	import { DoublanguNetworkError } from '$lib/api/client';
+	import { appPath } from '$lib/paths';
 
 	let coreReady = $state<boolean | null>(null);
 	let loaderReady = $state<boolean | null>(null);
@@ -24,7 +25,7 @@
 		loading = true;
 		error = '';
 		try {
-			const resp = await fetch('/health', { credentials: 'same-origin' });
+			const resp = await fetch(appPath('/health'), { credentials: 'same-origin' });
 			if (!resp.ok) {
 				throw new DoublanguNetworkError(`Server returned ${resp.status}`);
 			}
@@ -115,8 +116,8 @@
 			<h2>Navigation</h2>
 			<nav aria-label="Settings navigation">
 				<ul class="nav-links">
-					<li><a href="/library">Library</a></li>
-					<li><a href="/plugins">Plugins</a></li>
+					<li><a href={appPath('/library')}>Library</a></li>
+					<li><a href={appPath('/plugins')}>Plugins</a></li>
 				</ul>
 			</nav>
 		</section>

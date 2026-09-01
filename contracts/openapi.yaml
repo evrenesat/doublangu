@@ -243,6 +243,520 @@ paths:
               schema:
                 $ref: "#/components/schemas/APIError"
 
+  # --- Article reader endpoints ---
+  # All reader routes require an authenticated owner session. Mutations also
+  # require the CSRF double-submit cookie/header pair.
+
+  /api/v1/articles:
+    get:
+      summary: List saved reader articles
+      security: [{ sessionCookie: [] }]
+      responses:
+        "200":
+          description: Article summaries, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ArticleSummary"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/Internal"
+
+    post:
+      summary: Save a pasted reader article
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ArticleCreate"
+      responses:
+        "201":
+          description: Article saved immediately with background semantic analysis queued.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Article"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/Internal"
+
+  /api/v1/articles/{id}:
+    get:
+      summary: Get a reader article
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ULID" }
+      responses:
+        "200":
+          description: Article with ordered blocks and annotations.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Article"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/Internal"
+
+  /api/v1/articles/{id}/enrich:
+    post:
+      summary: Queue reader analysis (compatibility alias)
+      description: Deprecated compatibility alias for reanalyze. Returns immediately with a queued article.
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ULID" }
+      responses:
+        "202":
+          description: Article queued for background analysis.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Article"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/Internal"
+
+  /api/v1/articles/{id}/reanalyze:
+    post:
+      summary: Queue explicit background article reanalysis
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ULID" }
+      responses:
+        "202":
+          description: New analysis work was queued; an older accepted analysis remains readable until replacement.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Article" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "405": { $ref: "#/components/responses/MethodNotAllowed" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/articles/{id}/narration:
+    get:
+      summary: Get the ordered sentence narration manifest
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ULID" }
+      responses:
+        "200":
+          description: Narration status and ordered sentence clips.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Narration" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "405": { $ref: "#/components/responses/MethodNotAllowed" }
+        "500": { $ref: "#/components/responses/Internal" }
+    post:
+      summary: Queue narration regeneration
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ULID" }
+      responses:
+        "202":
+          description: Missing or purged sentence renders were queued.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Article" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "405": { $ref: "#/components/responses/MethodNotAllowed" }
+        "500": { $ref: "#/components/responses/Internal" }
+    delete:
+      summary: Clear article narration storage
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ULID" }
+      responses:
+        "200":
+          description: Narration bindings cleared and orphaned long-form bytes reclaimed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NarrationClearResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "405": { $ref: "#/components/responses/MethodNotAllowed" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/learning-state:
+    put:
+      summary: Set an article annotation learning state
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: "#/components/schemas/SemanticLearningStateInput"
+                - $ref: "#/components/schemas/LearningStateInput"
+      responses:
+        "200":
+          description: Stored sense-keyed or legacy compatibility learning state.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/SemanticLearningState"
+                  - $ref: "#/components/schemas/LearningState"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/Internal"
+
+  /api/v1/audio/{id}:
+    get:
+      summary: Stream a ready authenticated speech render
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ULID" }
+        - name: Range
+          in: header
+          required: false
+          schema: { $ref: "#/components/schemas/SingleByteRange" }
+        - name: If-None-Match
+          in: header
+          required: false
+          schema: { $ref: "#/components/schemas/ConditionalETag" }
+      responses:
+        "200":
+          description: M4A audio bytes.
+          headers:
+            ETag: { schema: { $ref: "#/components/schemas/StrongSHA256ETag" } }
+            Content-Type: { schema: { $ref: "#/components/schemas/MediaType" } }
+            Accept-Ranges: { schema: { $ref: "#/components/schemas/ByteRangeUnit" } }
+            Content-Length: { schema: { $ref: "#/components/schemas/ByteLength" } }
+            X-Accel-Redirect: { schema: { $ref: "#/components/schemas/InternalRedirectURI" } }
+          content:
+            audio/mp4: { schema: { type: string, format: binary } }
+        "206":
+          description: Partial M4A audio bytes.
+          headers:
+            ETag: { schema: { $ref: "#/components/schemas/StrongSHA256ETag" } }
+            Content-Type: { schema: { $ref: "#/components/schemas/MediaType" } }
+            Accept-Ranges: { schema: { $ref: "#/components/schemas/ByteRangeUnit" } }
+            Content-Range: { schema: { $ref: "#/components/schemas/ContentByteRange" } }
+            Content-Length: { schema: { $ref: "#/components/schemas/ByteLength" } }
+            X-Accel-Redirect: { schema: { $ref: "#/components/schemas/InternalRedirectURI" } }
+          content:
+            audio/mp4: { schema: { type: string, format: binary } }
+        "304":
+          description: Not modified.
+          headers:
+            ETag: { schema: { $ref: "#/components/schemas/StrongSHA256ETag" } }
+            Content-Type: { schema: { $ref: "#/components/schemas/MediaType" } }
+            Accept-Ranges: { schema: { $ref: "#/components/schemas/ByteRangeUnit" } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "405": { $ref: "#/components/responses/MethodNotAllowed" }
+        "416":
+          description: Range not satisfiable.
+          headers:
+            ETag: { schema: { $ref: "#/components/schemas/StrongSHA256ETag" } }
+            Content-Type: { schema: { $ref: "#/components/schemas/MediaType" } }
+            Accept-Ranges: { schema: { $ref: "#/components/schemas/ByteRangeUnit" } }
+            Content-Range: { schema: { $ref: "#/components/schemas/ContentByteRange" } }
+          content:
+            application/json: { schema: { $ref: "#/components/schemas/APIError" } }
+        "500": { $ref: "#/components/responses/Internal" }
+    head:
+      summary: Get speech render headers without a body
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ULID" }
+        - name: Range
+          in: header
+          required: false
+          schema: { $ref: "#/components/schemas/SingleByteRange" }
+        - name: If-None-Match
+          in: header
+          required: false
+          schema: { $ref: "#/components/schemas/ConditionalETag" }
+      responses:
+        "200":
+          description: Speech render headers.
+          headers:
+            ETag: { schema: { $ref: "#/components/schemas/StrongSHA256ETag" } }
+            Content-Type: { schema: { $ref: "#/components/schemas/MediaType" } }
+            Accept-Ranges: { schema: { $ref: "#/components/schemas/ByteRangeUnit" } }
+            Content-Length: { schema: { $ref: "#/components/schemas/ByteLength" } }
+            X-Accel-Redirect: { schema: { $ref: "#/components/schemas/InternalRedirectURI" } }
+        "206":
+          description: Partial speech render headers.
+          headers:
+            ETag: { schema: { $ref: "#/components/schemas/StrongSHA256ETag" } }
+            Content-Type: { schema: { $ref: "#/components/schemas/MediaType" } }
+            Accept-Ranges: { schema: { $ref: "#/components/schemas/ByteRangeUnit" } }
+            Content-Range: { schema: { $ref: "#/components/schemas/ContentByteRange" } }
+            Content-Length: { schema: { $ref: "#/components/schemas/ByteLength" } }
+            X-Accel-Redirect: { schema: { $ref: "#/components/schemas/InternalRedirectURI" } }
+        "304":
+          description: Not modified.
+          headers:
+            ETag: { schema: { $ref: "#/components/schemas/StrongSHA256ETag" } }
+            Content-Type: { schema: { $ref: "#/components/schemas/MediaType" } }
+            Accept-Ranges: { schema: { $ref: "#/components/schemas/ByteRangeUnit" } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "405": { $ref: "#/components/responses/MethodNotAllowed" }
+        "416":
+          description: Range not satisfiable.
+          headers:
+            ETag: { schema: { $ref: "#/components/schemas/StrongSHA256ETag" } }
+            Content-Type: { schema: { $ref: "#/components/schemas/MediaType" } }
+            Accept-Ranges: { schema: { $ref: "#/components/schemas/ByteRangeUnit" } }
+            Content-Range: { schema: { $ref: "#/components/schemas/ContentByteRange" } }
+          content:
+            application/json: { schema: { $ref: "#/components/schemas/APIError" } }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/speech-workers/enrollments:
+    post:
+      summary: Create a one-time speech worker enrollment secret
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      responses:
+        "201":
+          description: Secret displayed once to the owner.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkerEnrollment" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/speech-workers:
+    get:
+      summary: List enrolled speech workers
+      security: [{ sessionCookie: [] }]
+      responses:
+        "200":
+          description: Worker status without credential hashes.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/SpeechWorker" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500": { $ref: "#/components/responses/Internal" }
+
+  /api/v1/speech-workers/{id}:
+    delete:
+      summary: Revoke a speech worker and return its leases to the queue
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ULID" }
+      responses:
+        "200": { description: Worker revoked., content: { application/json: { schema: { $ref: "#/components/schemas/OKResponse" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/speech-worker/enroll:
+    post:
+      summary: Exchange a one-time secret for a worker credential
+      parameters:
+        - name: X-Doublangu-Enrollment-Token
+          in: header
+          required: true
+          schema: { type: string, minLength: 32 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WorkerEnrollmentRequest" }
+      responses:
+        "201":
+          description: Worker credential; shown only during enrollment.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkerEnrollmentResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { description: Invalid or expired enrollment secret., content: { application/json: { schema: { $ref: "#/components/schemas/APIError" } } } }
+
+  /api/v1/speech-worker/lease:
+    post:
+      summary: Long-poll and lease one compatible speech job
+      parameters:
+        - name: X-Doublangu-Worker-Token
+          in: header
+          required: true
+          schema: { type: string, minLength: 32 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WorkerLeaseRequest" }
+      responses:
+        "200":
+          description: One leased render job.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkerLease" }
+        "204": { description: No compatible work before the long-poll deadline. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { description: Worker credential required., content: { application/json: { schema: { $ref: "#/components/schemas/APIError" } } } }
+
+  /api/v1/speech-worker/jobs/{id}/heartbeat:
+    post:
+      summary: Renew a speech job lease
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ULID" }
+        - name: X-Doublangu-Worker-Token
+          in: header
+          required: true
+          schema: { type: string }
+        - name: X-Doublangu-Lease-Token
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WorkerHeartbeat" }
+      responses:
+        "200": { description: Lease renewed., content: { application/json: { schema: { $ref: "#/components/schemas/WorkerHeartbeatResponse" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { description: Worker credential required., content: { application/json: { schema: { $ref: "#/components/schemas/APIError" } } } }
+        "409": { description: Lease expired or canceled., content: { application/json: { schema: { $ref: "#/components/schemas/APIError" } } } }
+
+  /api/v1/speech-worker/jobs/{id}/complete:
+    post:
+      summary: Upload and atomically publish a speech render
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ULID" }
+        - name: X-Doublangu-Worker-Token
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [metadata, audio]
+              additionalProperties: false
+              properties:
+                metadata: { type: string, description: JSON matching WorkerCompleteMetadata. }
+                audio: { type: string, format: binary }
+      responses:
+        "200": { description: Render accepted., content: { application/json: { schema: { $ref: "#/components/schemas/OKResponse" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { description: Worker credential required., content: { application/json: { schema: { $ref: "#/components/schemas/APIError" } } } }
+        "409": { description: Stale lease or nondeterministic result., content: { application/json: { schema: { $ref: "#/components/schemas/APIError" } } } }
+        "413": { description: Audio exceeds the unit limit., content: { application/json: { schema: { $ref: "#/components/schemas/APIError" } } } }
+        "422": { description: Audio metadata or bytes failed validation., content: { application/json: { schema: { $ref: "#/components/schemas/APIError" } } } }
+
+  /api/v1/speech-worker/jobs/{id}/fail:
+    post:
+      summary: Record a sanitized speech generation failure
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ULID" }
+        - name: X-Doublangu-Worker-Token
+          in: header
+          required: true
+          schema: { type: string }
+        - name: X-Doublangu-Lease-Token
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WorkerFailure" }
+      responses:
+        "200": { description: Failure recorded., content: { application/json: { schema: { $ref: "#/components/schemas/OKResponse" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { description: Worker credential required., content: { application/json: { schema: { $ref: "#/components/schemas/APIError" } } } }
+        "409": { description: Lease expired., content: { application/json: { schema: { $ref: "#/components/schemas/APIError" } } } }
+
   # --- Library metadata endpoints ---
   # Every library mutation requires a valid CSRF double-submit cookie/header.
   # All library routes require an authenticated owner session.
@@ -1287,6 +1801,476 @@ components:
       properties:
         ok:
           type: boolean
+
+    # --- Article reader schemas ---
+
+    AnnotationKind:
+      type: string
+      enum: [word, phrase, idiom, expression, proverb]
+
+    EnrichmentStatus:
+      type: string
+      enum: [draft, processing, ready, failed]
+
+    AnalysisStatus:
+      type: string
+      enum: [needs_analysis, queued, processing, ready, failed]
+
+    NarrationStatus:
+      type: string
+      enum: [not_requested, queued, generating, partial, ready, failed, purged]
+
+    ShadowPolicy:
+      type: string
+      enum: [token, group, marker, none]
+
+    OccurrenceRole:
+      type: string
+      enum: [token, contiguous_construction, discontinuous_construction]
+
+    LearningStatus:
+      type: string
+      enum: [learned, unlearned]
+
+    ArticleCreate:
+      type: object
+      additionalProperties: false
+      required: [title, body, source_language, target_language]
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: Trimmed title, limited to 200 Unicode scalar values by the server.
+        body:
+          type: string
+          minLength: 1
+          description: Pasted article body, limited to 100000 UTF-8 bytes by the server.
+        source_language: { $ref: "#/components/schemas/LanguageTag" }
+        target_language: { $ref: "#/components/schemas/LanguageTag" }
+
+    LearningStateInput:
+      type: object
+      additionalProperties: false
+      required: [source_language, kind, learning_key, status]
+      properties:
+        source_language: { $ref: "#/components/schemas/LanguageTag" }
+        kind: { $ref: "#/components/schemas/AnnotationKind" }
+        learning_key: { type: string, minLength: 1 }
+        status: { $ref: "#/components/schemas/LearningStatus" }
+
+    SemanticLearningStateInput:
+      type: object
+      additionalProperties: false
+      required: [semantic_sense_id, status]
+      properties:
+        semantic_sense_id: { $ref: "#/components/schemas/ULID" }
+        article_occurrence_id: { $ref: "#/components/schemas/ULID" }
+        status: { $ref: "#/components/schemas/LearningStatus" }
+
+    SemanticLearningState:
+      type: object
+      additionalProperties: false
+      required: [semantic_sense_id, status, updated_at]
+      properties:
+        semantic_sense_id: { $ref: "#/components/schemas/ULID" }
+        status: { $ref: "#/components/schemas/LearningStatus" }
+        updated_at: { type: string }
+
+    LearningState:
+      type: object
+      required: [source_language, kind, learning_key, status, updated_at]
+      properties:
+        source_language: { $ref: "#/components/schemas/LanguageTag" }
+        kind: { $ref: "#/components/schemas/AnnotationKind" }
+        learning_key: { type: string, minLength: 1 }
+        status: { $ref: "#/components/schemas/LearningStatus" }
+        updated_at: { type: string }
+
+    ArticleAnnotation:
+      type: object
+      required: [id, article_block_id, start_utf16, end_utf16, source_text, kind,
+        learning_key, primary_translation, alternatives, literal_translation,
+        meaning_note, usage_note, parts_note, suggest_shadow, learning_state,
+        show_shadow]
+      properties:
+        id: { $ref: "#/components/schemas/ULID" }
+        article_block_id: { $ref: "#/components/schemas/ULID" }
+        start_utf16: { type: integer, minimum: 0 }
+        end_utf16: { type: integer, minimum: 1 }
+        source_text: { type: string, minLength: 1 }
+        kind: { $ref: "#/components/schemas/AnnotationKind" }
+        learning_key: { type: string, minLength: 1 }
+        primary_translation: { type: string, minLength: 1 }
+        alternatives:
+          type: array
+          maxItems: 3
+          uniqueItems: true
+          items: { type: string, minLength: 1 }
+        literal_translation: { type: string }
+        meaning_note: { type: string }
+        usage_note: { type: string }
+        parts_note: { type: string }
+        suggest_shadow: { type: boolean }
+        learning_state:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/LearningState"
+        show_shadow: { type: boolean }
+
+    AudioRef:
+      type: object
+      additionalProperties: false
+      required: [render_id, url, ready, duration_ms, size_bytes, error_code]
+      properties:
+        render_id: { $ref: "#/components/schemas/ULID" }
+        url: { type: string, minLength: 1 }
+        ready: { type: boolean }
+        duration_ms: { type: integer, format: int64, minimum: 0 }
+        size_bytes: { type: integer, format: int64, minimum: 0 }
+        error_code: { type: string }
+
+    SemanticSense:
+      type: object
+      additionalProperties: false
+      required: [id, semantic_item_id, kind, canonical_form, sense_discriminator,
+        primary_translation, alternatives, literal_translation, meaning_note,
+        usage_note, parts_note, canonical_pronunciation_text]
+      properties:
+        id: { $ref: "#/components/schemas/ULID" }
+        semantic_item_id: { $ref: "#/components/schemas/ULID" }
+        kind: { $ref: "#/components/schemas/AnnotationKind" }
+        canonical_form: { type: string }
+        sense_discriminator: { type: string, minLength: 1 }
+        primary_translation: { type: string, minLength: 1 }
+        alternatives: { type: array, maxItems: 3, uniqueItems: true, items: { type: string } }
+        literal_translation: { type: string }
+        meaning_note: { type: string }
+        usage_note: { type: string }
+        parts_note: { type: string }
+        canonical_pronunciation_text: { type: string }
+
+    ArticleOccurrenceSpan:
+      type: object
+      required: [id, article_occurrence_id, span_index, start_utf16, end_utf16, source_text]
+      properties:
+        id: { $ref: "#/components/schemas/ULID" }
+        article_occurrence_id: { $ref: "#/components/schemas/ULID" }
+        span_index: { type: integer, minimum: 0 }
+        start_utf16: { type: integer, minimum: 0 }
+        end_utf16: { type: integer, minimum: 1 }
+        source_text: { type: string, minLength: 1 }
+
+    ArticleSentence:
+      type: object
+      required: [id, article_block_id, sentence_index, start_utf16, end_utf16, source_text, source_hash, audio]
+      properties:
+        id: { $ref: "#/components/schemas/ULID" }
+        article_block_id: { $ref: "#/components/schemas/ULID" }
+        sentence_index: { type: integer, minimum: 0 }
+        start_utf16: { type: integer, minimum: 0 }
+        end_utf16: { type: integer, minimum: 1 }
+        source_text: { type: string, minLength: 1 }
+        source_hash: { $ref: "#/components/schemas/SHA256" }
+        audio: { nullable: true, allOf: [{ $ref: "#/components/schemas/AudioRef" }] }
+
+    ArticleOccurrence:
+      type: object
+      required: [id, article_block_id, article_sentence_id, semantic_sense_id, kind, role,
+        shadow_policy, shadow_text, canonical_pronunciation_text, context_pronunciation_key,
+        confidence_milli, sense, learning_state, show_shadow, pronunciation, spans]
+      properties:
+        id: { $ref: "#/components/schemas/ULID" }
+        article_block_id: { $ref: "#/components/schemas/ULID" }
+        article_sentence_id: { nullable: true, allOf: [{ $ref: "#/components/schemas/ULID" }] }
+        semantic_sense_id: { nullable: true, allOf: [{ $ref: "#/components/schemas/ULID" }] }
+        kind: { $ref: "#/components/schemas/AnnotationKind" }
+        role: { $ref: "#/components/schemas/OccurrenceRole" }
+        shadow_policy: { $ref: "#/components/schemas/ShadowPolicy" }
+        shadow_text: { type: string }
+        canonical_pronunciation_text: { type: string }
+        context_pronunciation_key: { type: string }
+        confidence_milli: { type: integer, minimum: 0, maximum: 1000 }
+        sense: { nullable: true, allOf: [{ $ref: "#/components/schemas/SemanticSense" }] }
+        learning_state: { nullable: true, allOf: [{ $ref: "#/components/schemas/SemanticLearningState" }] }
+        show_shadow: { type: boolean }
+        pronunciation: { nullable: true, allOf: [{ $ref: "#/components/schemas/AudioRef" }] }
+        spans: { type: array, minItems: 1, items: { $ref: "#/components/schemas/ArticleOccurrenceSpan" } }
+
+    ArticleBlock:
+      type: object
+      required: [id, article_id, block_index, kind, source_text, annotations, sentences, occurrences]
+      properties:
+        id: { $ref: "#/components/schemas/ULID" }
+        article_id: { $ref: "#/components/schemas/ULID" }
+        block_index: { type: integer, minimum: 0 }
+        kind: { type: string, enum: [paragraph] }
+        source_text: { type: string, minLength: 1 }
+        annotations:
+          type: array
+          items: { $ref: "#/components/schemas/ArticleAnnotation" }
+        sentences:
+          type: array
+          items: { $ref: "#/components/schemas/ArticleSentence" }
+        occurrences:
+          type: array
+          items: { $ref: "#/components/schemas/ArticleOccurrence" }
+
+    ArticleSummary:
+      type: object
+      required: [id, title, source_language, target_language, enrichment_status,
+        enrichment_error_code, created_at, updated_at, content_hash, analysis_status,
+        analysis_error_code, narration_status, narration_error_code]
+      properties:
+        id: { $ref: "#/components/schemas/ULID" }
+        title: { type: string }
+        source_language: { $ref: "#/components/schemas/LanguageTag" }
+        target_language: { $ref: "#/components/schemas/LanguageTag" }
+        enrichment_status: { $ref: "#/components/schemas/EnrichmentStatus" }
+        enrichment_error_code: { type: string }
+        created_at: { type: string }
+        updated_at: { type: string }
+        content_hash: { $ref: "#/components/schemas/SHA256" }
+        analysis_status: { $ref: "#/components/schemas/AnalysisStatus" }
+        analysis_error_code: { type: string }
+        narration_status: { $ref: "#/components/schemas/NarrationStatus" }
+        narration_error_code: { type: string }
+
+    Narration:
+      type: object
+      required: [article_id, status, error_code, sentence_count, ready_count, duration_ms, size_bytes, reclaimable_bytes, clips]
+      properties:
+        article_id: { $ref: "#/components/schemas/ULID" }
+        status: { $ref: "#/components/schemas/NarrationStatus" }
+        error_code: { type: string }
+        sentence_count: { type: integer, minimum: 0 }
+        ready_count: { type: integer, minimum: 0 }
+        duration_ms: { type: integer, format: int64, minimum: 0 }
+        size_bytes: { type: integer, format: int64, minimum: 0 }
+        reclaimable_bytes: { type: integer, format: int64, minimum: 0 }
+        clips: { type: array, items: { $ref: "#/components/schemas/NarrationClip" } }
+
+    NarrationClip:
+      type: object
+      required: [sentence_id, sequence_index, audio]
+      properties:
+        sentence_id: { $ref: "#/components/schemas/ULID" }
+        sequence_index: { type: integer, minimum: 0 }
+        audio: { nullable: true, allOf: [{ $ref: "#/components/schemas/AudioRef" }] }
+
+    NarrationClearResult:
+      type: object
+      required: [article_id, sentence_count, reclaimed_bytes, retained_bytes, purged_render_count, status]
+      properties:
+        article_id: { $ref: "#/components/schemas/ULID" }
+        sentence_count: { type: integer, minimum: 0 }
+        reclaimed_bytes: { type: integer, format: int64, minimum: 0 }
+        retained_bytes: { type: integer, format: int64, minimum: 0 }
+        purged_render_count: { type: integer, minimum: 0 }
+        status: { $ref: "#/components/schemas/NarrationStatus" }
+
+    Article:
+      type: object
+      required: [id, title, source_language, target_language, enrichment_status,
+        enrichment_error_code, created_at, updated_at, blocks, content_hash,
+        analysis_status, analysis_revision, analysis_error_code, narration_status,
+        narration_error_code, sentences, occurrences, narration]
+      properties:
+        id: { $ref: "#/components/schemas/ULID" }
+        title: { type: string }
+        source_language: { $ref: "#/components/schemas/LanguageTag" }
+        target_language: { $ref: "#/components/schemas/LanguageTag" }
+        enrichment_status: { $ref: "#/components/schemas/EnrichmentStatus" }
+        enrichment_error_code: { type: string }
+        created_at: { type: string }
+        updated_at: { type: string }
+        blocks:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/ArticleBlock" }
+        content_hash: { $ref: "#/components/schemas/SHA256" }
+        analysis_status: { $ref: "#/components/schemas/AnalysisStatus" }
+        analysis_revision: { type: string }
+        analysis_error_code: { type: string }
+        narration_status: { $ref: "#/components/schemas/NarrationStatus" }
+        narration_error_code: { type: string }
+        sentences: { type: array, items: { $ref: "#/components/schemas/ArticleSentence" } }
+        occurrences: { type: array, items: { $ref: "#/components/schemas/ArticleOccurrence" } }
+        narration: { $ref: "#/components/schemas/NarrationSummary" }
+
+    NarrationSummary:
+      type: object
+      required: [status, sentence_count, ready_count, duration_ms, size_bytes, reclaimable_bytes]
+      properties:
+        status: { $ref: "#/components/schemas/NarrationStatus" }
+        error_code: { type: string }
+        sentence_count: { type: integer, minimum: 0 }
+        ready_count: { type: integer, minimum: 0 }
+        duration_ms: { type: integer, format: int64, minimum: 0 }
+        size_bytes: { type: integer, format: int64, minimum: 0 }
+        reclaimable_bytes: { type: integer, format: int64, minimum: 0 }
+
+    WorkerCapability:
+      type: object
+      additionalProperties: false
+      required: [engine, languages, unit_kinds, max_bytes, max_duration_ms]
+      properties:
+        engine: { type: string, enum: [avspeech, chatterbox] }
+        languages: { type: array, minItems: 1, items: { type: string } }
+        unit_kinds: { type: array, minItems: 1, items: { type: string, enum: [word, phrase, sentence, "*"] } }
+        max_bytes: { type: integer, format: int64, minimum: 0 }
+        max_duration_ms: { type: integer, format: int64, minimum: 0 }
+
+    SpeechWorker:
+      type: object
+      additionalProperties: false
+      required: [id, name, protocol_version, revoked_at, last_seen_at, capabilities, software_version, created_at, updated_at]
+      properties:
+        id: { $ref: "#/components/schemas/ULID" }
+        name: { type: string }
+        protocol_version: { type: string, enum: [speech-worker.v1] }
+        revoked_at: { type: string }
+        last_seen_at: { type: string }
+        capabilities: { type: array, items: { $ref: "#/components/schemas/WorkerCapability" } }
+        software_version: { type: string }
+        created_at: { type: string }
+        updated_at: { type: string }
+
+    WorkerEnrollment:
+      type: object
+      additionalProperties: false
+      required: [id, token, expires_at]
+      properties:
+        id: { $ref: "#/components/schemas/ULID" }
+        token: { type: string, minLength: 32 }
+        expires_at: { type: string }
+
+    WorkerEnrollmentRequest:
+      type: object
+      additionalProperties: false
+      required: [name, protocol_version, capabilities, software_version]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        protocol_version: { type: string, enum: [speech-worker.v1] }
+        capabilities: { type: array, minItems: 1, items: { $ref: "#/components/schemas/WorkerCapability" } }
+        software_version: { type: string, maxLength: 120 }
+
+    WorkerEnrollmentResponse:
+      type: object
+      additionalProperties: false
+      required: [worker, worker_token, protocol_version]
+      properties:
+        worker: { $ref: "#/components/schemas/SpeechWorker" }
+        worker_token: { type: string, minLength: 32 }
+        protocol_version: { type: string, enum: [speech-worker.v1] }
+
+    WorkerLeaseRequest:
+      type: object
+      additionalProperties: false
+      required: [protocol_version, capabilities]
+      properties:
+        protocol_version: { type: string, enum: [speech-worker.v1] }
+        capabilities: { type: array, minItems: 1, items: { $ref: "#/components/schemas/WorkerCapability" } }
+
+    SpeechProfile:
+      type: object
+      additionalProperties: false
+      required: [id, engine, model_revision, language, voice_identifier, reference_audio_hash, speed_milli, pitch_cents, mapping_version, mime_type, codec, sample_rate_hz, channels, active]
+      properties:
+        id: { $ref: "#/components/schemas/ULID" }
+        engine: { type: string, enum: [avspeech, chatterbox] }
+        model_revision: { type: string }
+        language: { type: string }
+        voice_identifier: { type: string }
+        reference_audio_hash: { type: string }
+        speed_milli: { type: integer, minimum: 1 }
+        pitch_cents: { type: integer }
+        mapping_version: { type: string }
+        mime_type: { type: string, enum: [audio/mp4] }
+        codec: { type: string, enum: [aac-lc] }
+        sample_rate_hz: { type: integer, enum: [24000] }
+        channels: { type: integer, enum: [1] }
+        active: { type: boolean }
+        created_at: { type: string }
+        updated_at: { type: string }
+
+    AudioLimits:
+      type: object
+      required: [max_bytes, max_duration_ms]
+      properties:
+        max_bytes: { type: integer, format: int64, minimum: 1 }
+        max_duration_ms: { type: integer, format: int64, minimum: 1 }
+
+    WorkerLease:
+      type: object
+      additionalProperties: false
+      required: [protocol_version, job_id, attempt, lease_token, lease_expires_at, job_type, render_id, request_hash, speech_unit_id, language, unit_kind, spoken_text, context_pronunciation_key, profile, limits]
+      properties:
+        protocol_version: { type: string, enum: [speech-worker.v1] }
+        job_id: { $ref: "#/components/schemas/ULID" }
+        attempt: { type: integer, minimum: 1, maximum: 3 }
+        lease_token: { type: string }
+        lease_expires_at: { type: string }
+        job_type: { type: string, enum: [tts.avspeech.v1, tts.chatterbox.v3] }
+        render_id: { $ref: "#/components/schemas/ULID" }
+        request_hash: { $ref: "#/components/schemas/SHA256" }
+        speech_unit_id: { $ref: "#/components/schemas/ULID" }
+        language: { type: string }
+        unit_kind: { type: string, enum: [word, phrase, sentence] }
+        spoken_text: { type: string, minLength: 1 }
+        context_pronunciation_key: { type: string }
+        profile: { $ref: "#/components/schemas/SpeechProfile" }
+        limits: { $ref: "#/components/schemas/AudioLimits" }
+
+    WorkerHeartbeat:
+      type: object
+      additionalProperties: false
+      required: [protocol_version, attempt, progress_percent]
+      properties:
+        protocol_version: { type: string, enum: [speech-worker.v1] }
+        attempt: { type: integer, minimum: 1, maximum: 3 }
+        progress_percent: { type: integer, minimum: 0, maximum: 100 }
+
+    WorkerHeartbeatResponse:
+      type: object
+      required: [protocol_version, cancel_requested, lease_expires_at, progress_percent]
+      properties:
+        protocol_version: { type: string, enum: [speech-worker.v1] }
+        cancel_requested: { type: boolean }
+        lease_expires_at: { type: string }
+        progress_percent: { type: integer, minimum: 0, maximum: 100 }
+
+    WorkerFailure:
+      type: object
+      additionalProperties: false
+      required: [protocol_version, attempt, error_code, retry]
+      properties:
+        protocol_version: { type: string, enum: [speech-worker.v1] }
+        attempt: { type: integer, minimum: 1, maximum: 3 }
+        error_code: { type: string, pattern: '^v1\.[a-z0-9._-]+$' }
+        retry: { type: boolean }
+
+    WorkerCompleteMetadata:
+      type: object
+      additionalProperties: false
+      required: [protocol_version, attempt, lease_token, artifact]
+      properties:
+        protocol_version: { type: string, enum: [speech-worker.v1] }
+        attempt: { type: integer, minimum: 1, maximum: 3 }
+        lease_token: { type: string }
+        artifact:
+          type: object
+          additionalProperties: false
+          required: [request_hash, sha256, size_bytes, mime_type, codec, sample_rate_hz, channels, duration_ms]
+          properties:
+            request_hash: { $ref: "#/components/schemas/SHA256" }
+            sha256: { $ref: "#/components/schemas/SHA256" }
+            size_bytes: { type: integer, format: int64, minimum: 1 }
+            mime_type: { type: string, enum: [audio/mp4] }
+            codec: { type: string, enum: [aac-lc] }
+            sample_rate_hz: { type: integer, enum: [24000] }
+            channels: { type: integer, enum: [1] }
+            duration_ms: { type: integer, format: int64, minimum: 1 }
 
     # --- Library domain schemas ---
 

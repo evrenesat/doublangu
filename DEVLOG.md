@@ -1,5 +1,205 @@
 # Development Log
 
+## 2026-08-31 — Audible article reader backend and web handoff
+
+- Implemented migration 005 for durable reader analysis/audio jobs, semantic
+  items and senses, layered sentence/occurrence spans, speech units and
+  profiles, render/blob references, narration manifests, and speech-worker
+  enrollment state.
+- Added the strict `reader.analysis.v2` Codex app-server boundary with
+  content-hash caching, server-owned deterministic persistence, lease-aware
+  background execution, reanalysis, and the legacy enrichment compatibility
+  route.
+- Added the frozen `speech-worker.v1` HTTPS contract, capability-scoped leases,
+  heartbeats, idempotent multipart completion/failure handling, validated AAC
+  media publication, authenticated range/HEAD serving, and narration retention,
+  clear, and regeneration APIs.
+- Added the readable Svelte reader with exact UTF-16 source reconstruction,
+  sentence and multi-span construction highlighting, semantic learning state,
+  hover/focus/click translation details, lexical hover pronunciation, lazy
+  narration controls, themes, responsive layout, and actionable loading/error
+  states.
+- The separate macOS companion daemon and browser-beta deployment are not part
+  of this repository; no real-Mac companion or public-beta acceptance is
+  claimed by this handoff.
+
+### Verification
+
+All Go commands below used `/tmp/doublangu-go1.26.5/bin` on `PATH`; web commands
+used `/tmp/doublangu-node-v24.20.0/bin` on `PATH`.
+
+- `test -z "$(gofmt -l internal cmd/doublangu-server)"` — passed.
+- `go mod tidy -diff` — passed.
+- Focused normal Go tests for reader, semantics, jobs, speech, workers, media,
+  HTTP API, store, and server — passed.
+- Focused Go race tests for reader, semantics, jobs, speech, workers, media,
+  and HTTP API — passed.
+- `npm --prefix web run validate:openapi` — passed.
+- `npm --prefix web run generate:api` twice — passed; output was byte-identical
+  on the second generation (`74db595e4e1562560b18509ec6144b14e045702b7ffe5f69a546f7c648cd1b58`).
+- Standalone Ajv compilation of both JSON Schema contracts — passed.
+- `npm --prefix web run check` — 0 errors and 0 warnings.
+- `npm --prefix web run test:unit -- --run` — 65 tests passed.
+- `npm --prefix web run test:e2e -- reader.spec.ts` — 8 tests passed.
+- `make verify` — passed with a temporary Git `safe.directory` environment
+  override required by this checkout's ownership guard.
+- `DOUBLANGU_TEST_CODEX_LIVE=1 go test ./internal/annotator -run Live -count=1 -v` — passed.
+- `git -c safe.directory=/root/code/doublangu diff --check` — passed.
+
+## 2026-08-31 — Learner shell and enrichment recovery
+
+- Replaced the unstyled implementation navigation with a readable dark learner
+  shell focused on Articles and Paste article; removed Library, Settings, and
+  Plugins from the primary product navigation.
+- Added a root application-session gate so direct protected URLs redirect to
+  sign-in before rendering, preserve their return target under `/beta`, and
+  expose an explicit sign-out action.
+- Clarified on the login page that deployment Basic Auth and the Doublangu owner
+  session are distinct layers.
+- Fixed the Dutch-to-English direction in the article flow. The retained
+  experimental library form now uses valid BCP-47 choices and explains that it
+  is not needed for article reading.
+- Mapped persisted enrichment failure codes to meaningful recovery messages and
+  server logs. Live inspection identified the reported article failure as
+  `v1.enrichment_timeout` for a 2,099-character article while Codex remained
+  authenticated.
+- Extended the Codex enrichment deadline from two to five minutes; deployment
+  proxy timeouts were raised to remain above the application boundary.
+- Verification passed: `make verify`, focused Go tests and race tests, stable
+  generated OpenAPI output, 57 web unit tests, 26 Chromium E2E tests, and the
+  authenticated Codex live smoke. A fresh live Chromium session then proved
+  direct-route login gating, dark readable colors, learner-only navigation, the
+  timeout explanation, and successful retry of the exact previously failed
+  article with no page errors or failed requests.
+- Deployed beta release
+  `6120e21e06129108a8da0ff4c6353e744120fe1c30b0bb3cbbe7b803798585be`.
+  The 2,099-character article is now `ready` with English shadows; production
+  remains unchanged.
+
+## 2026-08-30 — Plugin-session 401 UX fix
+
+- Changed UI-contribution loading so an absent or expired owner session routes
+  to `/login` instead of exposing `UI contributions request failed: 401`.
+  Non-authentication failures remain visible for diagnosis.
+- Added unit coverage for 401 navigation and retained 503 errors, plus browser
+  coverage for the unauthenticated Plugins route. Repaired the existing plugin
+  E2E fixture boundary so its dynamic modules come from deterministic local
+  assets instead of an unauthenticated backend request.
+- Verification passed: generated API unchanged; Svelte check clean; 54 unit
+  tests; five plugin and three reader browser tests; focused Go and race tests;
+  authenticated Codex live test. `make verify` reaches only the pre-existing
+  Git-fingerprint tests, which cannot pass because this salvaged directory has
+  no usable `.git` repository.
+- Deployed beta release
+  `6bc9a0d23cf3d0057b351d71fe11437a748d466a89b55ab6f867d127c25a0f87`.
+  Live Chromium proved 401 → `/beta/login`, then authenticated 200 on Plugins,
+  with no raw alert, page error, or failed request.
+
+## 2026-08-30 — Live beta Codex annotation
+
+- The isolated `https://nlrn.evren.io/beta/` service now uses a checksum-pinned
+  Codex CLI `0.151.0` ARM64 runtime with ChatGPT device authentication owned by
+  the `doublangu-beta` service account.
+- Live Chromium saved and enriched a Dutch article, rendered six interactive
+  annotations and four visible English shadows, opened the hover detail dialog,
+  and reported zero page errors or failed requests.
+- Production remains absent and unchanged; migration still requires explicit
+  owner approval.
+
+## 2026-08-30 — `/beta` deployment path support
+
+- Added a build-time SvelteKit base path and routed application links,
+  navigation, API/CSRF, health, plugin settings/events, and plugin asset URLs
+  through it while preserving root-based local development.
+- Built and browser-tested the isolated live deployment at
+  `https://nlrn.evren.io/beta/`; Chromium completed owner login, a reversible
+  API/database mutation, settings diagnostics, and reader navigation without
+  page errors or resources escaping the prefix.
+- The initial deployed beta used an isolated database/data/media boundary and
+  kept annotation disabled until the subsequent pinned Codex installation and
+  service-account login completed.
+
+### Verification
+
+- `npm --prefix web run check` — 0 errors and 0 warnings.
+- `npm --prefix web run test:unit` — 52 tests passed.
+- `DOUBLANGU_WEB_BASE_PATH=/beta npm --prefix web run build` — passed.
+- Live HTTP acceptance — unauthenticated `401`; authenticated shell, asset,
+  health, and owner-session boundary passed.
+- Live Chromium acceptance — passed with zero page errors.
+
+## 2026-08-30 — Reader popover review fixes
+
+- Pinned annotations now ignore hover/focus attempts on other annotations while
+  deliberate clicks can repin the popover. A `ResizeObserver` coalesces
+  remeasurement after Explore/detail/feedback content changes so the popover
+  remains inside the viewport.
+- Added unit coverage for pinned identity and browser coverage for cross-
+  annotation hover plus the 320x720 content-resize bounds.
+
+### Verification
+
+- `npm --prefix web run check` — passed with 0 errors and 0 warnings.
+- `npm --prefix web run test:unit -- --run` — 52 tests passed.
+- `npm --prefix web run test:e2e -- reader.spec.ts` — 3 tests passed.
+- `make verify` — passed with the checkout marked safe for Git subprocesses;
+  the initial bare invocation was blocked by Git's dubious-ownership guard.
+- `git -c safe.directory=/root/code/doublangu diff --check` — passed.
+
+## 2026-08-30 — Article hover-shadows MVP
+
+### Decisions
+
+- Added persistent article, paragraph-block, annotation, and learning-state
+  storage in migration 004. Source ranges are browser UTF-16 offsets; learning
+  identity is NFC + Unicode case-folded text with collapsed Unicode whitespace.
+- Kept the article surface conventional: passive English shadows are limited by
+  density, phrase/group spans win over component words, and learned state hides
+  only the shadow while keeping the annotation interactive.
+- Added a strict injected annotator boundary. Production launches the installed
+  `codex-cli 0.149.0-alpha.4.1` app-server in an ephemeral read-only/no-tool
+  thread; disabled mode is explicit and returns `v1.annotator_unavailable`.
+- Generated the app-server schema bundle in a temporary directory and based the
+  private wire structs on the v2 `InitializeParams`, `ThreadStartParams`,
+  `TurnStartParams`, `ItemCompletedNotification`, `TurnCompletedNotification`,
+  and JSON-RPC envelope schemas. The generated bundle is not checked in.
+- The app-server rejected `uniqueItems` in its response-schema dialect during
+  the first live probe, so distinct alternatives are enforced locally and the
+  unsupported keyword is omitted from the runtime schema.
+- The live acceptance pass found Svelte template whitespace appearing between
+  an annotated run and adjacent punctuation. The run template now concatenates
+  annotated and plain text exactly, with a DOM reconstruction regression test.
+
+### Verification
+
+- `test -z "$(gofmt -l internal/reader internal/annotator internal/httpapi cmd/doublangu-server)"` — passed.
+- `go mod tidy -diff` — passed with no module changes.
+- `go test ./internal/reader ./internal/annotator ./internal/httpapi ./internal/store ./cmd/doublangu-server -count=1` — passed.
+- `go test -race ./internal/reader ./internal/annotator ./internal/httpapi -count=1` — passed.
+- `npm --prefix web run validate:openapi` — passed.
+- `npm --prefix web run generate:api` — passed; a pre/post byte comparison was
+  identical. The literal branch-base `git diff --exit-code` remains nonzero
+  because the newly generated MVP client is intentionally uncommitted.
+- `npm --prefix web run check` — passed with 0 errors and 0 warnings.
+- `npm --prefix web run test:unit -- --run` — 51 tests passed.
+- `npm --prefix web run test:e2e -- reader.spec.ts` — 3 tests passed.
+- `make verify` — passed.
+- `DOUBLANGU_TEST_CODEX_LIVE=1 go test ./internal/annotator -run Live -count=1 -v`
+  — passed against the authenticated ChatGPT Codex app-server.
+- `git -c safe.directory=/root/code/doublangu diff --check` — passed.
+
+Clean-database browser acceptance also passed with the real owner login and
+Codex enrichment: the Dutch source was preserved exactly; the manual fixture
+produced 4 annotations and 2 passive shadows; word and group hover details,
+pin/Escape, Meaning/Usage/Parts, learned-state persistence, and a contained
+320x720 touch popover were all verified.
+
+### Follow-ups
+
+Audio/TTS, URL and ebook ingestion, speech/alignment, spaced repetition,
+offline synchronization, mobile packaging, and alternate providers remain
+outside this MVP.
+
 ## 2026-07-28 — Checkpoint 5: Native Loader Preflight Boundary
 
 ### Decisions

@@ -17,7 +17,33 @@ async function serveContributions(page: Page, items: unknown = contributions) {
   await page.route("**/api/v1/ui/contributions", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({ version: "v1", contributions: items }) }));
 }
 
+async function servePluginAssets(page: Page) {
+  await page.route("**/api/v1/plugins/assets/v1/**", async (route) => {
+    const fixtureURL = new URL(route.request().url());
+    fixtureURL.pathname = fixtureURL.pathname.replace("/api/v1/plugins/assets/", "/plugin-assets/");
+    const response = await route.fetch({ url: fixtureURL.toString() });
+    await route.fulfill({ response });
+  });
+}
+
 test.describe("UI plugin host", () => {
+  test.beforeEach(async ({ page }) => {
+    await page.route("**/api/v1/auth/session", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({ authenticated: true }) }));
+    await servePluginAssets(page);
+  });
+
+  test("redirects an unauthenticated contributions request to sign-in", async ({ page }) => {
+    await page.route("**/api/v1/ui/contributions", (route) => route.fulfill({
+      status: 401,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "authentication required", code: "v1.authentication_error" }),
+    }));
+    await page.goto("/plugins");
+    await expect(page).toHaveURL("/login");
+    await expect(page.getByLabel("Password")).toBeVisible();
+    await expect(page.getByText("UI contributions request failed")).toHaveCount(0);
+  });
+
   test("mounts six healthy surfaces beside a throwing sibling and preserves shell interactivity", async ({ page }) => {
     await serveContributions(page, [...contributions, { id: "throwing", label: "Throwing", type: "panel", container: "", priority: 99, icon: "", source_url: throwing, plugin_id: "throwing-plugin" }]);
     await page.goto("/plugins");

@@ -1,4 +1,5 @@
 import { goto } from "$app/navigation";
+import { appPath } from "$lib/paths";
 import { CommandRegistry, type RegisteredCommand } from "$lib/commands/CommandRegistry";
 import {
   UI_PLUGIN_API_VERSION,
@@ -27,8 +28,9 @@ export type {
   UIPluginModule,
 } from "$contracts/ui-plugin-v1";
 
-const CONTRIBUTIONS_ENDPOINT = "/api/v1/ui/contributions";
-export const PLUGIN_ASSET_PREFIX = "/api/v1/plugins/assets/";
+const CONTRIBUTIONS_ENDPOINT = appPath("/api/v1/ui/contributions");
+const SERVER_PLUGIN_ASSET_PREFIX = "/api/v1/plugins/assets/";
+export const PLUGIN_ASSET_PREFIX = appPath(SERVER_PLUGIN_ASSET_PREFIX);
 const UI_TYPES = new Set(["panel", "view", "widget"]);
 const DEFAULT_THEME_TOKENS: Record<string, string> = {
   "color-bg": "#1e1e2e",
@@ -92,9 +94,10 @@ export function validatePluginModuleURL(candidate: string): string {
   if (candidate.startsWith("//") || /(^|[/\\])(?:\.{1,2}|%2e%2e?)(?:[/\\]|$)/i.test(candidate)) {
     throw new Error(`UI plugin sourceUrl is not an authorized asset URL: ${candidate}`);
   }
+  const normalized = candidate.startsWith(SERVER_PLUGIN_ASSET_PREFIX) ? appPath(candidate as `/${string}`) : candidate;
   let url: URL;
   try {
-    url = new URL(candidate, window.location.origin);
+    url = new URL(normalized, window.location.origin);
   } catch {
     throw new Error(`UI plugin sourceUrl is invalid: ${candidate}`);
   }
@@ -184,11 +187,15 @@ export class UIHostV1Impl implements UIHostV1 {
 
   constructor(options: UIHostOptions = {}) {
     this.loadModule = options.loadModule ?? ((url) => import(/* @vite-ignore */ url));
-    this.navigateWithShell = options.navigate ?? ((path) => goto(path));
+    this.navigateWithShell = options.navigate ?? ((path) => goto(appPath(path as `/${string}`)));
   }
 
   async loadContributions(): Promise<UIContribution[]> {
-    const response = await fetch(CONTRIBUTIONS_ENDPOINT);
+    const response = await fetch(CONTRIBUTIONS_ENDPOINT, { credentials: "same-origin" });
+    if (response.status === 401) {
+      await this.navigateWithShell("/login");
+      return [];
+    }
     if (!response.ok) throw new Error(`UI contributions request failed: ${response.status}`);
     return parseContributionsPayload(await response.json());
   }
@@ -279,16 +286,16 @@ export class UIHostV1Impl implements UIHostV1 {
     const pluginId = contribution.pluginId;
     const settings: PluginSettings = {
       async get<T>(key: string): Promise<T | null> {
-        const response = await fetch(`/api/v1/plugins/${encodeURIComponent(pluginId)}/settings/${encodeURIComponent(key)}`);
+        const response = await fetch(appPath(`/api/v1/plugins/${encodeURIComponent(pluginId)}/settings/${encodeURIComponent(key)}`));
         if (response.status === 404) return null;
         if (!response.ok) throw new Error(`plugin settings read failed: ${response.status}`);
         return response.json() as Promise<T>;
       },
-      async set(key: string, value: unknown): Promise<void> { await requireOK(fetch(`/api/v1/plugins/${encodeURIComponent(pluginId)}/settings/${encodeURIComponent(key)}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value }) })); },
-      async delete(key: string): Promise<void> { await requireOK(fetch(`/api/v1/plugins/${encodeURIComponent(pluginId)}/settings/${encodeURIComponent(key)}`, { method: "DELETE" })); },
-      async list(): Promise<string[]> { const response = await fetch(`/api/v1/plugins/${encodeURIComponent(pluginId)}/settings`); if (!response.ok) throw new Error(`plugin settings list failed: ${response.status}`); return response.json() as Promise<string[]>; },
+      async set(key: string, value: unknown): Promise<void> { await requireOK(fetch(appPath(`/api/v1/plugins/${encodeURIComponent(pluginId)}/settings/${encodeURIComponent(key)}`), { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value }) })); },
+      async delete(key: string): Promise<void> { await requireOK(fetch(appPath(`/api/v1/plugins/${encodeURIComponent(pluginId)}/settings/${encodeURIComponent(key)}`), { method: "DELETE" })); },
+      async list(): Promise<string[]> { const response = await fetch(appPath(`/api/v1/plugins/${encodeURIComponent(pluginId)}/settings`)); if (!response.ok) throw new Error(`plugin settings list failed: ${response.status}`); return response.json() as Promise<string[]>; },
     };
-    const events: EventBus = { async publish(type, payload) { await requireOK(fetch("/api/v1/events", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type, payload, plugin_id: pluginId }) })); } };
+    const events: EventBus = { async publish(type, payload) { await requireOK(fetch(appPath("/api/v1/events"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type, payload, plugin_id: pluginId }) })); } };
     const theme: ThemeTokens = Object.freeze({ prefix: "--doublangu-", tokens: Object.freeze({ ...this.themeTokens }) });
     return {
       pluginId, contribution, settings, events, theme,

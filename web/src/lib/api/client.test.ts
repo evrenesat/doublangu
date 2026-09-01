@@ -2,13 +2,17 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import {
 	createChapter, createEdition, createLibrary, createWork, deleteChapter, deleteEdition, deleteLibrary,
 	deleteWork, DoublanguAPIError, DoublanguNetworkError, getChapter, getEdition, getLibrary, getWork,
-	listChapters, listEditions, listLibraries, listWorks, updateChapter, updateEdition, updateLibrary, updateWork
+	listChapters, listEditions, listLibraries, listWorks, updateChapter, updateEdition, updateLibrary, updateWork,
+	createArticle, enrichArticle, getArticle, listArticles, updateLearningState,
+	clearNarration, generateNarration, getNarration, reanalyzeArticle, updateSemanticLearningState,
+	getSession, logoutSession
 } from './client';
 
 const library = { id: 'library-id', name: 'Dutch Library', source_language: 'nl', target_language: 'en', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-02T00:00:00Z' };
 const work = { id: 'work-id', library_id: library.id, title: 'De Avonden', author: 'Gerard Reve', kind: 'audiobook', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-02T00:00:00Z' };
 const edition = { id: 'edition-id', work_id: work.id, name: 'Original', language: 'nl', format: 'audiobook', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-02T00:00:00Z' };
 const chapter = { id: 'chapter-id', edition_id: edition.id, title: 'Chapter 1', chapter_number: 1, start_ms: 0, end_ms: 120000, duration_ms: 120000, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-02T00:00:00Z' };
+const article = { id: 'article-id', title: 'Een dag', source_language: 'nl', target_language: 'en', enrichment_status: 'ready', enrichment_error_code: '', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-02T00:00:00Z', blocks: [] };
 
 function json(status: number, body: unknown): Response {
 	return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -61,6 +65,16 @@ it('lists libraries at the collection path', async () => {
 	mock(json(200, [library]));
 	expect(await listLibraries()).toEqual([library]);
 	expectRequest('/api/v1/libraries');
+});
+
+it('checks and ends the owner session', async () => {
+	mock(json(200, { authenticated: true }));
+	expect(await getSession()).toEqual({ authenticated: true });
+	expectRequest('/api/v1/auth/session');
+
+	mock(json(200, { ok: true }));
+	await logoutSession();
+	expectRequest('/api/v1/auth/logout', 'POST');
 });
 
 it('gets an encoded library item path', async () => {
@@ -183,6 +197,58 @@ it('deletes a chapter at its top-level item path', async () => {
 	mock(noContent());
 	expect(await deleteChapter(chapter.id)).toBeUndefined();
 	expectRequest('/api/v1/chapters/chapter-id', 'DELETE');
+});
+
+it('lists, creates, gets, and enriches reader articles', async () => {
+	mock(json(200, [article]));
+	expect(await listArticles()).toEqual([article]);
+	expectRequest('/api/v1/articles');
+
+	const payload = { title: 'Een dag', body: 'Een zin.', source_language: 'nl', target_language: 'en' };
+	mock(json(201, article));
+	expect(await createArticle(payload)).toEqual(article);
+	expectRequest('/api/v1/articles', 'POST', payload);
+
+	mock(json(200, article));
+	expect(await getArticle('article /?')).toEqual(article);
+	expectRequest('/api/v1/articles/article%20%2F%3F');
+
+	mock(json(200, article));
+	expect(await enrichArticle(article.id)).toEqual(article);
+	expectRequest('/api/v1/articles/article-id/enrich', 'POST');
+});
+
+it('uses the background analysis, narration, and sense-keyed learning routes', async () => {
+	mock(json(202, article));
+	expect(await reanalyzeArticle('article /?')).toEqual(article);
+	expectRequest('/api/v1/articles/article%20%2F%3F/reanalyze', 'POST');
+
+	mock(json(200, { article_id: article.id, status: 'ready', error_code: '', sentence_count: 1, ready_count: 1, duration_ms: 100, size_bytes: 10, reclaimable_bytes: 10, clips: [] }));
+	const narration = await getNarration(article.id);
+	expect(narration.status).toBe('ready');
+	expectRequest('/api/v1/articles/article-id/narration');
+
+	mock(json(202, article));
+	expect(await generateNarration(article.id)).toEqual(article);
+	expectRequest('/api/v1/articles/article-id/narration', 'POST');
+
+	mock(json(200, { article_id: article.id, sentence_count: 1, reclaimed_bytes: 10, retained_bytes: 0, purged_render_count: 1, status: 'purged' }));
+	await clearNarration(article.id);
+	expectRequest('/api/v1/articles/article-id/narration', 'DELETE');
+
+	const semanticInput = { semantic_sense_id: 'sense-id', article_occurrence_id: 'occurrence-id', status: 'learned' as const };
+	const semanticState = { semantic_sense_id: 'sense-id', status: 'learned' as const, updated_at: '2026-01-02T00:00:00Z' };
+	mock(json(200, semanticState));
+	expect(await updateSemanticLearningState(semanticInput)).toEqual(semanticState);
+	expectRequest('/api/v1/learning-state', 'PUT', semanticInput);
+});
+
+it('updates reader learning state with a CSRF JSON mutation', async () => {
+	const payload = { source_language: 'nl', kind: 'word' as const, learning_key: 'woord', status: 'learned' as const };
+	const state = { ...payload, updated_at: '2026-01-02T00:00:00Z' };
+	mock(json(200, state));
+	expect(await updateLearningState(payload)).toEqual(state);
+	expectRequest('/api/v1/learning-state', 'PUT', payload);
 });
 
 it('decodes a structured ordinary API error', async () => {

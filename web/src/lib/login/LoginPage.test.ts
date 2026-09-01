@@ -46,7 +46,7 @@ describe('login page', () => {
 		await fillPassword();
 		await waitFor(() => expect((screen.getByRole('button', { name: 'Sign in' }) as HTMLButtonElement).disabled).toBe(false));
 		await fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
-		await waitFor(() => expect((globalThis as Record<string, unknown>).__doublanguLastNavigation).toBe('/'));
+		await waitFor(() => expect((globalThis as Record<string, unknown>).__doublanguLastNavigation).toBe('/reader'));
 	});
 
 	it('shows the structured backend failure without navigating', async () => {

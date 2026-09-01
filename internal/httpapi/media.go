@@ -72,11 +72,50 @@ func (h *MediaHandler) ServeMedia(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	h.serveBlob(w, r, sourceAsset.SHA256Hash, sourceAsset.MIMEType, "media blob not found")
+}
 
-	digest := sourceAsset.SHA256Hash
+// ServeAudio handles authenticated GET and HEAD for a ready speech render.
+// A render is served only through its server-side blob reference; render IDs
+// and request hashes never become filesystem paths.
+func (h *MediaHandler) ServeAudio(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		WriteError(w, http.StatusMethodNotAllowed, "method not allowed", ErrCodeMethodNotAllow)
+		return
+	}
+	id, err := parseAndValidateMediaID(r.PathValue("id"))
+	if err != nil {
+		WriteError(w, http.StatusBadRequest, "invalid audio render id", ErrCodeValidation)
+		return
+	}
+	var digest, mimeType string
+	err = h.db.QueryRow(r.Context(), `
+		SELECT abr.blob_digest, sp.mime_type
+		FROM audio_render ar
+		JOIN audio_blob_reference abr ON abr.audio_render_id = ar.id
+		JOIN speech_profile sp ON sp.id = ar.speech_profile_id
+		WHERE ar.id = ? AND ar.state = 'ready'
+	`, id.String()).Scan(&digest, &mimeType)
+	if errors.Is(err, sql.ErrNoRows) {
+		WriteError(w, http.StatusNotFound, "audio render is not ready", ErrCodeNotFound)
+		return
+	}
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "audio render lookup failed", ErrCodeInternal)
+		return
+	}
+	if mimeType != "audio/mp4" {
+		WriteError(w, http.StatusInternalServerError, "audio render has invalid media type", ErrCodeInternal)
+		return
+	}
+	h.serveBlob(w, r, digest, mimeType, "audio blob not found")
+}
+
+func (h *MediaHandler) serveBlob(w http.ResponseWriter, r *http.Request, digest, mimeType, missingMessage string) {
 	blobPath, err := h.blobPath(digest)
 	if err != nil {
-		WriteError(w, http.StatusInternalServerError, "source asset has invalid media blob", ErrCodeInternal)
+		WriteError(w, http.StatusInternalServerError, "media reference has invalid blob", ErrCodeInternal)
 		return
 	}
 
@@ -84,7 +123,7 @@ func (h *MediaHandler) ServeMedia(w http.ResponseWriter, r *http.Request) {
 	f, err := os.Open(blobPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			WriteError(w, http.StatusNotFound, "media blob not found", ErrCodeNotFound)
+			WriteError(w, http.StatusNotFound, missingMessage, ErrCodeNotFound)
 			return
 		}
 		WriteError(w, http.StatusInternalServerError, "media blob inaccessible", ErrCodeInternal)
@@ -101,7 +140,7 @@ func (h *MediaHandler) ServeMedia(w http.ResponseWriter, r *http.Request) {
 	etag := `"` + digest + `"`
 	w.Header().Set("ETag", etag)
 	w.Header().Set("Accept-Ranges", "bytes")
-	w.Header().Set("Content-Type", sourceAsset.MIMEType)
+	w.Header().Set("Content-Type", mimeType)
 
 	if mediaETagMatches(r.Header.Get("If-None-Match"), etag) {
 		w.WriteHeader(http.StatusNotModified)

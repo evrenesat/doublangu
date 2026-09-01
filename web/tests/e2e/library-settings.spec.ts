@@ -11,6 +11,10 @@ function response(body: unknown, status = 200) {
 	return { status, contentType: 'application/json', body: JSON.stringify(body) };
 }
 
+test.beforeEach(async ({ page }) => {
+	await page.route('**/api/v1/auth/session', (route) => route.fulfill(response({ authenticated: true })));
+});
+
 async function mockLibraryAPI(page: Page): Promise<void> {
 	await page.context().addCookies([{ name: 'csrf_token', value: 'test-csrf-token', domain: 'localhost', path: '/' }]);
 	await page.route('**/api/v1/libraries', (route) => route.fulfill(
@@ -67,8 +71,8 @@ test('shows client-side required-field validation when creating a library', asyn
 	await mockLibraryAPI(page);
 	await page.goto('/library/new');
 	await page.getByLabel('Name').fill('');
-	await page.getByLabel('Source language').fill('nl');
-	await page.getByLabel('Target language').fill('en');
+	await page.getByLabel('Source language').selectOption('nl');
+	await page.getByLabel('Target language').selectOption('en');
 	await page.getByRole('button', { name: 'Create library' }).click();
 	await expect(page.getByRole('alert')).toContainText('required');
 });
@@ -77,8 +81,8 @@ test('submits a library and navigates to its encoded detail target', async ({ pa
 	await mockLibraryAPI(page);
 	await page.goto('/library/new');
 	await page.getByLabel('Name').fill('New library');
-	await page.getByLabel('Source language').fill('nl');
-	await page.getByLabel('Target language').fill('en');
+	await page.getByLabel('Source language').selectOption('nl');
+	await page.getByLabel('Target language').selectOption('en');
 	await page.getByRole('button', { name: 'Create library' }).click();
 	await expect(page).toHaveURL('/library/created%20library');
 });
@@ -165,12 +169,12 @@ test('shows a retryable chapters error instead of an empty state', async ({ page
 	await expect(page.getByText('No chapters.')).toHaveCount(0);
 });
 
-test('shows settings with no plugins and preserves home, plugins, and login targets', async ({ page }) => {
+test('keeps developer diagnostics out of the learner navigation', async ({ page }) => {
 	await mockLibraryAPI(page);
 	await page.route('**/health', (route) => route.fulfill(response({ ...diagnostics, plugin_count: 0, plugin_ids: [] })));
 	await page.goto('/settings');
 	await expect(page.getByText('No plugins are loaded.')).toBeVisible();
-	await expect(page.getByRole('link', { name: 'Doublangu' })).toHaveAttribute('href', '/');
-	await expect(page.getByRole('banner').getByRole('link', { name: 'Plugins' })).toHaveAttribute('href', '/plugins');
-	await expect(page.getByRole('link', { name: 'Sign in' })).toHaveAttribute('href', '/login');
+	await expect(page.getByRole('link', { name: 'Doublangu reader' })).toHaveAttribute('href', '/reader');
+	await expect(page.getByRole('banner').getByRole('link', { name: 'Plugins' })).toHaveCount(0);
+	await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible();
 });

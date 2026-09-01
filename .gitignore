@@ -1,0 +1,8 @@
+.DS_Store
+.aflow/
+.vite/
+data/
+media/
+test-results/
+*.db
+run.sh

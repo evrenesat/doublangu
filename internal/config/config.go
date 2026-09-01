@@ -18,6 +18,9 @@ type Config struct {
 	Listen        string
 	PublicURL     string
 	Secret        []byte // decoded raw bytes from the base64 env var
+	Annotator     string
+	CodexModel    string
+	CodexEffort   string
 	Database      DatabaseConfig
 	Session       SessionConfig
 	Paths         PathsConfig
@@ -79,6 +82,9 @@ func Load() (*Config, error) {
 
 	cfg.Paths.Media = envOrDefault("DOUBLANGU_MEDIA_PATH", "media")
 	cfg.Paths.Data = envOrDefault("DOUBLANGU_DATA_PATH", "data")
+	cfg.Annotator = envOrDefault("DOUBLANGU_ANNOTATOR", "codex")
+	cfg.CodexModel = os.Getenv("DOUBLANGU_CODEX_MODEL")
+	cfg.CodexEffort = envOrDefault("DOUBLANGU_CODEX_EFFORT", "medium")
 
 	if v := os.Getenv("DOUBLANGU_MEDIA_REDIRECT"); v != "" {
 		cfg.MediaRedirect.Enabled = true
@@ -142,6 +148,12 @@ func (cfg *Config) Validate() error {
 	}
 	if cfg.Paths.Data == "" {
 		return errors.New("data path must not be empty")
+	}
+	if cfg.Annotator != "codex" && cfg.Annotator != "disabled" {
+		return fmt.Errorf("annotator must be codex or disabled, got %q", cfg.Annotator)
+	}
+	if strings.TrimSpace(cfg.CodexEffort) == "" {
+		return errors.New("codex effort must not be empty")
 	}
 
 	if cfg.Session.MaxAge <= 0 {
