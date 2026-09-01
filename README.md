@@ -9,10 +9,13 @@ authentication, SQLite persistence, background enrichment, and media; a Svelte
 The working product is an article reader for one owner:
 
 - paste Dutch text and receive contextual English shadows from Codex
+- choose the available Codex model and reasoning effort for new analysis runs
 - inspect words, idioms, and discontinuous constructions without altering the
   source text
 - mark individual meanings as learned
 - leave and revisit articles while durable analysis jobs continue
+- retry failed analysis, force a fresh run, and inspect retained owner-only run
+  diagnostics
 - play cached pronunciation and sentence narration when a compatible external
   macOS speech worker is connected
 
@@ -49,6 +52,10 @@ npm --prefix web run dev
 Open <http://localhost:5173/login>. Data defaults to `data/doublangu.db`; use
 `DOUBLANGU_DB_PATH` to change it. Codex enrichment can be disabled with
 `DOUBLANGU_ANNOTATOR=disabled`.
+
+`DOUBLANGU_CODEX_MODEL` and `DOUBLANGU_CODEX_EFFORT` seed the initial analysis
+selection only. After login, change the persisted selection from Settings;
+later server restarts do not overwrite it.
 
 For a deployment below a URL prefix, set the path when building the web app:
 

@@ -243,6 +243,110 @@ paths:
               schema:
                 $ref: "#/components/schemas/APIError"
 
+  # --- Analysis settings and owner diagnostics ---
+
+  /api/v1/analysis/models:
+    get:
+      summary: List available analysis models and reasoning efforts
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: refresh
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Hidden-inclusive model catalog, possibly marked stale after a failed refresh.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AnalysisModelsResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "405": { $ref: "#/components/responses/MethodNotAllowed" }
+
+  /api/v1/analysis/settings:
+    get:
+      summary: Get the selected analysis model and reasoning effort
+      security: [{ sessionCookie: [] }]
+      responses:
+        "200":
+          description: Current owner selection.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AnalysisSettings" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500": { $ref: "#/components/responses/Internal" }
+        "405": { $ref: "#/components/responses/MethodNotAllowed" }
+    put:
+      summary: Save the selected analysis model and reasoning effort
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AnalysisSettingsInput" }
+      responses:
+        "200":
+          description: Saved owner selection.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AnalysisSettings" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "405": { $ref: "#/components/responses/MethodNotAllowed" }
+
+  /api/v1/analysis/runs:
+    get:
+      summary: List retained owner-visible analysis runs
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: article_id
+          in: query
+          required: false
+          schema: { $ref: "#/components/schemas/ULID" }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: Cursor-paginated analysis run summaries.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AnalysisRunsPage" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500": { $ref: "#/components/responses/Internal" }
+        "405": { $ref: "#/components/responses/MethodNotAllowed" }
+
+  /api/v1/analysis/runs/{id}:
+    get:
+      summary: Get one analysis run and its retained turn artifacts
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ULID" }
+      responses:
+        "200":
+          description: Owner-visible run provenance, prompts, schemas, responses, and validation diagnostics.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AnalysisRun" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/Internal" }
+        "405": { $ref: "#/components/responses/MethodNotAllowed" }
+
   # --- Article reader endpoints ---
   # All reader routes require an authenticated owner session. Mutations also
   # require the CSRF double-submit cookie/header pair.
@@ -362,6 +466,11 @@ paths:
           in: path
           required: true
           schema: { $ref: "#/components/schemas/ULID" }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReanalyzeInput" }
       responses:
         "202":
           description: New analysis work was queued; an older accepted analysis remains readable until replacement.
@@ -1816,6 +1925,156 @@ components:
       type: string
       enum: [needs_analysis, queued, processing, ready, failed]
 
+    ReasoningEffort:
+      type: object
+      additionalProperties: false
+      required: [value]
+      properties:
+        value: { type: string, minLength: 1 }
+        description: { type: string }
+
+    AnalysisModel:
+      type: object
+      additionalProperties: false
+      required: [id, display_name, is_default, hidden, supported_reasoning_efforts]
+      properties:
+        id: { type: string, minLength: 1 }
+        display_name: { type: string, minLength: 1 }
+        is_default: { type: boolean }
+        hidden: { type: boolean }
+        supported_reasoning_efforts:
+          type: array
+          items: { $ref: "#/components/schemas/ReasoningEffort" }
+
+    AnalysisModelsResponse:
+      type: object
+      additionalProperties: false
+      required: [models, retrieved_at, stale]
+      properties:
+        models:
+          type: array
+          items: { $ref: "#/components/schemas/AnalysisModel" }
+        retrieved_at: { type: string }
+        stale: { type: boolean }
+        last_error: { type: string }
+
+    AnalysisSettingsInput:
+      type: object
+      additionalProperties: false
+      required: [model, effort]
+      properties:
+        model: { type: string, minLength: 1 }
+        effort: { type: string, minLength: 1 }
+
+    AnalysisSettings:
+      type: object
+      additionalProperties: false
+      required: [model, effort, updated_at]
+      properties:
+        model: { type: string }
+        effort: { type: string, minLength: 1 }
+        updated_at: { type: string }
+
+    AnalysisTurn:
+      type: object
+      additionalProperties: false
+      required: [id, run_id, block_index, turn_index, turn_kind, prompt, output_schema,
+        completed_response, response_hash, validation_error, provider_error,
+        completion_metadata_json, provider_stderr_excerpt, started_at, completed_at,
+        duration_ms, status]
+      properties:
+        id: { $ref: "#/components/schemas/ULID" }
+        run_id: { $ref: "#/components/schemas/ULID" }
+        block_index: { type: integer, minimum: 0 }
+        turn_index: { type: integer, minimum: 0 }
+        turn_kind: { type: string, enum: [initial, corrective] }
+        prompt: { type: string, minLength: 1 }
+        output_schema: { type: string, minLength: 1 }
+        completed_response: { type: string }
+        response_hash: { type: string }
+        validation_error: { type: string }
+        provider_error: { type: string }
+        completion_metadata_json: { type: string }
+        provider_stderr_excerpt: { type: string }
+        started_at: { type: string }
+        completed_at: { type: string }
+        duration_ms: { type: integer, format: int64, minimum: 0 }
+        status: { type: string, enum: [completed, failed] }
+
+    AnalysisRunSummary:
+      type: object
+      additionalProperties: false
+      required: [id, article_id, article_title, attempt_count, requested_model,
+        requested_effort, status, total_paragraphs, completed_paragraphs,
+        failed_block_index, duration_ms, started_at, completed_at, error_code]
+      properties:
+        id: { $ref: "#/components/schemas/ULID" }
+        article_id: { $ref: "#/components/schemas/ULID" }
+        article_title: { type: string }
+        attempt_count: { type: integer, minimum: 1 }
+        requested_model: { type: string }
+        requested_effort: { type: string }
+        status: { type: string, enum: [running, succeeded, failed] }
+        total_paragraphs: { type: integer, minimum: 0 }
+        completed_paragraphs: { type: integer, minimum: 0 }
+        failed_block_index: { type: integer, minimum: -1 }
+        duration_ms: { type: integer, format: int64, minimum: 0 }
+        started_at: { type: string }
+        completed_at: { type: string }
+        error_code: { type: string }
+
+    AnalysisRun:
+      type: object
+      additionalProperties: false
+      required: [id, article_id, article_title, job_id, attempt_count, content_hash,
+        contract_version, prompt_version, requested_model, requested_effort,
+        provider_id, codex_cli_version, reported_model, started_at, completed_at,
+        duration_ms, status, total_paragraphs, completed_paragraphs,
+        failed_block_index, error_code, stderr_excerpt, turns]
+      properties:
+        id: { $ref: "#/components/schemas/ULID" }
+        article_id: { $ref: "#/components/schemas/ULID" }
+        article_title: { type: string }
+        job_id: { $ref: "#/components/schemas/ULID" }
+        attempt_count: { type: integer, minimum: 1 }
+        content_hash: { $ref: "#/components/schemas/SHA256" }
+        contract_version: { type: string }
+        prompt_version: { type: string }
+        requested_model: { type: string }
+        requested_effort: { type: string }
+        provider_id: { type: string }
+        codex_cli_version: { type: string }
+        reported_model: { type: string }
+        started_at: { type: string }
+        completed_at: { type: string }
+        duration_ms: { type: integer, format: int64, minimum: 0 }
+        status: { type: string, enum: [running, succeeded, failed] }
+        total_paragraphs: { type: integer, minimum: 0 }
+        completed_paragraphs: { type: integer, minimum: 0 }
+        failed_block_index: { type: integer, minimum: -1 }
+        error_code: { type: string }
+        error_detail: { type: string }
+        stderr_excerpt: { type: string }
+        turns:
+          type: array
+          items: { $ref: "#/components/schemas/AnalysisTurn" }
+
+    AnalysisRunsPage:
+      type: object
+      additionalProperties: false
+      required: [runs]
+      properties:
+        runs:
+          type: array
+          items: { $ref: "#/components/schemas/AnalysisRunSummary" }
+        next_cursor: { type: string }
+
+    ReanalyzeInput:
+      type: object
+      additionalProperties: false
+      properties:
+        fresh: { type: boolean, default: false }
+
     NarrationStatus:
       type: string
       enum: [not_requested, queued, generating, partial, ready, failed, purged]
@@ -2020,7 +2279,7 @@ components:
       type: object
       required: [id, title, source_language, target_language, enrichment_status,
         enrichment_error_code, created_at, updated_at, content_hash, analysis_status,
-        analysis_error_code, narration_status, narration_error_code]
+        analysis_error_code, analysis_model, analysis_effort, narration_status, narration_error_code]
       properties:
         id: { $ref: "#/components/schemas/ULID" }
         title: { type: string }
@@ -2033,6 +2292,8 @@ components:
         content_hash: { $ref: "#/components/schemas/SHA256" }
         analysis_status: { $ref: "#/components/schemas/AnalysisStatus" }
         analysis_error_code: { type: string }
+        analysis_model: { type: string }
+        analysis_effort: { type: string }
         narration_status: { $ref: "#/components/schemas/NarrationStatus" }
         narration_error_code: { type: string }
 
@@ -2073,7 +2334,7 @@ components:
       type: object
       required: [id, title, source_language, target_language, enrichment_status,
         enrichment_error_code, created_at, updated_at, blocks, content_hash,
-        analysis_status, analysis_revision, analysis_error_code, narration_status,
+        analysis_status, analysis_revision, analysis_error_code, analysis_model, analysis_effort, narration_status,
         narration_error_code, sentences, occurrences, narration]
       properties:
         id: { $ref: "#/components/schemas/ULID" }
@@ -2092,6 +2353,8 @@ components:
         analysis_status: { $ref: "#/components/schemas/AnalysisStatus" }
         analysis_revision: { type: string }
         analysis_error_code: { type: string }
+        analysis_model: { type: string }
+        analysis_effort: { type: string }
         narration_status: { $ref: "#/components/schemas/NarrationStatus" }
         narration_error_code: { type: string }
         sentences: { type: array, items: { $ref: "#/components/schemas/ArticleSentence" } }
@@ -2474,6 +2737,11 @@ components:
           schema: { $ref: "#/components/schemas/APIError" }
     Internal:
       description: Unexpected server failure.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/APIError" }
+    Unavailable:
+      description: Required provider or service is unavailable.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/APIError" }

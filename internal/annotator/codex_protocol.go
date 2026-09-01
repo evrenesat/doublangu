@@ -104,6 +104,7 @@ type turnCompletedParams struct {
 	Turn     struct {
 		ID     string `json:"id"`
 		Status string `json:"status"`
+		Model  string `json:"model"`
 		Error  *struct {
 			Message string `json:"message"`
 		} `json:"error"`
@@ -167,6 +168,10 @@ func startAppServer(ctx context.Context, binary, workingDirectory string) (*appS
 	}
 	return &appServerProcess{cmd: cmd, stdin: stdin, stdout: stdout, stderr: stderr}, nil
 }
+
+// launchAppServer is kept behind a package seam so protocol tests can run a
+// deterministic fake app-server without changing production process startup.
+var launchAppServer = startAppServer
 
 func (p *appServerProcess) close() {
 	if p == nil {

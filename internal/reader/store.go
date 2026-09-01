@@ -73,7 +73,8 @@ func (s *Store) ListArticles(ctx context.Context) ([]ArticleSummary, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT id, title, source_language, target_language, enrichment_status,
 		       enrichment_error_code, created_at, updated_at, content_hash,
-		       analysis_status, analysis_error_code, narration_status, narration_error_code
+		       analysis_status, analysis_error_code, analysis_model, analysis_effort,
+		       narration_status, narration_error_code
 		FROM article ORDER BY created_at DESC, id DESC
 	`)
 	if err != nil {
@@ -85,7 +86,7 @@ func (s *Store) ListArticles(ctx context.Context) ([]ArticleSummary, error) {
 		var article ArticleSummary
 		var id, status string
 		var analysisStatus, narrationStatus string
-		if err := rows.Scan(&id, &article.Title, &article.SourceLanguage, &article.TargetLanguage, &status, &article.EnrichmentErrorCode, &article.CreatedAt, &article.UpdatedAt, &article.ContentHash, &analysisStatus, &article.AnalysisErrorCode, &narrationStatus, &article.NarrationErrorCode); err != nil {
+		if err := rows.Scan(&id, &article.Title, &article.SourceLanguage, &article.TargetLanguage, &status, &article.EnrichmentErrorCode, &article.CreatedAt, &article.UpdatedAt, &article.ContentHash, &analysisStatus, &article.AnalysisErrorCode, &article.AnalysisModel, &article.AnalysisEffort, &narrationStatus, &article.NarrationErrorCode); err != nil {
 			return nil, fmt.Errorf("reader list articles: %w", err)
 		}
 		article.ID = library.ULID(id)

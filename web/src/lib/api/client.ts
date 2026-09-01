@@ -23,6 +23,15 @@ export type LearningState = components['schemas']['LearningState'];
 export type LearningStateInput = components['schemas']['LearningStateInput'];
 export type LearningStatus = components['schemas']['LearningStatus'];
 export type AnalysisStatus = components['schemas']['AnalysisStatus'];
+export type ReasoningEffort = components['schemas']['ReasoningEffort'];
+export type AnalysisModel = components['schemas']['AnalysisModel'];
+export type AnalysisModelsResponse = components['schemas']['AnalysisModelsResponse'];
+export type AnalysisSettings = components['schemas']['AnalysisSettings'];
+export type AnalysisSettingsInput = components['schemas']['AnalysisSettingsInput'];
+export type AnalysisTurn = components['schemas']['AnalysisTurn'];
+export type AnalysisRunSummary = components['schemas']['AnalysisRunSummary'];
+export type AnalysisRun = components['schemas']['AnalysisRun'];
+export type AnalysisRunsPage = components['schemas']['AnalysisRunsPage'];
 export type NarrationStatus = components['schemas']['NarrationStatus'];
 export type SemanticLearningState = components['schemas']['SemanticLearningState'];
 export type SemanticLearningStateInput = components['schemas']['SemanticLearningStateInput'];
@@ -248,8 +257,35 @@ export async function enrichArticle(articleId: string): Promise<Article> {
 	return appArticleAudio(await apiFetch<Article>(`/api/v1/articles/${id(articleId)}/enrich`, { method: 'POST', csrf: true }));
 }
 
-export async function reanalyzeArticle(articleId: string): Promise<Article> {
-	return appArticleAudio(await apiFetch<Article>(`/api/v1/articles/${id(articleId)}/reanalyze`, { method: 'POST', csrf: true }));
+export async function reanalyzeArticle(articleId: string, fresh = false): Promise<Article> {
+	return appArticleAudio(await apiFetch<Article>(`/api/v1/articles/${id(articleId)}/reanalyze`, {
+		method: 'POST', body: fresh ? JSON.stringify({ fresh: true }) : undefined, csrf: true
+	}));
+}
+
+export async function getAnalysisModels(refresh = false): Promise<AnalysisModelsResponse> {
+	return apiFetch(`/api/v1/analysis/models${refresh ? '?refresh=true' : ''}`);
+}
+
+export async function getAnalysisSettings(): Promise<AnalysisSettings> {
+	return apiFetch('/api/v1/analysis/settings');
+}
+
+export async function saveAnalysisSettings(data: AnalysisSettingsInput): Promise<AnalysisSettings> {
+	return apiFetch('/api/v1/analysis/settings', { method: 'PUT', body: JSON.stringify(data), csrf: true });
+}
+
+export async function listAnalysisRuns(options: { articleId?: string; limit?: number; cursor?: string } = {}): Promise<AnalysisRunsPage> {
+	const query = new URLSearchParams();
+	if (options.articleId) query.set('article_id', options.articleId);
+	if (options.limit !== undefined) query.set('limit', String(options.limit));
+	if (options.cursor) query.set('cursor', options.cursor);
+	const suffix = query.toString() ? `?${query.toString()}` : '';
+	return apiFetch(`/api/v1/analysis/runs${suffix}`);
+}
+
+export async function getAnalysisRun(runId: string): Promise<AnalysisRun> {
+	return apiFetch(`/api/v1/analysis/runs/${id(runId)}`);
 }
 
 export async function getNarration(articleId: string): Promise<Narration> {

@@ -88,6 +88,8 @@ type Article struct {
 	AnalysisStatus      AnalysisStatus      `json:"analysis_status"`
 	AnalysisRevision    string              `json:"analysis_revision"`
 	AnalysisErrorCode   string              `json:"analysis_error_code"`
+	AnalysisModel       string              `json:"analysis_model"`
+	AnalysisEffort      string              `json:"analysis_effort"`
 	NarrationStatus     NarrationStatus     `json:"narration_status"`
 	NarrationErrorCode  string              `json:"narration_error_code"`
 	Sentences           []ArticleSentence   `json:"sentences"`
@@ -108,6 +110,8 @@ type ArticleSummary struct {
 	ContentHash         string           `json:"content_hash"`
 	AnalysisStatus      AnalysisStatus   `json:"analysis_status"`
 	AnalysisErrorCode   string           `json:"analysis_error_code"`
+	AnalysisModel       string           `json:"analysis_model"`
+	AnalysisEffort      string           `json:"analysis_effort"`
 	NarrationStatus     NarrationStatus  `json:"narration_status"`
 	NarrationErrorCode  string           `json:"narration_error_code"`
 }
@@ -267,6 +271,13 @@ type ArticleInput struct {
 type ArticleInputBlock struct {
 	BlockIndex int    `json:"block_index"`
 	SourceText string `json:"source_text"`
+}
+
+// AnalysisSelection is the owner-selected provider configuration snapshotted
+// into every queued analysis job.
+type AnalysisSelection struct {
+	Model  string
+	Effort string
 }
 
 // Candidate is the strict provider output before local span normalization.

@@ -5,7 +5,8 @@ import {
 	listChapters, listEditions, listLibraries, listWorks, updateChapter, updateEdition, updateLibrary, updateWork,
 	createArticle, enrichArticle, getArticle, listArticles, updateLearningState,
 	clearNarration, generateNarration, getNarration, reanalyzeArticle, updateSemanticLearningState,
-	getSession, logoutSession
+	getSession, logoutSession, getAnalysisModels, getAnalysisSettings, saveAnalysisSettings,
+	listAnalysisRuns, getAnalysisRun
 } from './client';
 
 const library = { id: 'library-id', name: 'Dutch Library', source_language: 'nl', target_language: 'en', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-02T00:00:00Z' };
@@ -241,6 +242,47 @@ it('uses the background analysis, narration, and sense-keyed learning routes', a
 	mock(json(200, semanticState));
 	expect(await updateSemanticLearningState(semanticInput)).toEqual(semanticState);
 	expectRequest('/api/v1/learning-state', 'PUT', semanticInput);
+});
+
+it('discovers analysis settings and history through owner API routes', async () => {
+	const models = { models: [{ id: 'model-a', display_name: 'Model A', is_default: true, hidden: false, supported_reasoning_efforts: [{ value: 'low' }] }], retrieved_at: '2026-01-02T00:00:00Z', stale: false };
+	const settings = { model: 'model-a', effort: 'low', updated_at: '2026-01-02T00:00:00Z' };
+	const runs = { runs: [], next_cursor: '' };
+	const run = { id: 'run /?', article_id: 'article-id', article_title: 'Een dag', job_id: 'job-id', attempt_count: 1, content_hash: 'hash', contract_version: 'reader.analysis.v2', prompt_version: 'reader-analysis-prompt.v2', requested_model: 'model-a', requested_effort: 'low', provider_id: 'codex.appserver', codex_cli_version: '', reported_model: '', started_at: '', completed_at: '', duration_ms: 0, status: 'succeeded', total_paragraphs: 1, completed_paragraphs: 1, failed_block_index: -1, error_code: '', turns: [] };
+	const fetchMock = vi.fn()
+		.mockResolvedValueOnce(json(200, models))
+		.mockResolvedValueOnce(json(200, { ...models, stale: true, last_error: 'refresh failed' }))
+		.mockResolvedValueOnce(json(200, settings))
+		.mockResolvedValueOnce(json(200, settings))
+		.mockResolvedValueOnce(json(200, runs))
+		.mockResolvedValueOnce(json(200, run));
+	vi.stubGlobal('fetch', fetchMock);
+
+	expect(await getAnalysisModels()).toEqual(models);
+	expect(await getAnalysisModels(true)).toEqual({ ...models, stale: true, last_error: 'refresh failed' });
+	expect(await getAnalysisSettings()).toEqual(settings);
+	expect(await saveAnalysisSettings({ model: 'model-a', effort: 'low' })).toEqual(settings);
+	expect(await listAnalysisRuns({ articleId: 'article /?', limit: 10, cursor: 'next /?' })).toEqual(runs);
+	expect(await getAnalysisRun('run /?')).toEqual(run);
+
+	const calls = fetchMock.mock.calls as Array<[string, RequestInit]>;
+	expect(calls.map(([url]) => url)).toEqual([
+		'/api/v1/analysis/models',
+		'/api/v1/analysis/models?refresh=true',
+		'/api/v1/analysis/settings',
+		'/api/v1/analysis/settings',
+		'/api/v1/analysis/runs?article_id=article+%2F%3F&limit=10&cursor=next+%2F%3F',
+		'/api/v1/analysis/runs/run%20%2F%3F'
+	]);
+	const saveInit = calls[3]![1];
+	expect(saveInit.method).toBe('PUT');
+	expect(saveInit.body).toBe(JSON.stringify({ model: 'model-a', effort: 'low' }));
+});
+
+it('sends a fresh flag only for an explicit fresh analysis retry', async () => {
+	mock(json(202, article));
+	expect(await reanalyzeArticle(article.id, true)).toEqual(article);
+	expectRequest('/api/v1/articles/article-id/reanalyze', 'POST', { fresh: true });
 });
 
 it('updates reader learning state with a CSRF JSON mutation', async () => {
