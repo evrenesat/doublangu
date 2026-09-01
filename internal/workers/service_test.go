@@ -17,9 +17,13 @@ import (
 const workerArticleID = "01J0000000000000000000010"
 
 func seedWorkerArticle(t *testing.T, db *store.DB) {
+	seedWorkerArticleWithSourceLanguage(t, db, "nl")
+}
+
+func seedWorkerArticleWithSourceLanguage(t *testing.T, db *store.DB, sourceLanguage string) {
 	t.Helper()
 	ctx := context.Background()
-	if _, err := db.Exec(ctx, `INSERT INTO article (id, title, source_language, target_language, enrichment_status) VALUES (?, 'Worker test', 'nl', 'en', 'draft')`, workerArticleID); err != nil {
+	if _, err := db.Exec(ctx, `INSERT INTO article (id, title, source_language, target_language, enrichment_status) VALUES (?, 'Worker test', ?, 'en', 'draft')`, workerArticleID, sourceLanguage); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(ctx, `INSERT INTO article_block (id, article_id, block_index, kind, source_text) VALUES ('01J0000000000000000000011', ?, 0, 'paragraph', 'Een zin.')`, workerArticleID); err != nil {
@@ -141,6 +145,92 @@ func TestEnrollmentLeaseCompletionAndIdempotentUpload(t *testing.T) {
 	}
 	if _, err := service.Authenticate(ctx, workerToken); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("revoked worker auth = %v", err)
+	}
+}
+
+func TestRegionalDutchArticleQueuesAndLeasesWithCanonicalSpeechLanguage(t *testing.T) {
+	db, err := store.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	seedWorkerArticleWithSourceLanguage(t, db, "nl-NL")
+
+	mediaStore, err := media.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	service := NewService(db, mediaStore)
+	enrollment, err := service.CreateEnrollment(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	capabilities := workerCapabilities()
+	worker, _, err := service.Enroll(ctx, enrollment.Token, EnrollInput{
+		Name: "regional-dutch-worker", ProtocolVersion: speech.ProtocolVersion,
+		Capabilities: capabilities, SoftwareVersion: "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lease, err := service.Lease(ctx, worker, LeaseRequest{
+		ProtocolVersion: speech.ProtocolVersion, Capabilities: capabilities,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lease.Language != "nl" || lease.Profile.Language != "nl" {
+		t.Fatalf("regional Dutch lease languages = %q/%q", lease.Language, lease.Profile.Language)
+	}
+}
+
+func TestHeartbeatReportsCancellationForActiveWorkerLease(t *testing.T) {
+	db, err := store.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	seedWorkerArticle(t, db)
+	mediaStore, err := media.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	service := NewService(db, mediaStore)
+	enrollment, err := service.CreateEnrollment(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker, _, err := service.Enroll(ctx, enrollment.Token, EnrollInput{
+		Name: "cancel-worker", ProtocolVersion: speech.ProtocolVersion,
+		Capabilities: workerCapabilities(), SoftwareVersion: "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease, err := service.Lease(ctx, worker, LeaseRequest{ProtocolVersion: speech.ProtocolVersion, Capabilities: workerCapabilities()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count, err := service.jobs.CancelOwnerJobs(ctx, "audio_render", lease.RenderID.String(), jobs.ChatterboxJobType, "v1.owner_canceled"); err != nil || count != 1 {
+		t.Fatalf("active render cancellation = %d/%v", count, err)
+	}
+	heartbeat, err := service.Heartbeat(ctx, worker, lease.JobID, lease.LeaseToken, HeartbeatInput{
+		ProtocolVersion: speech.ProtocolVersion, Attempt: lease.Attempt, ProgressPercent: 50,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !heartbeat.CancelRequested || heartbeat.ProgressPercent != 0 || heartbeat.LeaseExpiresAt != lease.LeaseExpiresAt {
+		t.Fatalf("canceled service heartbeat = %+v", heartbeat)
+	}
+	if err := service.Complete(ctx, worker, lease.JobID, CompleteMetadata{
+		ProtocolVersion: speech.ProtocolVersion, Attempt: lease.Attempt, LeaseToken: lease.LeaseToken,
+		Artifact: artifactFor(fakeM4A(), lease.RequestHash),
+	}, fakeM4A()); !errors.Is(err, jobs.ErrLeaseLost) {
+		t.Fatalf("canceled service completion = %v", err)
 	}
 }
 

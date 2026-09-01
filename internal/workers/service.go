@@ -420,6 +420,9 @@ func (s *Service) Complete(ctx context.Context, worker *Worker, jobID library.UL
 	if err != nil {
 		return err
 	}
+	if job.State == jobs.StateCanceled {
+		return jobs.ErrLeaseLost
+	}
 	var payload speech.JobPayload
 	if err := decodeStrict([]byte(job.PayloadJSON), &payload); err != nil {
 		return ErrMalformedJob

@@ -47,6 +47,17 @@ const (
 	AudioSampleRate           = 24000
 	AudioChannels             = 1
 	AudioNormalizationVersion = "audio-normalization.v1"
+
+	// The MVP has one immutable Dutch profile pair. These values are the
+	// result of the target-Mac smoke test recorded in macos/speech-worker.
+	AVSpeechModelRevision        = "macos-15.7.9-build-24G830"
+	AVSpeechVoiceIdentifier      = "com.apple.voice.compact.nl-NL.Xander"
+	AVSpeechMappingVersion       = "avspeech-rate-postprocess.v1"
+	ChatterboxModelRevision      = "03565773edd72e949572557597af8063bb49a18a"
+	ChatterboxTokenizerRevision  = "e0c9886f0e1c35ae85b1f27277416fb1"
+	ChatterboxReferenceAudioHash = "1dd25cc2ea1aa8314af2ce2f062eb44beeb662482516177e098f58f6b6ce10f5"
+	ChatterboxVoiceIdentifier    = "doublangu-nl-reference-v1"
+	ChatterboxMappingVersion     = "mlx-audio-chatterbox.v1"
 )
 
 type Unit struct {

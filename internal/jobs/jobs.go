@@ -381,7 +381,7 @@ func (s *Store) VerifyLease(ctx context.Context, id library.ULID, attempt int, t
 		return nil, ErrLeaseLost
 	}
 	if job.State != StateLeased && job.State != StateRunning {
-		if job.State == StateSucceeded || (job.LeaseOwner == owner && (job.State == StateFailed || job.State == StateQueued)) {
+		if job.State == StateSucceeded || (job.LeaseOwner == owner && (job.State == StateCanceled || job.State == StateFailed || job.State == StateQueued)) {
 			return job, nil
 		}
 		return nil, ErrLeaseLost
@@ -514,33 +514,77 @@ func finishTx(ctx context.Context, tx *sql.Tx, id library.ULID, attempt int, tok
 }
 
 func (s *Store) Cancel(ctx context.Context, id library.ULID, code string) error {
+	if s == nil || s.db == nil {
+		return errors.New("jobs: nil database")
+	}
 	if !validErrorCode(code) {
 		return &Error{Op: "cancel", Kind: "validation", Err: ErrInvalidJob}
 	}
-	result, err := s.db.Exec(ctx, `UPDATE job SET state = 'canceled', error_code = ?, lease_owner = '', lease_token_hash = '', lease_expires_at = '', updated_at = ?, completed_at = ? WHERE id = ? AND state IN ('queued', 'leased', 'running')`, code, store.NowUTC(), store.NowUTC(), id.String())
-	if err != nil {
-		return err
-	}
-	count, _ := result.RowsAffected()
-	if count == 0 {
-		job, getErr := s.Get(ctx, id)
-		if getErr == nil && job.State == StateCanceled {
-			return nil
-		}
-		return ErrLeaseLost
-	}
-	return nil
+	return s.db.WithTransaction(ctx, func(tx *sql.Tx) error { return CancelTx(ctx, tx, id, code) })
 }
 
 func (s *Store) CancelOwnerJobs(ctx context.Context, ownerType, ownerID, jobType, code string) (int64, error) {
+	if s == nil || s.db == nil {
+		return 0, errors.New("jobs: nil database")
+	}
 	if !validErrorCode(code) {
 		return 0, &Error{Op: "cancel owner jobs", Kind: "validation", Err: ErrInvalidJob}
 	}
-	result, err := s.db.Exec(ctx, `UPDATE job SET state = 'canceled', error_code = ?, lease_owner = '', lease_token_hash = '', lease_expires_at = '', updated_at = ?, completed_at = ? WHERE owner_type = ? AND owner_id = ? AND job_type = ? AND state IN ('queued', 'leased', 'running')`, code, store.NowUTC(), store.NowUTC(), ownerType, ownerID, jobType)
+	var count int64
+	err := s.db.WithTransaction(ctx, func(tx *sql.Tx) error {
+		var err error
+		count, err = CancelOwnerJobsTx(ctx, tx, ownerType, ownerID, jobType, code)
+		return err
+	})
+	return count, err
+}
+
+// CancelTx cancels one job while retaining an active attempt's owner, token
+// hash, and original expiry. The matching worker can therefore observe the
+// cancellation on its next heartbeat, but completion remains forbidden.
+func CancelTx(ctx context.Context, tx *sql.Tx, id library.ULID, code string) error {
+	if tx == nil || id.IsZero() || !validErrorCode(code) {
+		return &Error{Op: "cancel", Kind: "validation", Err: ErrInvalidJob}
+	}
+	now := store.NowUTC()
+	if result, err := tx.ExecContext(ctx, `UPDATE job SET state = 'canceled', error_code = ?, lease_owner = '', lease_token_hash = '', lease_expires_at = '', updated_at = ?, completed_at = ? WHERE id = ? AND state = 'queued'`, code, now, now, id.String()); err != nil {
+		return err
+	} else if count, _ := result.RowsAffected(); count == 1 {
+		return nil
+	}
+	if result, err := tx.ExecContext(ctx, `UPDATE job SET state = 'canceled', error_code = ?, updated_at = ?, completed_at = ? WHERE id = ? AND state IN ('leased', 'running')`, code, now, now, id.String()); err != nil {
+		return err
+	} else if count, _ := result.RowsAffected(); count == 1 {
+		return nil
+	}
+	var state string
+	if err := tx.QueryRowContext(ctx, `SELECT state FROM job WHERE id = ?`, id.String()).Scan(&state); err != nil {
+		return err
+	}
+	if state == StateCanceled {
+		return nil
+	}
+	return ErrLeaseLost
+}
+
+// CancelOwnerJobsTx is the transaction-boundary form used by article and
+// narration teardown. It returns the number of rows newly canceled.
+func CancelOwnerJobsTx(ctx context.Context, tx *sql.Tx, ownerType, ownerID, jobType, code string) (int64, error) {
+	if tx == nil || strings.TrimSpace(ownerType) == "" || strings.TrimSpace(ownerID) == "" || strings.TrimSpace(jobType) == "" || !validErrorCode(code) {
+		return 0, &Error{Op: "cancel owner jobs", Kind: "validation", Err: ErrInvalidJob}
+	}
+	now := store.NowUTC()
+	queued, err := tx.ExecContext(ctx, `UPDATE job SET state = 'canceled', error_code = ?, lease_owner = '', lease_token_hash = '', lease_expires_at = '', updated_at = ?, completed_at = ? WHERE owner_type = ? AND owner_id = ? AND job_type = ? AND state = 'queued'`, code, now, now, ownerType, ownerID, jobType)
 	if err != nil {
 		return 0, err
 	}
-	return result.RowsAffected()
+	active, err := tx.ExecContext(ctx, `UPDATE job SET state = 'canceled', error_code = ?, updated_at = ?, completed_at = ? WHERE owner_type = ? AND owner_id = ? AND job_type = ? AND state IN ('leased', 'running')`, code, now, now, ownerType, ownerID, jobType)
+	if err != nil {
+		return 0, err
+	}
+	queuedCount, _ := queued.RowsAffected()
+	activeCount, _ := active.RowsAffected()
+	return queuedCount + activeCount, nil
 }
 
 // RecoverExpired returns expired work to the queue or marks the third failed

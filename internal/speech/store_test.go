@@ -325,3 +325,65 @@ func TestEnsureUnitAndRenderIdentityIsStable(t *testing.T) {
 		t.Fatalf("render identity = %+v / %+v", firstRender, secondRender)
 	}
 }
+
+func TestQueueArticleAudioPrefersCurrentRealProfile(t *testing.T) {
+	db, err := store.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	articleID := "01J00000000000000000000050"
+	occurrenceID := "01J00000000000000000000053"
+	seedSpeechArticle(t, db, articleID, "01J00000000000000000000051", "01J00000000000000000000052", occurrenceID, "01J00000000000000000000054", "bank")
+
+	var oldRenderID string
+	if err := db.WithTransaction(ctx, func(tx *sql.Tx) error {
+		unit, err := EnsureUnitTx(ctx, tx, UnitInput{Language: "nl", UnitKind: UnitWord, SpokenText: "bank"})
+		if err != nil {
+			return err
+		}
+		oldProfile, err := ensureProfileTx(ctx, tx, Profile{
+			Engine: AVSpeechEngine, ModelRevision: "system", Language: "nl",
+			VoiceIdentifier: "com.apple.ttsbundle.Samantha-compact", MappingVersion: "speech-profile.v1",
+			MIMEType: AudioMIME, Codec: AudioCodec, SampleRateHz: AudioSampleRate, Channels: AudioChannels,
+			SpeedMilli: 1000, PitchCents: 0, Active: true,
+		})
+		if err != nil {
+			return err
+		}
+		oldRender, err := EnsureRenderTx(ctx, tx, *unit, *oldProfile, RetentionLexical, false)
+		if err != nil {
+			return err
+		}
+		oldRenderID = oldRender.ID.String()
+		_, err = tx.ExecContext(ctx, `INSERT INTO article_occurrence_audio (article_occurrence_id, audio_render_id, purpose, preferred) VALUES (?, ?, 'pronunciation', 1)`, occurrenceID, oldRenderID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := NewStore(db).QueueArticleAudio(ctx, library.ULID(articleID), false); err != nil {
+		t.Fatal(err)
+	}
+	var preferredCount int
+	if err := db.QueryRow(ctx, `SELECT COUNT(*) FROM article_occurrence_audio WHERE article_occurrence_id = ? AND purpose = 'pronunciation' AND preferred = 1`, occurrenceID).Scan(&preferredCount); err != nil {
+		t.Fatal(err)
+	}
+	if preferredCount != 1 {
+		t.Fatalf("preferred pronunciation count = %d", preferredCount)
+	}
+	var preferredRenderID, modelRevision, voiceIdentifier, mappingVersion string
+	if err := db.QueryRow(ctx, `
+		SELECT a.audio_render_id, p.model_revision, p.voice_identifier, p.mapping_version
+		FROM article_occurrence_audio a
+		JOIN audio_render r ON r.id = a.audio_render_id
+		JOIN speech_profile p ON p.id = r.speech_profile_id
+		WHERE a.article_occurrence_id = ? AND a.purpose = 'pronunciation' AND a.preferred = 1
+	`, occurrenceID).Scan(&preferredRenderID, &modelRevision, &voiceIdentifier, &mappingVersion); err != nil {
+		t.Fatal(err)
+	}
+	if preferredRenderID == oldRenderID || modelRevision != AVSpeechModelRevision || voiceIdentifier != AVSpeechVoiceIdentifier || mappingVersion != AVSpeechMappingVersion {
+		t.Fatalf("preferred profile = %s/%s/%s/%s", preferredRenderID, modelRevision, voiceIdentifier, mappingVersion)
+	}
+}

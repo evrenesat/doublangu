@@ -220,7 +220,7 @@ func TestLeaseHeartbeatExpiryRetryAndRecovery(t *testing.T) {
 	}
 }
 
-func TestCancelOwnerJobsClearsLease(t *testing.T) {
+func TestCancelOwnerJobsClearsQueuedLease(t *testing.T) {
 	db, err := store.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -232,18 +232,64 @@ func TestCancelOwnerJobsClearsLease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if count, err := s.CancelOwnerJobs(ctx, "article", job.OwnerID, AnalysisJobType, "v1.owner_canceled"); err != nil || count != 1 {
+		t.Fatalf("queued cancellation = %d/%v", count, err)
+	}
+	got, err := s.Get(ctx, job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != StateCanceled || got.LeaseOwner != "" || got.LeaseExpiresAt != "" || got.leaseTokenHash != "" {
+		t.Fatalf("queued canceled job = %+v", got)
+	}
+}
+
+func TestCancelOwnerJobsKeepsActiveLeaseForHeartbeat(t *testing.T) {
+	db, err := store.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	s := NewStore(db)
+	job, err := s.Enqueue(ctx, testJobSpec("cancel-active-job"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	lease, err := s.Claim(ctx, TargetServer, "server")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.CancelOwnerJobs(ctx, "article", job.OwnerID, AnalysisJobType, "v1.owner_canceled"); err != nil {
+	if _, err := s.Heartbeat(ctx, lease.ID, lease.AttemptCount, lease.LeaseToken, 12); err != nil {
 		t.Fatal(err)
+	}
+	beforeCancel, err := s.Get(ctx, lease.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count, err := s.CancelOwnerJobs(ctx, "article", job.OwnerID, AnalysisJobType, "v1.owner_canceled"); err != nil || count != 1 {
+		t.Fatalf("active cancellation = %d/%v", count, err)
 	}
 	got, err := s.Get(ctx, lease.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.State != StateCanceled || got.LeaseOwner != "" || got.LeaseExpiresAt != "" {
-		t.Fatalf("canceled job = %+v", got)
+	if got.State != StateCanceled || got.LeaseOwner != "server" || got.LeaseExpiresAt != beforeCancel.LeaseExpiresAt || got.leaseTokenHash == "" || got.ProgressPercent != 12 {
+		t.Fatalf("active canceled job = %+v", got)
+	}
+	if heartbeat, heartbeatErr := s.Heartbeat(ctx, lease.ID, lease.AttemptCount, lease.LeaseToken, 20); heartbeatErr != nil || !heartbeat.CancelRequested || heartbeat.Job.State != StateCanceled || heartbeat.Job.ProgressPercent != 12 || heartbeat.Job.LeaseExpiresAt != beforeCancel.LeaseExpiresAt {
+		t.Fatalf("canceled heartbeat = %+v/%v", heartbeat, heartbeatErr)
+	}
+	if _, err := s.VerifyLease(ctx, lease.ID, lease.AttemptCount, lease.LeaseToken, "server"); err != nil {
+		t.Fatalf("matching canceled lease = %v", err)
+	}
+	if _, err := s.VerifyLease(ctx, lease.ID, lease.AttemptCount, lease.LeaseToken, "other-worker"); !errors.Is(err, ErrLeaseLost) {
+		t.Fatalf("wrong canceled lease owner = %v", err)
+	}
+	if err := s.Complete(ctx, lease.ID, lease.AttemptCount, lease.LeaseToken); !errors.Is(err, ErrLeaseLost) {
+		t.Fatalf("canceled completion = %v", err)
+	}
+	if err := s.Cancel(ctx, lease.ID, "v1.owner_canceled"); err != nil {
+		t.Fatal(err)
 	}
 }
