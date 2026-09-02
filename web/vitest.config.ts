@@ -17,6 +17,7 @@ export default defineConfig({
 			resolveId(id) {
 				if (id === '$app/navigation') return '\u0000test-sveltekit-navigation';
 				if (id === '$app/paths') return '\u0000test-sveltekit-paths';
+				if (id === '$app/stores') return '\u0000test-sveltekit-stores';
 				return undefined;
 			},
 			load(id) {
@@ -24,6 +25,7 @@ export default defineConfig({
 					return 'export async function goto(path) { globalThis.__doublanguLastNavigation = path; }';
 				}
 				if (id === '\u0000test-sveltekit-paths') return 'export const base = "";';
+				if (id === '\u0000test-sveltekit-stores') return 'export const page = { subscribe(run) { run(globalThis.__doublanguPage ?? { params: {} }); return () => {}; } };';
 				return undefined;
 			}
 		},

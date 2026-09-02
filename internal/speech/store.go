@@ -289,11 +289,9 @@ func QueueArticleAudioTx(ctx context.Context, tx *sql.Tx, articleID library.ULID
 		occurrenceRows, err := tx.QueryContext(ctx, `
 			SELECT o.id, o.kind, o.role, o.semantic_sense_id,
 			       (SELECT GROUP_CONCAT(sp.source_text, ' ') FROM article_occurrence_span sp WHERE sp.article_occurrence_id = o.id ORDER BY sp.span_index),
-			       COALESCE(NULLIF(o.canonical_pronunciation_text, ''), COALESCE(s.canonical_pronunciation_text, '')),
 			       o.context_pronunciation_key
 			FROM article_occurrence o
 			JOIN article_block b ON b.id = o.article_block_id
-			LEFT JOIN semantic_sense s ON s.id = o.semantic_sense_id
 			WHERE b.article_id = ? AND o.role IN ('token', 'contiguous_construction')
 			ORDER BY b.block_index, o.id
 		`, articleID.String())
@@ -301,13 +299,13 @@ func QueueArticleAudioTx(ctx context.Context, tx *sql.Tx, articleID library.ULID
 			return err
 		}
 		type occurrence struct {
-			id, kind, role, text, pronunciation, contextKey string
-			senseID                                         sql.NullString
+			id, kind, role, text, contextKey string
+			senseID                          sql.NullString
 		}
 		var occurrences []occurrence
 		for occurrenceRows.Next() {
 			var value occurrence
-			if err := occurrenceRows.Scan(&value.id, &value.kind, &value.role, &value.senseID, &value.text, &value.pronunciation, &value.contextKey); err != nil {
+			if err := occurrenceRows.Scan(&value.id, &value.kind, &value.role, &value.senseID, &value.text, &value.contextKey); err != nil {
 				occurrenceRows.Close()
 				return err
 			}
@@ -334,11 +332,11 @@ func QueueArticleAudioTx(ctx context.Context, tx *sql.Tx, articleID library.ULID
 				value := library.ULID(occurrence.senseID.String)
 				senseID = &value
 			}
-			spokenText := occurrence.text
-			if occurrence.pronunciation != "" {
-				spokenText = occurrence.pronunciation
-			}
-			unit, err := EnsureUnitTx(ctx, tx, UnitInput{Language: language, UnitKind: unitKind, SpokenText: spokenText, ContextPronunciationKey: occurrence.contextKey, SemanticSenseID: senseID})
+			// Lexical AVSpeech must receive the visible source spelling. The
+			// canonical pronunciation is semantic metadata and cache context,
+			// not a plain AVSpeech utterance string (IPA would be spoken
+			// literally by AVSpeech).
+			unit, err := EnsureUnitTx(ctx, tx, UnitInput{Language: language, UnitKind: unitKind, SpokenText: occurrence.text, ContextPronunciationKey: occurrence.contextKey, SemanticSenseID: senseID})
 			if err != nil {
 				return err
 			}

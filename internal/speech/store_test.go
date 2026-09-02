@@ -387,3 +387,110 @@ func TestQueueArticleAudioPrefersCurrentRealProfile(t *testing.T) {
 		t.Fatalf("preferred profile = %s/%s/%s/%s", preferredRenderID, modelRevision, voiceIdentifier, mappingVersion)
 	}
 }
+
+func TestQueueArticleAudioUsesVisibleDutchTextForLexicalAVSpeech(t *testing.T) {
+	db, err := store.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	articleID := "01J00000000000000000000160"
+	occurrenceID := "01J00000000000000000000163"
+	seedSpeechArticle(t, db, articleID, "01J00000000000000000000161", "01J00000000000000000000162", occurrenceID, "01J00000000000000000000164", "schijnt")
+	if _, err := db.Exec(ctx, `UPDATE article_occurrence SET canonical_pronunciation_text = 'sxɛint' WHERE id = ?`, occurrenceID); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := NewStore(db).QueueArticleAudio(ctx, library.ULID(articleID), false); err != nil {
+		t.Fatal(err)
+	}
+	var spokenText, language, jobSpokenText string
+	if err := db.QueryRow(ctx, `SELECT spoken_text, language FROM speech_unit WHERE unit_kind = 'word'`).Scan(&spokenText, &language); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(ctx, `SELECT json_extract(payload_json, '$.spoken_text') FROM job WHERE job_type = ? AND owner_type = 'audio_render'`, jobs.AVSpeechJobType).Scan(&jobSpokenText); err != nil {
+		t.Fatal(err)
+	}
+	if spokenText != "schijnt" || jobSpokenText != "schijnt" || language != "nl" {
+		t.Fatalf("lexical speech = text %q/%q language %q", spokenText, jobSpokenText, language)
+	}
+	var ipaJobs int
+	if err := db.QueryRow(ctx, `SELECT COUNT(*) FROM job WHERE job_type = ? AND json_extract(payload_json, '$.spoken_text') = 'sxɛint'`, jobs.AVSpeechJobType).Scan(&ipaJobs); err != nil {
+		t.Fatal(err)
+	}
+	if ipaJobs != 0 {
+		t.Fatalf("IPA lexical jobs = %d", ipaJobs)
+	}
+}
+
+func TestQueueArticleAudioRepairsPreferredIPARenderWithoutDeletingHistory(t *testing.T) {
+	db, err := store.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	articleID := "01J00000000000000000000170"
+	blockID := "01J00000000000000000000171"
+	sentenceID := "01J00000000000000000000172"
+	occurrenceID := "01J00000000000000000000173"
+	spanID := "01J00000000000000000000174"
+	seedSpeechArticle(t, db, articleID, blockID, sentenceID, occurrenceID, spanID, "schijnt vandaag.")
+	if _, err := db.Exec(ctx, `UPDATE article_occurrence SET canonical_pronunciation_text = 'sxɛint' WHERE id = ?`, occurrenceID); err != nil {
+		t.Fatal(err)
+	}
+
+	var oldRenderID string
+	if err := db.WithTransaction(ctx, func(tx *sql.Tx) error {
+		unit, err := EnsureUnitTx(ctx, tx, UnitInput{Language: "nl", UnitKind: UnitWord, SpokenText: "sxɛint"})
+		if err != nil {
+			return err
+		}
+		profile, _, err := DefaultProfilesTx(ctx, tx, "nl")
+		if err != nil {
+			return err
+		}
+		render, err := EnsureRenderTx(ctx, tx, *unit, *profile, RetentionLexical, false)
+		if err != nil {
+			return err
+		}
+		oldRenderID = render.ID.String()
+		_, err = tx.ExecContext(ctx, `INSERT INTO article_occurrence_audio (article_occurrence_id, audio_render_id, purpose, preferred) VALUES (?, ?, 'pronunciation', 1)`, occurrenceID, oldRenderID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := NewStore(db).QueueArticleAudio(ctx, library.ULID(articleID), false); err != nil {
+		t.Fatal(err)
+	}
+	var preferredID string
+	var preferredCount, renderCount int
+	if err := db.QueryRow(ctx, `SELECT COUNT(*) FROM article_occurrence_audio WHERE article_occurrence_id = ? AND purpose = 'pronunciation' AND preferred = 1`, occurrenceID).Scan(&preferredCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(ctx, `SELECT COUNT(*) FROM audio_render WHERE retention_class = 'lexical_permanent'`).Scan(&renderCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(ctx, `SELECT a.audio_render_id FROM article_occurrence_audio a WHERE a.article_occurrence_id = ? AND a.purpose = 'pronunciation' AND a.preferred = 1`, occurrenceID).Scan(&preferredID); err != nil {
+		t.Fatal(err)
+	}
+	if preferredCount != 1 || renderCount != 2 || preferredID == oldRenderID {
+		t.Fatalf("preferred/history = %d/%d/%s (old %s)", preferredCount, renderCount, preferredID, oldRenderID)
+	}
+	var oldPreferred int
+	if err := db.QueryRow(ctx, `SELECT preferred FROM article_occurrence_audio WHERE article_occurrence_id = ? AND audio_render_id = ?`, occurrenceID, oldRenderID).Scan(&oldPreferred); err != nil {
+		t.Fatal(err)
+	}
+	if oldPreferred != 0 {
+		t.Fatalf("old IPA render preferred = %d", oldPreferred)
+	}
+	var sentenceText string
+	if err := db.QueryRow(ctx, `SELECT spoken_text FROM speech_unit WHERE unit_kind = 'sentence'`).Scan(&sentenceText); err != nil {
+		t.Fatal(err)
+	}
+	if sentenceText != "schijnt vandaag." {
+		t.Fatalf("sentence narration text = %q", sentenceText)
+	}
+}

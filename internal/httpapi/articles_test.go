@@ -12,6 +12,7 @@ import (
 
 	"doublangu/internal/annotator"
 	"doublangu/internal/httpapi"
+	"doublangu/internal/jobs"
 	"doublangu/internal/reader"
 	"doublangu/internal/store"
 )
@@ -236,5 +237,41 @@ func TestArticleHTTPRequiresCSRFForMutations(t *testing.T) {
 	h.ServeArticles(response, authedRequest(http.MethodPost, "/api/v1/articles", "{"))
 	if response.Code != http.StatusForbidden || decodeAPIError(t, response.Body.String()).Code != httpapi.ErrCodeCSRF {
 		t.Fatalf("csrf response = %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestArticleHTTPReanalyzeSnapshotsFreshSelection(t *testing.T) {
+	h, db := newArticleHandler(t, &fakeArticleAnnotator{})
+	article := createTestArticleWithBody(t, h, "Een nieuwe analyse.")
+
+	response := httptest.NewRecorder()
+	h.ServeReanalyze(response, authedRequest(http.MethodPost, "/api/v1/articles/"+article.ID.String()+"/reanalyze", `{"fresh":true}`, "id", article.ID.String()))
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("reanalyze status = %d, body = %s", response.Code, response.Body.String())
+	}
+
+	var payloadJSON string
+	if err := db.QueryRow(t.Context(), `SELECT payload_json FROM job WHERE owner_type = 'article' AND owner_id = ? AND job_type = ? AND state = 'queued' ORDER BY created_at DESC, id DESC LIMIT 1`, article.ID.String(), jobs.AnalysisJobType).Scan(&payloadJSON); err != nil {
+		t.Fatal(err)
+	}
+	var payload reader.AnalysisJobPayload
+	if err := json.Unmarshal([]byte(payloadJSON), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if !payload.Fresh || payload.ArticleID != article.ID.String() || payload.ContentHash == "" {
+		t.Fatalf("fresh analysis payload = %+v", payload)
+	}
+}
+
+func TestArticleHTTPReanalyzeRequiresOptionalObject(t *testing.T) {
+	h, _ := newArticleHandler(t, &fakeArticleAnnotator{})
+	article := createTestArticleWithBody(t, h, "Een strikte aanvraag.")
+
+	for _, body := range []string{"null", "[]", `{"unknown":true}`, `{"fresh":null}`, `{"fresh":"true"}`, `{"fresh":true}{"fresh":false}`} {
+		response := httptest.NewRecorder()
+		h.ServeReanalyze(response, authedRequest(http.MethodPost, "/api/v1/articles/"+article.ID.String()+"/reanalyze", body, "id", article.ID.String()))
+		if response.Code != http.StatusBadRequest || decodeAPIError(t, response.Body.String()).Code != httpapi.ErrCodeValidation {
+			t.Fatalf("body %q response = %d %s", body, response.Code, response.Body.String())
+		}
 	}
 }

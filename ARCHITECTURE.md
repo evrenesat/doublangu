@@ -1,12 +1,13 @@
 # Architecture
 
-## Audible Article Reader
+## Reliable Article Analysis and Audible Reader
 
 The article reader is backed by the legacy article tables from migration 004
 plus the additive semantic, job, speech, worker, and media-reference tables in
-migration 005. Legacy `article_annotation` and surface-keyed `learning_state`
-records remain readable for compatibility; the v2 reader writes semantic-sense
-learning state and does not infer new homonym identities from legacy rows.
+migration 005 and the analysis settings/history/cache tables in migration 006.
+Legacy `article_annotation` and surface-keyed `learning_state` records remain
+readable for compatibility; the v2 reader writes semantic-sense learning state
+and does not infer new homonym identities from legacy rows.
 
 The request and processing flow is:
 
@@ -15,19 +16,46 @@ The request and processing flow is:
 2. One transaction preserves the source blocks, computes the versioned
    content hash, and queues `reader.analysis.v2`. The API returns `201`; no
    browser request stays open for provider work.
-3. The server job runner first checks the validated analysis cache. On a miss,
-   it prepares deterministic Unicode word tokens and UTF-16 source anchors,
-   loads only local-lexicon candidates used by the article, and sends one
-   isolated read-only/no-tools Codex app-server turn with the strict v2 schema.
+3. The server snapshots the owner-selected model and reasoning effort into the
+   durable job. It first checks an exact whole-article cache. On a miss, it
+   prepares deterministic Unicode word tokens and UTF-16 source anchors, loads
+   only local-lexicon candidates used by the article, and analyzes each source
+   paragraph in its own isolated read-only/no-tools Codex app-server process.
+   Each chunk receives only its paragraph, relevant candidates, and validated
+   carry-forward senses from earlier paragraphs; its strict schema is generated
+   from the exact token IDs and candidates in that chunk.
 4. The validator requires exact sentence/token/construction occurrences,
    complete token coverage, legal UTF-16 boundaries, safe bounded strings, and
-   candidate-or-new-sense references. One corrective provider turn is allowed;
-   a second failure preserves the prior accepted analysis and records a stable
-   error code.
+   candidate-or-new-sense references. One corrective turn reuses the same
+   dynamic schema. Valid chunks are cached independently, so a retry can reuse
+   completed paragraphs while a fresh run bypasses both chunk and whole-article
+   caches.
 5. A successful analysis transaction stores the cache, reusable semantic
    items/senses, ordered sentences, layered occurrences/spans, sense-keyed
-   learning state, and deduplicated speech requests. The article remains
-   readable while speech is pending or unavailable.
+   learning state, and deduplicated speech requests. Failed attempts retain
+   owner-authenticated run/turn diagnostics and stable public error codes; the
+   article remains readable while speech is pending or unavailable.
+
+The owner settings page obtains a hidden-inclusive model catalog from the
+provider, retains the last good catalog briefly when refresh fails, validates
+model/effort selections, and shows recent runs. Changed selections are rejected
+while that retained catalog is stale, and the UI keeps the save action disabled
+until discovery succeeds again. Run detail is owner-only and
+contains bounded prompt, schema, completion, metadata, validation, and stderr
+excerpts for troubleshooting. Raw analysis content is not written to normal
+server logs. If no model is selected, analysis fails closed with
+`v1.analysis_model_unavailable` while the server continues serving the library;
+the model catalog endpoint separately reports provider discovery failures.
+Environment model/effort values seed the singleton only; owner changes take
+precedence on later restarts. This is a manual comparison surface rather than
+an automatic quality scorer, and the private database grows with retained
+prompts and responses until an owner removes the database.
+
+At startup, article recovery also finalizes every `analysis_run` left in the
+`running` state by an exited process as a failed run with
+`v1.analysis_interrupted`, completion metadata, and preserved paragraph/turn
+diagnostics. The related article is requeued so the durable worker can retry
+the unfinished analysis.
 
 Semantic identity is `semantic_sense.id`, not spelling. An occurrence points to
    one sense and carries its effective shadow and pronunciation identity. Every
@@ -48,8 +76,11 @@ states with visibility-aware backoff.
 Speech is independent of article playback. `speech_unit` deduplicates exact
 word, short-phrase, and sentence text plus context; immutable `audio_render`
 rows identify the complete byte-affecting speech profile and request hash.
-Word and short contiguous phrase requests use `tts.avspeech.v1` and
-`lexical_permanent` retention. Sentence requests use `tts.chatterbox.v3`, are
+Word and short contiguous phrase requests use the visible Dutch source text
+from the occurrence span with `tts.avspeech.v1`; IPA is retained only as
+pronunciation metadata and context. This keeps lexical audio aligned with what
+the reader displays. These renders use `lexical_permanent` retention. Sentence
+requests use `tts.chatterbox.v3`, are
 bound to an ordered `article_sentence_audio` manifest, and use
 `article_narration` retention. There is no monolithic article audio file.
 

@@ -1,5 +1,72 @@
 # Development Log
 
+## 2026-09-02 — Analysis reliability recovery follow-up
+
+- Changed owner settings writes to reject a changed model/effort pair while
+  the runtime model catalog is stale after a failed refresh. Re-sending the
+  already persisted pair remains idempotent, while the Svelte Save action is
+  disabled and explains that a successful refresh is required for changes.
+- Extended startup recovery to finalize orphaned `analysis_run` rows as
+  failed with `v1.analysis_interrupted`, completion time, and elapsed duration.
+  Completed paragraph counts, failed indexes, provenance, stderr, and turn
+  artifacts remain available for retry diagnostics; the article stays queued.
+- Added backend, UI, and SQLite regression coverage for both failure modes.
+
+### Verification
+
+- Focused normal and race Go tests for `internal/httpapi`, `internal/reader`,
+  and `internal/analysis` — passed.
+- `/root/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.5.linux-amd64/bin/go test ./... -count=1 -buildvcs=false` — passed.
+- `npm --prefix web run check` — 0 errors and 0 warnings.
+- `npm --prefix web run test:unit` — 70 tests passed.
+- `npm --prefix web run test:e2e -- reader.spec.ts` — 8 tests passed.
+- `npm --prefix web run validate:openapi` — passed.
+- `npm --prefix web run generate:api` followed by a generated-file diff check —
+  passed with no generated changes.
+- `make verify` — passed with the checkout's temporary Git
+  `safe.directory=/root/code/doublangu` environment override.
+- `DOUBLANGU_TEST_CODEX_LIVE=1 go test ./internal/annotator -run Live -count=1 -v -buildvcs=false` — passed against the authenticated Codex CLI.
+- `git diff --check` — passed.
+
+## 2026-09-01 — Weaker-model analysis reliability and lexical speech repair
+
+- Added paragraph-isolated Codex app-server analysis with compact validated
+  sense carry-forward, dynamic exact-anchor schemas, one corrective turn, and
+  atomic whole-article publication after the existing full validator passes.
+- Added exact prepared-input/model/effort cache identities, durable run and turn
+  diagnostics, persisted model/effort selection, owner settings/history/detail
+  APIs and UI, and fail-closed behavior when no model is selected.
+- Corrected lexical AVSpeech jobs to use visible Dutch occurrence text while
+  retaining IPA as pronunciation metadata; regeneration supersedes the old
+  preferred render without deleting history.
+- Documented cache identity, settings precedence, diagnostics growth/privacy,
+  manual comparison, paragraph isolation, and the lexical speech boundary in
+  `README.md` and `ARCHITECTURE.md`.
+
+### Verification
+
+All Go commands below used
+`/root/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.5.linux-amd64/bin` on
+`PATH`; web commands used `/tmp/doublangu-node-v24.20.0/bin` on `PATH`.
+
+- `test -z "$(gofmt -l internal/semantics internal/annotator internal/analysis internal/reader internal/speech internal/httpapi internal/config cmd/doublangu-server)` — passed.
+- `go mod tidy -diff` — passed.
+- Focused normal Go tests for semantics, annotator, analysis, reader, speech,
+  HTTP API, store, config, and server — passed.
+- Focused Go race tests for semantics, annotator, analysis, reader, speech,
+  and HTTP API — passed.
+- `npm --prefix web run validate:openapi` — passed.
+- `npm --prefix web run generate:api` — passed; a second generation was
+  reproducible and the only generated diff was the intended API contract
+  addition, which is included in the implementation commit.
+- `npm --prefix web run check` — 0 errors and 0 warnings.
+- `npm --prefix web run test:unit -- --run` — 70 tests passed.
+- `npm --prefix web run test:e2e -- reader.spec.ts` — 8 tests passed.
+- `make verify` — passed with the checkout's temporary Git
+  `safe.directory=/root/code/doublangu` environment override.
+- `git diff --check` — passed.
+- `DOUBLANGU_TEST_CODEX_LIVE=1 go test ./internal/annotator -run Live -count=1 -v` — passed during the 2026-09-02 follow-up review.
+
 ## 2026-09-01 — macOS speech lease timestamp compatibility
 
 - Updated the native speech worker to accept the server's millisecond-precision

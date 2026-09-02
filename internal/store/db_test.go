@@ -180,6 +180,24 @@ func assertMigration005Schema(t *testing.T, db *DB) {
 	}
 }
 
+func assertMigration006Schema(t *testing.T, db *DB) {
+	t.Helper()
+	ctx := context.Background()
+	for _, name := range []string{
+		"analysis_settings", "analysis_run", "analysis_turn", "analysis_chunk_cache",
+		"idx_analysis_run_article_started", "idx_analysis_turn_run_order",
+		"idx_analysis_chunk_cache_identity", "idx_analysis_cache_prepared_identity",
+	} {
+		var count int
+		if err := db.QueryRow(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE name = ?", name).Scan(&count); err != nil {
+			t.Fatalf("find reliability schema object %s: %v", name, err)
+		}
+		if count != 1 {
+			t.Errorf("reliability schema object %s count = %d, want 1", name, count)
+		}
+	}
+}
+
 func TestMigration004ReaderConstraintsAndCascades(t *testing.T) {
 	db, err := OpenTest()
 	if err != nil {
@@ -318,8 +336,8 @@ func TestMigrationVersionRecorded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("version query: %v", err)
 	}
-	if version != 5 {
-		t.Errorf("expected version 5, got %d", version)
+	if version != 6 {
+		t.Errorf("expected version 6, got %d", version)
 	}
 }
 
@@ -343,8 +361,8 @@ func TestMigrationFreshInMemoryAlwaysApplies(t *testing.T) {
 		t.Fatalf("version count: %v", err)
 	}
 	// Each in-memory OpenTest starts fresh — all migrations run once per open.
-	if count != 5 {
-		t.Errorf("expected 5 migration records, got %d", count)
+	if count != 6 {
+		t.Errorf("expected 6 migration records, got %d", count)
 	}
 }
 
@@ -530,17 +548,20 @@ func TestFileBasedDBDoesNotReapplyMigrations(t *testing.T) {
 	if err := db2.QueryRow(context.Background(), "SELECT COUNT(*) FROM schema_version").Scan(&count); err != nil {
 		t.Fatalf("count: %v", err)
 	}
-	if count != 5 {
-		t.Errorf("expected 5 migration records, got %d (migrations should not reapply)", count)
+	if count != 6 {
+		t.Errorf("expected 6 migration records, got %d (migrations should not reapply)", count)
 	}
 }
 
 func TestMigrationRollbackLeavesNoPartialSchemaDataOrVersion(t *testing.T) {
-	db, err := OpenTest()
-	if err != nil {
-		t.Fatal(err)
+	db := openPopulatedV1DB(t)
+	v1ThroughV5 := fstest.MapFS{}
+	for _, name := range []string{"001_initial.sql", "002_library.sql", "003_media.sql", "004_reader_mvp.sql", "005_audible_reader.sql"} {
+		v1ThroughV5["migrations/"+name] = &fstest.MapFile{Data: checkedInMigration(t, name)}
 	}
-	defer db.Close()
+	if err := migrateWithSource(db, v1ThroughV5); err != nil {
+		t.Fatalf("apply migrations through 005: %v", err)
+	}
 	failing := fstest.MapFS{
 		"migrations/006_probe.sql": {Data: []byte(`
 			CREATE TABLE migration_probe (value TEXT NOT NULL);
@@ -574,6 +595,85 @@ func TestMigrationRollbackLeavesNoPartialSchemaDataOrVersion(t *testing.T) {
 	var value string
 	if err := db.QueryRow(context.Background(), "SELECT value FROM migration_probe").Scan(&value); err != nil || value != "complete" {
 		t.Fatalf("corrected value = %q err=%v", value, err)
+	}
+}
+
+func TestMigration006PreservesLegacyRowsAndSeparatesCacheIdentities(t *testing.T) {
+	db := openPopulatedV1DB(t)
+	v1ThroughV5 := fstest.MapFS{}
+	for _, name := range []string{"001_initial.sql", "002_library.sql", "003_media.sql", "004_reader_mvp.sql", "005_audible_reader.sql"} {
+		v1ThroughV5["migrations/"+name] = &fstest.MapFile{Data: checkedInMigration(t, name)}
+	}
+	if err := migrateWithSource(db, v1ThroughV5); err != nil {
+		t.Fatalf("apply migrations through 005: %v", err)
+	}
+	ctx := context.Background()
+	if _, err := db.Exec(ctx, `INSERT INTO analysis_cache (
+		id, content_hash, source_language, target_language, contract_version,
+		provider_id, provider_model, prompt_version, validated_response_json, response_hash
+	) VALUES ('01J00000000000000000000010', 'content', 'nl', 'en', 'reader.analysis.v2', 'codex.appserver', 'legacy-model', 'reader-analysis-prompt.v2', '{}', 'legacy-hash')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO analysis_cache (
+		id, content_hash, source_language, target_language, contract_version,
+		provider_id, provider_model, prompt_version, validated_response_json, response_hash
+	) VALUES ('01J00000000000000000000015', 'content-2', 'nl', 'en', 'reader.analysis.v2', 'codex.appserver', 'legacy-model', 'reader-analysis-prompt.v2', '{}', 'legacy-hash-2')`); err != nil {
+		t.Fatal(err)
+	}
+
+	legacyOnly := fstest.MapFS{
+		"migrations/006_analysis_reliability.sql": {Data: checkedInMigration(t, "006_analysis_reliability.sql")},
+	}
+	if err := migrateWithSource(db, legacyOnly); err != nil {
+		t.Fatalf("apply migration 006: %v", err)
+	}
+	assertMigration006Schema(t, db)
+
+	var preparedHash, effort string
+	if err := db.QueryRow(ctx, `SELECT prepared_input_hash, provider_effort FROM analysis_cache WHERE id = '01J00000000000000000000010'`).Scan(&preparedHash, &effort); err != nil {
+		t.Fatal(err)
+	}
+	if preparedHash != "" || effort != "" {
+		t.Fatalf("legacy cache identity = %q/%q, want an inspectable non-hit", preparedHash, effort)
+	}
+
+	for _, row := range []struct {
+		id, prepared, model, effort string
+	}{
+		{"01J00000000000000000000011", "prepared-a", "model-a", "low"},
+		{"01J00000000000000000000012", "prepared-b", "model-b", "high"},
+	} {
+		if _, err := db.Exec(ctx, `INSERT INTO analysis_cache (
+			id, content_hash, source_language, target_language, contract_version,
+			provider_id, provider_model, provider_effort, prompt_version,
+			prepared_input_hash, validated_response_json, response_hash
+		) VALUES (?, 'content', 'nl', 'en', 'reader.analysis.v2', 'codex.appserver', ?, ?, 'reader-analysis-prompt.v2', ?, '{}', ?)`, row.id, row.model, row.effort, row.prepared, row.id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, row := range []struct {
+		id, input, model, effort string
+	}{
+		{"01J00000000000000000000013", "chunk-a", "model-a", "low"},
+		{"01J00000000000000000000014", "chunk-b", "model-a", "high"},
+	} {
+		if _, err := db.Exec(ctx, `INSERT INTO analysis_chunk_cache (
+			id, source_language, target_language, content_hash, block_index, block_hash,
+			carry_hash, chunk_input_hash, contract_version, prompt_version, provider_id,
+			provider_model, provider_effort, validated_response_json, response_hash, created_at
+		) VALUES (?, 'nl', 'en', 'content', 0, 'block', 'carry', ?, 'reader.analysis.v2', 'reader-analysis-prompt.v2', 'codex.appserver', ?, ?, '{}', ?, 'now')`, row.id, row.input, row.model, row.effort, row.id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var wholeCount, chunkCount int
+	if err := db.QueryRow(ctx, `SELECT COUNT(*) FROM analysis_cache`).Scan(&wholeCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(ctx, `SELECT COUNT(*) FROM analysis_chunk_cache`).Scan(&chunkCount); err != nil {
+		t.Fatal(err)
+	}
+	if wholeCount != 4 || chunkCount != 2 {
+		t.Fatalf("cache rows = whole %d, chunks %d", wholeCount, chunkCount)
 	}
 }
 
@@ -753,7 +853,8 @@ func TestMigration002_UpgradeFromV1ToV2(t *testing.T) {
 	assertMigration003Schema(t, db)
 	assertMigration004Schema(t, db)
 	assertMigration005Schema(t, db)
-	assertMigrationVersion(t, db, 5)
+	assertMigration006Schema(t, db)
+	assertMigrationVersion(t, db, 6)
 }
 
 func TestMetadataStoreCRUDOnCleanAndUpgradedDatabases(t *testing.T) {
@@ -934,7 +1035,8 @@ func TestMigration002_RollbackLeavesNoLibraryTables(t *testing.T) {
 	assertMigration003Schema(t, db)
 	assertMigration004Schema(t, db)
 	assertMigration005Schema(t, db)
-	assertMigrationVersion(t, db, 5)
+	assertMigration006Schema(t, db)
+	assertMigrationVersion(t, db, 6)
 }
 
 func TestFileDatabaseUsesWALForeignKeysBusyTimeoutAndCurrentVersion(t *testing.T) {
@@ -958,7 +1060,7 @@ func TestFileDatabaseUsesWALForeignKeysBusyTimeoutAndCurrentVersion(t *testing.T
 	if err := db.QueryRow(ctx, "SELECT MAX(version) FROM schema_version").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if journal != "wal" || foreignKeys != 1 || busyTimeout != 5000 || version != 5 {
+	if journal != "wal" || foreignKeys != 1 || busyTimeout != 5000 || version != 6 {
 		t.Fatalf("journal=%q foreign_keys=%d busy_timeout=%d version=%d", journal, foreignKeys, busyTimeout, version)
 	}
 }

@@ -2,6 +2,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -97,6 +98,32 @@ func decodeJSONObject(w http.ResponseWriter, r *http.Request, target any) error 
 		return err
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return errors.New("request body must contain exactly one JSON object")
+	}
+	return nil
+}
+
+func decodeOptionalJSONObject(w http.ResponseWriter, r *http.Request, target any) error {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	var raw json.RawMessage
+	if err := decoder.Decode(&raw); errors.Is(err, io.EOF) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return errors.New("request body must contain exactly one JSON object")
+	}
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return errors.New("request body must contain exactly one JSON object")
+	}
+	objectDecoder := json.NewDecoder(bytes.NewReader(trimmed))
+	objectDecoder.DisallowUnknownFields()
+	if err := objectDecoder.Decode(target); err != nil {
+		return err
+	}
+	if err := objectDecoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return errors.New("request body must contain exactly one JSON object")
 	}
 	return nil

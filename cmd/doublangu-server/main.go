@@ -79,6 +79,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 1
 	}
 	defer db.Close()
+	if err := analysis.NewSettingsStore(db).Seed(context.Background(), cfg.CodexModel, cfg.CodexEffort); err != nil {
+		fmt.Fprintf(stderr, "analysis settings: %v\n", err)
+		return 1
+	}
 
 	ownerManager := auth.NewOwnerManager(db)
 	if *createOwner || *resetOwner {
@@ -254,6 +258,18 @@ func newHandlerWithMedia(
 	mux.Handle("/api/v1/articles", articleRoutes)
 	mux.Handle("/api/v1/articles/", articleRoutes)
 	mux.Handle("/api/v1/learning-state", articleRoutes)
+	var modelCatalog annotator.ModelCatalogProvider
+	if provider, ok := articleAnnotator.(annotator.ModelCatalogProvider); ok {
+		modelCatalog = provider
+	}
+	analysisHandler := httpapi.NewAnalysisHandler(db, authHandler.CSRF, modelCatalog)
+	analysisProtected := authHandler.RequireAuth(analysisMux(analysisHandler))
+	analysisRoutes := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		analysisProtected.ServeHTTP(w, r)
+	})
+	mux.Handle("/api/v1/analysis", analysisRoutes)
+	mux.Handle("/api/v1/analysis/", analysisRoutes)
 
 	workerService := workers.NewService(db, mediaStore)
 	workerHandler := httpapi.NewSpeechWorkerHandler(workerService, authHandler.CSRF)
@@ -334,6 +350,16 @@ func articleMux(h *httpapi.ArticleHandler) http.Handler {
 	mux.HandleFunc("GET /api/v1/articles/{id}/narration", h.ServeNarration)
 	mux.HandleFunc("DELETE /api/v1/articles/{id}/narration", h.ServeClearNarration)
 	mux.HandleFunc("/api/v1/learning-state", h.ServeLearningState)
+	return mux
+}
+
+func analysisMux(h *httpapi.AnalysisHandler) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/analysis/models", h.ServeModels)
+	mux.HandleFunc("GET /api/v1/analysis/settings", h.ServeSettings)
+	mux.HandleFunc("PUT /api/v1/analysis/settings", h.ServeSettings)
+	mux.HandleFunc("GET /api/v1/analysis/runs", h.ServeRuns)
+	mux.HandleFunc("GET /api/v1/analysis/runs/{id}", h.ServeRun)
 	return mux
 }
 

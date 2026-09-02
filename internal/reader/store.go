@@ -73,7 +73,8 @@ func (s *Store) ListArticles(ctx context.Context) ([]ArticleSummary, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT id, title, source_language, target_language, enrichment_status,
 		       enrichment_error_code, created_at, updated_at, content_hash,
-		       analysis_status, analysis_error_code, narration_status, narration_error_code
+		       analysis_status, analysis_error_code, analysis_model, analysis_effort,
+		       narration_status, narration_error_code
 		FROM article ORDER BY created_at DESC, id DESC
 	`)
 	if err != nil {
@@ -85,7 +86,7 @@ func (s *Store) ListArticles(ctx context.Context) ([]ArticleSummary, error) {
 		var article ArticleSummary
 		var id, status string
 		var analysisStatus, narrationStatus string
-		if err := rows.Scan(&id, &article.Title, &article.SourceLanguage, &article.TargetLanguage, &status, &article.EnrichmentErrorCode, &article.CreatedAt, &article.UpdatedAt, &article.ContentHash, &analysisStatus, &article.AnalysisErrorCode, &narrationStatus, &article.NarrationErrorCode); err != nil {
+		if err := rows.Scan(&id, &article.Title, &article.SourceLanguage, &article.TargetLanguage, &status, &article.EnrichmentErrorCode, &article.CreatedAt, &article.UpdatedAt, &article.ContentHash, &analysisStatus, &article.AnalysisErrorCode, &article.AnalysisModel, &article.AnalysisEffort, &narrationStatus, &article.NarrationErrorCode); err != nil {
 			return nil, fmt.Errorf("reader list articles: %w", err)
 		}
 		article.ID = library.ULID(id)
@@ -362,7 +363,10 @@ func (s *Store) UpsertLearningState(ctx context.Context, state *LearningState) (
 }
 
 // RecoverInterrupted converts processing rows left by an exited server into a
-// retryable failure before request handling begins.
+// retryable failure before request handling begins. It also closes any
+// analysis_run still marked running: the terminal failed status carries the
+// stable interruption code, while paragraph progress and retained turn data
+// remain unchanged for diagnostics and retry.
 func (s *Store) RecoverInterrupted(ctx context.Context) error {
 	return s.withDB(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `
@@ -378,6 +382,22 @@ func (s *Store) RecoverInterrupted(ctx context.Context) error {
 		`)
 		if err != nil {
 			return fmt.Errorf("reader recover interrupted analysis: %w", err)
+		}
+		recoveredAt := store.NowUTC()
+		_, err = tx.ExecContext(ctx, `
+			UPDATE analysis_run SET status = 'failed', completed_at = ?,
+				duration_ms = CASE
+					WHEN julianday(started_at) IS NULL THEN duration_ms
+					WHEN julianday(?) > julianday(started_at)
+						THEN CAST((julianday(?) - julianday(started_at)) * 86400000 AS INTEGER)
+					ELSE 0
+				END,
+				error_code = 'v1.analysis_interrupted',
+				error_detail = 'analysis run interrupted during server restart'
+			WHERE status = 'running'
+		`, recoveredAt, recoveredAt, recoveredAt)
+		if err != nil {
+			return fmt.Errorf("reader recover interrupted analysis runs: %w", err)
 		}
 		return nil
 	})

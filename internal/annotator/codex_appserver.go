@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -66,7 +67,7 @@ func (c *CodexAppServer) Annotate(ctx context.Context, input ArticleInput) ([]Ca
 	}
 	defer os.RemoveAll(workingDirectory)
 
-	process, err := startAppServer(runContext, c.binary, workingDirectory)
+	process, err := launchAppServer(runContext, c.binary, workingDirectory)
 	if err != nil {
 		return nil, c.classify(runContext, nil, err, CodeUnavailable)
 	}
@@ -288,6 +289,25 @@ func (p *protocolClient) call(ctx context.Context, id int64, method string, para
 }
 
 func (p *protocolClient) runTurn(ctx context.Context, id int64, threadID, prompt, effort, model string, outputSchema json.RawMessage) (string, error) {
+	result, err := p.runTurnDetailed(ctx, id, threadID, prompt, effort, model, outputSchema)
+	return result.Text, err
+}
+
+type protocolTurnResult struct {
+	Text          string
+	MetadataJSON  string
+	ReportedModel string
+	StartedAt     string
+	Duration      time.Duration
+}
+
+func (p *protocolClient) runTurnDetailed(ctx context.Context, id int64, threadID, prompt, effort, model string, outputSchema json.RawMessage) (protocolTurnResult, error) {
+	started := time.Now()
+	result := protocolTurnResult{StartedAt: started.UTC().Format(time.RFC3339Nano)}
+	finish := func(err error) (protocolTurnResult, error) {
+		result.Duration = time.Since(started)
+		return result, err
+	}
 	if err := p.send(id, "turn/start", turnStartParams{
 		ThreadID:     threadID,
 		Input:        []textInput{{Type: "text", Text: prompt}},
@@ -295,26 +315,25 @@ func (p *protocolClient) runTurn(ctx context.Context, id int64, threadID, prompt
 		Model:        model,
 		OutputSchema: outputSchema,
 	}); err != nil {
-		return "", protocolFailure(err)
+		return finish(protocolFailure(err))
 	}
 	turnID := ""
 	responseSeen := false
-	finalText := ""
 	for {
 		message, err := p.next(ctx)
 		if err != nil {
-			return "", protocolError(err)
+			return finish(protocolError(err))
 		}
 		if unsupportedServerMethod(message.Method) {
-			return "", protocolFailure(fmt.Errorf("app-server sent unsupported tool or approval request %q", message.Method))
+			return finish(protocolFailure(fmt.Errorf("app-server sent unsupported tool or approval request %q", message.Method)))
 		}
 		if responseFor(message, id) {
 			var response turnStartResponse
 			if err := decodeResult(message, &response); err != nil {
 				if message.Error != nil {
-					return "", err
+					return finish(err)
 				}
-				return "", protocolFailure(err)
+				return finish(protocolFailure(err))
 			}
 			turnID = response.Turn.ID
 			responseSeen = true
@@ -324,41 +343,43 @@ func (p *protocolClient) runTurn(ctx context.Context, id int64, threadID, prompt
 		case "item/completed":
 			var params itemCompletedParams
 			if err := json.Unmarshal(message.Params, &params); err != nil {
-				return "", protocolFailure(fmt.Errorf("decode item/completed: %w", err))
+				return finish(protocolFailure(fmt.Errorf("decode item/completed: %w", err)))
 			}
 			if params.ThreadID == threadID && (turnID == "" || params.TurnID == turnID) {
 				switch params.Item.Type {
 				case "agentMessage":
-					finalText = params.Item.Text
+					result.Text = params.Item.Text
 				case "", "userMessage", "reasoning":
 					// The server may echo input and emit reasoning telemetry.
 				default:
 					if unsupportedItemType(params.Item.Type) {
-						return "", protocolFailure(fmt.Errorf("app-server completed unsupported item type %q", params.Item.Type))
+						return finish(protocolFailure(fmt.Errorf("app-server completed unsupported item type %q", params.Item.Type)))
 					}
 				}
 			}
 		case "turn/completed":
 			var params turnCompletedParams
 			if err := json.Unmarshal(message.Params, &params); err != nil {
-				return "", protocolFailure(fmt.Errorf("decode turn/completed: %w", err))
+				return finish(protocolFailure(fmt.Errorf("decode turn/completed: %w", err)))
 			}
 			if params.ThreadID != threadID || (turnID != "" && params.Turn.ID != "" && params.Turn.ID != turnID) {
 				continue
 			}
+			result.MetadataJSON = string(message.Params)
+			result.ReportedModel = params.Turn.Model
 			if params.Turn.Status != "completed" {
 				if params.Turn.Error != nil && params.Turn.Error.Message != "" {
-					return "", errors.New("Codex turn failed: " + params.Turn.Error.Message)
+					return finish(errors.New("Codex turn failed: " + params.Turn.Error.Message))
 				}
-				return "", fmt.Errorf("Codex turn ended with status %q", params.Turn.Status)
+				return finish(fmt.Errorf("Codex turn ended with status %q", params.Turn.Status))
 			}
 			if !responseSeen {
-				return "", protocolFailure(errors.New("turn completed before turn/start response"))
+				return finish(protocolFailure(errors.New("turn completed before turn/start response")))
 			}
-			if finalText == "" {
-				return "", protocolFailure(errors.New("turn completed without an assistant message"))
+			if result.Text == "" {
+				return finish(protocolFailure(errors.New("turn completed without an assistant message")))
 			}
-			return finalText, nil
+			return finish(nil)
 		}
 	}
 }
@@ -385,6 +406,29 @@ func unsupportedItemType(itemType string) bool {
 		}
 	}
 	return false
+}
+
+// cliVersion is diagnostic metadata only. A version lookup failure must not
+// make an otherwise usable analysis request fail.
+func (c *CodexAppServer) cliVersion(ctx context.Context) string {
+	if c == nil || c.binary == "" {
+		return ""
+	}
+	versionContext, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(versionContext, c.binary, "--version").Output()
+	if err != nil {
+		return ""
+	}
+	version := strings.TrimSpace(string(out))
+	if len(version) > 512 {
+		version = version[:512]
+	}
+	return version
+}
+
+func (c *CodexAppServer) CLIVersion(ctx context.Context) string {
+	return c.cliVersion(ctx)
 }
 
 var _ Annotator = (*CodexAppServer)(nil)

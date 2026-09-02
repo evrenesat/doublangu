@@ -391,6 +391,17 @@ func safeProviderText(name, value string, max int) error {
 // ValidateResponse enforces source identity, token coverage, sense references,
 // ordered sentence spans, and legal construction layering.
 func ValidateResponse(input PreparedArticle, response Response) (ValidatedResponse, error) {
+	return validateResponse(input, response, nil)
+}
+
+// ValidateResponseWithPrior validates a paragraph response against reusable
+// senses that were validated in earlier paragraphs. The prior senses are
+// references only; the current response must not redefine one of them.
+func ValidateResponseWithPrior(input PreparedArticle, response Response, prior []NewSense) (ValidatedResponse, error) {
+	return validateResponse(input, response, prior)
+}
+
+func validateResponse(input PreparedArticle, response Response, prior []NewSense) (ValidatedResponse, error) {
 	if response.Version != AnalysisContractVersion {
 		return ValidatedResponse{}, fmt.Errorf("unsupported analysis response version %q", response.Version)
 	}
@@ -408,7 +419,22 @@ func ValidateResponse(input PreparedArticle, response Response) (ValidatedRespon
 			candidateByID[candidate.ID] = candidate
 		}
 	}
-	newByRef := make(map[string]NewSense, len(response.NewSenses))
+	newByRef := make(map[string]NewSense, len(prior)+len(response.NewSenses))
+	for index, sense := range prior {
+		if sense.Ref == "" {
+			return ValidatedResponse{}, fmt.Errorf("prior new_senses[%d] has no ref", index)
+		}
+		if err := safeProviderText(fmt.Sprintf("prior new_senses[%d].ref", index), sense.Ref, 120); err != nil {
+			return ValidatedResponse{}, err
+		}
+		if _, exists := newByRef[sense.Ref]; exists {
+			return ValidatedResponse{}, fmt.Errorf("prior new sense ref %q is duplicated", sense.Ref)
+		}
+		if err := validateSense(sense, fmt.Sprintf("prior new_senses[%d]", index)); err != nil {
+			return ValidatedResponse{}, err
+		}
+		newByRef[sense.Ref] = sense
+	}
 	for index, sense := range response.NewSenses {
 		if sense.Ref == "" {
 			return ValidatedResponse{}, fmt.Errorf("new_senses[%d] has no ref", index)

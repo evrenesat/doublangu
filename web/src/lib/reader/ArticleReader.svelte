@@ -15,7 +15,8 @@
 		type LearningStatus,
 		type Narration,
 		type SemanticLearningState
-	} from '$lib/api/client';
+		} from '$lib/api/client';
+	import { appPath } from '$lib/paths';
 	import { compensateFocusReflow } from './focusController';
 	import { HoverAudioController } from './audioController';
 	import { applyReaderTheme, readReaderTheme, saveReaderTheme, type ReaderTheme } from './theme';
@@ -124,6 +125,12 @@
 		default: return 'Waiting to start';
 		}
 	});
+
+	const analysisSelectionLabel = $derived(
+		current.analysis_model && current.analysis_effort
+			? `${current.analysis_model} / ${current.analysis_effort}`
+			: 'selected model'
+	);
 
 	const speechLabel = $derived.by(() => {
 		switch (current.narration_status) {
@@ -480,10 +487,12 @@
 		}
 	}
 
-	async function retryAnalysis(): Promise<void> {
+	async function retryAnalysis(fresh = false): Promise<void> {
 		reanalyzing = true;
+		feedback = '';
+		feedbackIsError = false;
 		try {
-			emit(await reanalyzeArticle(current.id));
+			emit(await reanalyzeArticle(current.id, fresh));
 		} catch (cause) {
 			feedbackIsError = true;
 			feedback = errorMessage(cause, 'Could not queue analysis.');
@@ -503,11 +512,22 @@
 <section class="reader-shell" aria-label="Audible article reader">
 	<div class="reader-status-row">
 		<div class="status-item">
-			<span class="status-label">English shadows</span>
-			<strong class:status-ready={current.analysis_status === 'ready'} class:status-error={current.analysis_status === 'failed'}>{analysisLabel}</strong>
-			{#if current.analysis_status === 'failed'}
-				<button type="button" class="status-action" disabled={reanalyzing} onclick={() => void retryAnalysis()}>{reanalyzing ? 'Retrying…' : 'Retry analysis'}</button>
-			{/if}
+				<span class="status-label">English shadows</span>
+				<strong class:status-ready={current.analysis_status === 'ready'} class:status-error={current.analysis_status === 'failed'}>{analysisLabel}</strong>
+				{#if current.analysis_model}
+					<span class="analysis-provenance">{current.analysis_model} · {current.analysis_effort}</span>
+				{:else}
+					<a class="analysis-provenance" href={appPath('/settings')}>Choose a model in Settings</a>
+				{/if}
+				{#if current.analysis_status === 'failed'}
+					<button type="button" class="status-action" disabled={reanalyzing} onclick={() => void retryAnalysis()}>{reanalyzing ? 'Retrying…' : `Retry with ${analysisSelectionLabel}`}</button>
+					<a class="status-action secondary-action" href={appPath('/settings')}>Change in Settings</a>
+					{#if current.analysis_revision}
+						<button type="button" class="status-action secondary-action" disabled={reanalyzing} onclick={() => void retryAnalysis(true)}>Run fresh analysis</button>
+					{/if}
+				{:else if current.analysis_status === 'ready'}
+					<button type="button" class="status-action secondary-action" disabled={reanalyzing} onclick={() => void retryAnalysis(true)}>{reanalyzing ? 'Running…' : 'Run fresh analysis'}</button>
+				{/if}
 		</div>
 		<div class="status-item">
 			<span class="status-label">Speech</span>
@@ -614,6 +634,7 @@
 
 	.status-label { color: var(--reader-muted); }
 	.status-item strong { font-weight: 650; }
+	.analysis-provenance { color: var(--reader-muted); font-size: 0.75rem; overflow-wrap: anywhere; }
 	.status-ready { color: #a9e6bd; }
 	.status-error { color: var(--reader-danger); }
 	.status-action {
@@ -627,6 +648,7 @@
 		cursor: pointer;
 	}
 	.status-action:disabled { cursor: wait; opacity: 0.6; }
+	.secondary-action { color: var(--reader-muted); }
 
 	.reader-body {
 		position: relative;

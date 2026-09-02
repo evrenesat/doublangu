@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
@@ -296,7 +297,26 @@ func (h *ArticleHandler) serveQueuedAnalysis(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	if _, err := h.store.QueueAnalysis(r.Context(), id, force); err != nil {
+	fresh := false
+	if force {
+		var input struct {
+			Fresh json.RawMessage `json:"fresh"`
+		}
+		if err := decodeOptionalJSONObject(w, r, &input); err != nil {
+			WriteError(w, http.StatusBadRequest, "invalid reanalysis request", ErrCodeValidation)
+			return
+		}
+		switch strings.TrimSpace(string(input.Fresh)) {
+		case "":
+		case "true":
+			fresh = true
+		case "false":
+		default:
+			WriteError(w, http.StatusBadRequest, "invalid reanalysis request", ErrCodeValidation)
+			return
+		}
+	}
+	if _, err := h.store.QueueAnalysis(r.Context(), id, force, fresh); err != nil {
 		writeReaderError(w, err)
 		return
 	}

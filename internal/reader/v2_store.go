@@ -19,9 +19,46 @@ import (
 // AnalysisJobPayload is deliberately small: the worker reloads canonical
 // article source from SQLite and never trusts a browser-provided copy.
 type AnalysisJobPayload struct {
-	ArticleID   string `json:"article_id"`
-	ContentHash string `json:"content_hash"`
-	Contract    string `json:"contract_version"`
+	ArticleID     string `json:"article_id"`
+	ContentHash   string `json:"content_hash"`
+	Contract      string `json:"contract_version"`
+	PromptVersion string `json:"prompt_version"`
+	Model         string `json:"model"`
+	Effort        string `json:"effort"`
+	Fresh         bool   `json:"fresh"`
+}
+
+func (s *Store) analysisSelection(ctx context.Context) (AnalysisSelection, error) {
+	if s == nil || s.db == nil {
+		return AnalysisSelection{}, errors.New("reader: nil database")
+	}
+	var selection AnalysisSelection
+	err := s.db.QueryRow(ctx, `SELECT model, effort FROM analysis_settings WHERE id = 1`).Scan(&selection.Model, &selection.Effort)
+	if errors.Is(err, sql.ErrNoRows) {
+		return AnalysisSelection{Effort: "medium"}, nil
+	}
+	if err != nil {
+		return AnalysisSelection{}, err
+	}
+	if selection.Effort == "" {
+		selection.Effort = "medium"
+	}
+	return selection, nil
+}
+
+func analysisSelectionTx(ctx context.Context, tx *sql.Tx) (AnalysisSelection, error) {
+	var selection AnalysisSelection
+	err := tx.QueryRowContext(ctx, `SELECT model, effort FROM analysis_settings WHERE id = 1`).Scan(&selection.Model, &selection.Effort)
+	if errors.Is(err, sql.ErrNoRows) {
+		return AnalysisSelection{Effort: "medium"}, nil
+	}
+	if err != nil {
+		return AnalysisSelection{}, err
+	}
+	if selection.Effort == "" {
+		selection.Effort = "medium"
+	}
+	return selection, nil
 }
 
 // PrepareAnalysis creates deterministic source anchors and the scoped local
@@ -59,12 +96,23 @@ func (s *Store) PrepareAnalysis(ctx context.Context, id library.ULID) (semantics
 // CachedAnalysis returns a validated-contract response only for the exact
 // article hash/language/contract tuple. A malformed cache row is ignored so a
 // provider can repair it; it is never served as reader data.
-func (s *Store) CachedAnalysis(ctx context.Context, input semantics.PreparedArticle) (response semantics.Response, providerModel string, hit bool, err error) {
+func (s *Store) CachedAnalysis(ctx context.Context, input semantics.PreparedArticle, selection ...string) (response semantics.Response, providerModel string, hit bool, err error) {
 	if s == nil || s.db == nil {
 		return semantics.Response{}, "", false, errors.New("reader: nil database")
 	}
+	model, effort := "", ""
+	if len(selection) > 0 {
+		model = selection[0]
+	}
+	if len(selection) > 1 {
+		effort = selection[1]
+	}
+	if effort == "" {
+		effort = "medium"
+	}
+	preparedHash := semantics.PreparedInputHash(input)
 	var raw, responseHash string
-	err = s.db.QueryRow(ctx, `SELECT validated_response_json, provider_model, response_hash FROM analysis_cache WHERE content_hash = ? AND source_language = ? AND target_language = ? AND contract_version = ?`, input.ContentHash, input.SourceLanguage, input.TargetLanguage, semantics.AnalysisContractVersion).Scan(&raw, &providerModel, &responseHash)
+	err = s.db.QueryRow(ctx, `SELECT validated_response_json, provider_model, response_hash FROM analysis_cache WHERE prepared_input_hash = ? AND contract_version = ? AND prompt_version = ? AND provider_model = ? AND provider_effort = ?`, preparedHash, semantics.AnalysisContractVersion, semantics.PromptVersion, model, effort).Scan(&raw, &providerModel, &responseHash)
 	if errors.Is(err, sql.ErrNoRows) {
 		return semantics.Response{}, "", false, nil
 	}
@@ -82,6 +130,69 @@ func (s *Store) CachedAnalysis(ctx context.Context, input semantics.PreparedArti
 		return semantics.Response{}, "", false, nil
 	}
 	return response, providerModel, true, nil
+}
+
+// CachedChunk loads only an exact validated paragraph response. Cache rows are
+// re-hashed and revalidated on every read; corrupt or stale rows are misses.
+func (s *Store) CachedChunk(ctx context.Context, chunk semantics.PreparedChunk, providerModel, providerEffort string) (semantics.Response, bool, error) {
+	if s == nil || s.db == nil {
+		return semantics.Response{}, false, errors.New("reader: nil database")
+	}
+	var raw, responseHash string
+	err := s.db.QueryRow(ctx, `
+		SELECT validated_response_json, response_hash
+		FROM analysis_chunk_cache
+		WHERE chunk_input_hash = ? AND contract_version = ? AND prompt_version = ?
+		  AND provider_model = ? AND provider_effort = ?
+	`, chunk.InputHash, semantics.AnalysisContractVersion, semantics.PromptVersion, providerModel, providerEffort).Scan(&raw, &responseHash)
+	if errors.Is(err, sql.ErrNoRows) {
+		return semantics.Response{}, false, nil
+	}
+	if err != nil {
+		return semantics.Response{}, false, err
+	}
+	if sha256Hex([]byte(raw)) != responseHash {
+		return semantics.Response{}, false, nil
+	}
+	response, err := semantics.DecodeResponse([]byte(raw))
+	if err != nil {
+		return semantics.Response{}, false, nil
+	}
+	if _, err := semantics.ValidateChunkResponse(chunk, response); err != nil {
+		return semantics.Response{}, false, nil
+	}
+	return response, true, nil
+}
+
+// SaveChunk stores a response only after local chunk validation succeeds.
+func (s *Store) SaveChunk(ctx context.Context, chunk semantics.PreparedChunk, response semantics.Response, providerID, providerModel, providerEffort string, sourceRunID library.ULID) error {
+	if s == nil || s.db == nil {
+		return errors.New("reader: nil database")
+	}
+	if _, err := semantics.ValidateChunkResponse(chunk, response); err != nil {
+		return fmt.Errorf("save analysis chunk: %w", err)
+	}
+	raw, err := json.Marshal(response)
+	if err != nil {
+		return err
+	}
+	responseHash := sha256Hex(raw)
+	_, err = s.db.Exec(ctx, `
+		INSERT INTO analysis_chunk_cache (
+			id, source_language, target_language, content_hash, block_index,
+			block_hash, carry_hash, chunk_input_hash, contract_version,
+			prompt_version, provider_id, provider_model, provider_effort,
+			validated_response_json, response_hash, source_run_id, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(chunk_input_hash, contract_version, prompt_version, provider_model, provider_effort)
+		DO UPDATE SET provider_id = excluded.provider_id, validated_response_json = excluded.validated_response_json,
+			response_hash = excluded.response_hash, source_run_id = excluded.source_run_id,
+			created_at = excluded.created_at
+	`, library.NewULID().String(), chunk.SourceLanguage, chunk.TargetLanguage, chunk.ContentHash,
+		chunk.Block.BlockIndex, semantics.BlockHash(chunk.Block), semantics.CarryHash(chunk.PriorValidatedSenses),
+		chunk.InputHash, semantics.AnalysisContractVersion, semantics.PromptVersion, providerID,
+		providerModel, providerEffort, string(raw), responseHash, sourceRunID.String(), store.NowUTC())
+	return err
 }
 
 // CreateArticleQueued stores source text and its initial analysis job in one
@@ -109,17 +220,29 @@ func (s *Store) CreateArticleQueued(ctx context.Context, article *Article) error
 	article.AnalysisStatus = AnalysisQueued
 	article.AnalysisRevision = ""
 	article.AnalysisErrorCode = ""
+	article.AnalysisModel = ""
+	article.AnalysisEffort = ""
 	article.NarrationStatus = NarrationNotRequested
 	article.NarrationErrorCode = ""
 	return s.db.WithTransaction(ctx, func(tx *sql.Tx) error {
+		selection, err := analysisSelectionTx(ctx, tx)
+		if err != nil {
+			return err
+		}
+		article.AnalysisModel = selection.Model
+		article.AnalysisEffort = selection.Effort
 		if err := insertArticleTx(ctx, tx, article); err != nil {
 			return err
 		}
-		payload, _ := json.Marshal(AnalysisJobPayload{ArticleID: article.ID.String(), ContentHash: prepared.ContentHash, Contract: semantics.AnalysisContractVersion})
-		_, err := jobs.EnqueueTx(ctx, tx, jobs.Spec{
+		payload, _ := json.Marshal(AnalysisJobPayload{
+			ArticleID: article.ID.String(), ContentHash: prepared.ContentHash,
+			Contract: semantics.AnalysisContractVersion, PromptVersion: semantics.PromptVersion,
+			Model: selection.Model, Effort: selection.Effort, Fresh: false,
+		})
+		_, err = jobs.EnqueueTx(ctx, tx, jobs.Spec{
 			JobType: jobs.AnalysisJobType, ExecutionTarget: jobs.TargetServer,
 			OwnerType: "article", OwnerID: article.ID.String(),
-			IdempotencyKey: analysisIdempotencyKey(article.ID, prepared.ContentHash, false),
+			IdempotencyKey: analysisIdempotencyKey(article.ID, prepared.ContentHash, selection.Model, selection.Effort, false, false),
 			InputHash:      prepared.ContentHash, PayloadJSON: string(payload), Priority: 100,
 		})
 		return err
@@ -130,12 +253,14 @@ func insertArticleTx(ctx context.Context, tx *sql.Tx, article *Article) error {
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO article (id, title, source_language, target_language, enrichment_status,
 			enrichment_error_code, content_hash, analysis_status, analysis_revision,
-			analysis_error_code, narration_status, narration_error_code)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			analysis_error_code, analysis_model, analysis_effort, narration_status,
+			narration_error_code)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, article.ID.String(), article.Title, article.SourceLanguage, article.TargetLanguage,
 		article.EnrichmentStatus, article.EnrichmentErrorCode, article.ContentHash,
 		article.AnalysisStatus, article.AnalysisRevision, article.AnalysisErrorCode,
-		article.NarrationStatus, article.NarrationErrorCode); err != nil {
+		article.AnalysisModel, article.AnalysisEffort, article.NarrationStatus,
+		article.NarrationErrorCode); err != nil {
 		return writeError("create article", err)
 	}
 	for index := range article.Blocks {
@@ -170,13 +295,18 @@ func sourceBlocksTx(ctx context.Context, tx *sql.Tx, id library.ULID) ([]semanti
 // QueueAnalysis marks an article for background analysis and returns the
 // durable job. A normal queue is idempotent; force creates a new owner-requested
 // work item while leaving the last accepted analysis visible until replacement.
-func (s *Store) QueueAnalysis(ctx context.Context, id library.ULID, force bool) (*jobs.Job, error) {
+func (s *Store) QueueAnalysis(ctx context.Context, id library.ULID, force bool, fresh ...bool) (*jobs.Job, error) {
 	prepared, err := s.PrepareAnalysis(ctx, id)
 	if err != nil {
 		return nil, err
 	}
+	freshRequested := len(fresh) > 0 && fresh[0]
 	var job *jobs.Job
 	err = s.db.WithTransaction(ctx, func(tx *sql.Tx) error {
+		selection, err := analysisSelectionTx(ctx, tx)
+		if err != nil {
+			return err
+		}
 		status, err := articleAnalysisStatusTx(ctx, tx, id)
 		if err != nil {
 			return err
@@ -184,12 +314,15 @@ func (s *Store) QueueAnalysis(ctx context.Context, id library.ULID, force bool) 
 		if !force && (status == string(AnalysisQueued) || status == string(AnalysisProcessing)) {
 			// Returning the active idempotent work item is preferable to creating
 			// a second queue entry after a browser retry.
-			key := analysisIdempotencyKey(id, prepared.ContentHash, false)
-			job, err = jobs.GetByIdempotencyKeyTx(ctx, tx, key)
+			job, err = jobs.GetActiveOwnerJobTx(ctx, tx, "article", id.String(), jobs.AnalysisJobType)
 			return err
 		}
-		key := analysisIdempotencyKey(id, prepared.ContentHash, force)
-		payload, _ := json.Marshal(AnalysisJobPayload{ArticleID: id.String(), ContentHash: prepared.ContentHash, Contract: semantics.AnalysisContractVersion})
+		key := analysisIdempotencyKey(id, prepared.ContentHash, selection.Model, selection.Effort, freshRequested, force)
+		payload, _ := json.Marshal(AnalysisJobPayload{
+			ArticleID: id.String(), ContentHash: prepared.ContentHash,
+			Contract: semantics.AnalysisContractVersion, PromptVersion: semantics.PromptVersion,
+			Model: selection.Model, Effort: selection.Effort, Fresh: freshRequested,
+		})
 		if force {
 			// An explicit reanalysis supersedes any older queued attempt. The
 			// accepted materialization remains readable until the new job commits.
@@ -203,7 +336,7 @@ func (s *Store) QueueAnalysis(ctx context.Context, id library.ULID, force bool) 
 					if _, err := tx.ExecContext(ctx, `UPDATE job SET state = 'queued', attempt_count = 0, available_at = ?, lease_owner = '', lease_token_hash = '', lease_expires_at = '', progress_percent = 0, error_code = '', completed_at = '', payload_json = ?, input_hash = ?, updated_at = ? WHERE id = ?`, store.NowUTC(), string(payload), prepared.ContentHash, store.NowUTC(), existing.ID.String()); err != nil {
 						return err
 					}
-					if _, err := tx.ExecContext(ctx, `UPDATE article SET content_hash = ?, analysis_status = 'queued', analysis_error_code = '', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`, prepared.ContentHash, id.String()); err != nil {
+					if _, err := tx.ExecContext(ctx, `UPDATE article SET content_hash = ?, analysis_model = ?, analysis_effort = ?, analysis_status = 'queued', analysis_error_code = '', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`, prepared.ContentHash, selection.Model, selection.Effort, id.String()); err != nil {
 						return err
 					}
 					job, err = jobs.GetByIdempotencyKeyTx(ctx, tx, key)
@@ -213,7 +346,7 @@ func (s *Store) QueueAnalysis(ctx context.Context, id library.ULID, force bool) 
 				return getErr
 			}
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE article SET content_hash = ?, analysis_status = 'queued', analysis_error_code = '', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`, prepared.ContentHash, id.String()); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE article SET content_hash = ?, analysis_model = ?, analysis_effort = ?, analysis_status = 'queued', analysis_error_code = '', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`, prepared.ContentHash, selection.Model, selection.Effort, id.String()); err != nil {
 			return err
 		}
 		job, err = jobs.EnqueueTx(ctx, tx, jobs.Spec{
@@ -226,11 +359,15 @@ func (s *Store) QueueAnalysis(ctx context.Context, id library.ULID, force bool) 
 	return job, err
 }
 
-func analysisIdempotencyKey(id library.ULID, contentHash string, force bool) string {
-	if force {
-		return fmt.Sprintf("reader.analysis.v2:%s:%s:request:%s", id.String(), contentHash, library.NewULID().String())
+func analysisIdempotencyKey(id library.ULID, contentHash, model, effort string, fresh, force bool) string {
+	mode := "normal"
+	if fresh {
+		mode = "fresh"
 	}
-	return fmt.Sprintf("reader.analysis.v2:%s:%s:%s", id.String(), contentHash, semantics.AnalysisContractVersion)
+	if force {
+		return fmt.Sprintf("reader.analysis.v2:%s:%s:%s:%s:%s:%s:%s:request:%s", id.String(), contentHash, semantics.AnalysisContractVersion, semantics.PromptVersion, model, effort, mode, library.NewULID().String())
+	}
+	return fmt.Sprintf("reader.analysis.v2:%s:%s:%s:%s:%s:%s:%s", id.String(), contentHash, semantics.AnalysisContractVersion, semantics.PromptVersion, model, effort, mode)
 }
 
 func articleAnalysisStatusTx(ctx context.Context, tx *sql.Tx, id library.ULID) (string, error) {
@@ -279,9 +416,23 @@ func (s *Store) MarkAnalysisFailed(ctx context.Context, id library.ULID, code st
 // PersistAnalysis atomically replaces only v2 materialized rows. Existing
 // accepted rows remain visible if validation or any insert fails because the
 // entire operation is one transaction.
-func (s *Store) PersistAnalysis(ctx context.Context, id library.ULID, prepared semantics.PreparedArticle, validated semantics.ValidatedResponse, providerID, providerModel string) error {
+func (s *Store) PersistAnalysis(ctx context.Context, id library.ULID, prepared semantics.PreparedArticle, validated semantics.ValidatedResponse, providerID, providerModel string, provenance ...string) error {
 	if s == nil || s.db == nil {
 		return errors.New("reader: nil database")
+	}
+	providerEffort := "medium"
+	requestedModel := providerModel
+	if len(provenance) > 0 && provenance[0] != "" {
+		providerEffort = provenance[0]
+	}
+	if len(provenance) > 1 && provenance[1] != "" {
+		requestedModel = provenance[1]
+	}
+	if len(provenance) > 2 && provenance[2] != "" {
+		providerModel = provenance[2]
+	}
+	if requestedModel == "" {
+		requestedModel = providerModel
 	}
 	responseJSON, err := json.Marshal(validated.Response)
 	if err != nil {
@@ -321,7 +472,7 @@ func (s *Store) PersistAnalysis(ctx context.Context, id library.ULID, prepared s
 		}
 		newByRef := make(map[string]*semantics.Sense)
 		for _, proposal := range validated.Response.NewSenses {
-			sense, err := semantics.EnsureSenseTx(ctx, tx, sourceLanguage, targetLanguage, proposal, providerID, providerModel)
+			sense, err := semantics.EnsureSenseTx(ctx, tx, sourceLanguage, targetLanguage, proposal, providerID, requestedModel)
 			if err != nil {
 				return &Error{Op: "persist analysis", Kind: KindValidation, Err: err}
 			}
@@ -446,10 +597,22 @@ func (s *Store) PersistAnalysis(ctx context.Context, id library.ULID, prepared s
 				_ = block
 			}
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO analysis_cache (id, content_hash, source_language, target_language, contract_version, provider_id, provider_model, prompt_version, validated_response_json, response_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(content_hash, source_language, target_language, contract_version) DO UPDATE SET provider_id = excluded.provider_id, provider_model = excluded.provider_model, prompt_version = excluded.prompt_version, validated_response_json = excluded.validated_response_json, response_hash = excluded.response_hash`, library.NewULID().String(), prepared.ContentHash, sourceLanguage, targetLanguage, semantics.AnalysisContractVersion, providerID, providerModel, semantics.PromptVersion, string(responseJSON), responseHash); err != nil {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO analysis_cache (
+				id, content_hash, source_language, target_language, contract_version,
+				provider_id, provider_model, provider_effort, prompt_version,
+				prepared_input_hash, validated_response_json, response_hash
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(prepared_input_hash, contract_version, prompt_version, provider_model, provider_effort)
+		WHERE prepared_input_hash <> ''
+		DO UPDATE SET provider_id = excluded.provider_id, validated_response_json = excluded.validated_response_json,
+				response_hash = excluded.response_hash, created_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+		`, library.NewULID().String(), prepared.ContentHash, sourceLanguage, targetLanguage,
+			semantics.AnalysisContractVersion, providerID, requestedModel, providerEffort,
+			semantics.PromptVersion, semantics.PreparedInputHash(prepared), string(responseJSON), responseHash); err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(ctx, `UPDATE article SET analysis_status = 'ready', analysis_revision = ?, analysis_error_code = '', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`, semantics.AnalysisContractVersion, id.String()); err != nil {
+		if _, err = tx.ExecContext(ctx, `UPDATE article SET analysis_status = 'ready', analysis_revision = ?, analysis_error_code = '', analysis_model = ?, analysis_effort = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`, semantics.AnalysisContractVersion, requestedModel, providerEffort, id.String()); err != nil {
 			return err
 		}
 		if err := speech.QueueArticleAudioTx(ctx, tx, id, true); err != nil {
@@ -568,7 +731,7 @@ func sha256Hex(data []byte) string { sum := sha256.Sum256(data); return hex.Enco
 // loadV2Tx fills additive semantic-reader fields while leaving legacy
 // annotations untouched. It is called by the existing GetArticle transaction.
 func (s *Store) loadV2Tx(ctx context.Context, tx *sql.Tx, id library.ULID, article *Article, blockByID map[string]int) error {
-	if err := tx.QueryRowContext(ctx, `SELECT content_hash, analysis_status, analysis_revision, analysis_error_code, narration_status, narration_error_code FROM article WHERE id = ?`, id.String()).Scan(&article.ContentHash, &article.AnalysisStatus, &article.AnalysisRevision, &article.AnalysisErrorCode, &article.NarrationStatus, &article.NarrationErrorCode); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT content_hash, analysis_status, analysis_revision, analysis_error_code, analysis_model, analysis_effort, narration_status, narration_error_code FROM article WHERE id = ?`, id.String()).Scan(&article.ContentHash, &article.AnalysisStatus, &article.AnalysisRevision, &article.AnalysisErrorCode, &article.AnalysisModel, &article.AnalysisEffort, &article.NarrationStatus, &article.NarrationErrorCode); err != nil {
 		return fmt.Errorf("reader load article lifecycle: %w", err)
 	}
 	article.Sentences = make([]ArticleSentence, 0)

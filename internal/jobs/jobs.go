@@ -208,6 +208,20 @@ func GetByIdempotencyKeyTx(ctx context.Context, tx *sql.Tx, key string) (*Job, e
 	return getTx(ctx, tx, key)
 }
 
+// GetActiveOwnerJobTx returns the current queued/leased/running job for an
+// owner. It lets idempotent callers return an already-snapshotted job even if
+// the singleton settings changed while that job was active.
+func GetActiveOwnerJobTx(ctx context.Context, tx *sql.Tx, ownerType, ownerID, jobType string) (*Job, error) {
+	if tx == nil || strings.TrimSpace(ownerType) == "" || strings.TrimSpace(ownerID) == "" || strings.TrimSpace(jobType) == "" {
+		return nil, &Error{Op: "get active owner job", Kind: "validation", Err: ErrInvalidJob}
+	}
+	job, err := scanJob(tx.QueryRowContext(ctx, jobSelect+` WHERE owner_type = ? AND owner_id = ? AND job_type = ? AND state IN ('queued', 'leased', 'running') ORDER BY created_at DESC, id DESC LIMIT 1`, ownerType, ownerID, jobType))
+	if err != nil {
+		return nil, err
+	}
+	return job, nil
+}
+
 func (s *Store) get(ctx context.Context, column, value string) (*Job, error) {
 	if column != "id" && column != "idempotency_key" {
 		return nil, ErrInvalidJob

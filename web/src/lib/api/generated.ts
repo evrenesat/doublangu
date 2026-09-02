@@ -505,6 +505,203 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/analysis/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List available analysis models and reasoning efforts */
+        get: {
+            parameters: {
+                query?: {
+                    refresh?: boolean;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Hidden-inclusive model catalog, possibly marked stale after a failed refresh. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AnalysisModelsResponse"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                405: components["responses"]["MethodNotAllowed"];
+                503: components["responses"]["Unavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/analysis/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get the selected analysis model and reasoning effort */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Current owner selection. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AnalysisSettings"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                405: components["responses"]["MethodNotAllowed"];
+                500: components["responses"]["Internal"];
+            };
+        };
+        /** Save the selected analysis model and reasoning effort */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["AnalysisSettingsInput"];
+                };
+            };
+            responses: {
+                /** @description Saved owner selection. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AnalysisSettings"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                405: components["responses"]["MethodNotAllowed"];
+                503: components["responses"]["Unavailable"];
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/analysis/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List retained owner-visible analysis runs */
+        get: {
+            parameters: {
+                query?: {
+                    article_id?: components["schemas"]["ULID"];
+                    limit?: number;
+                    cursor?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Cursor-paginated analysis run summaries. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AnalysisRunsPage"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                405: components["responses"]["MethodNotAllowed"];
+                500: components["responses"]["Internal"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/analysis/runs/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one analysis run and its retained turn artifacts */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["schemas"]["ULID"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Owner-visible run provenance, prompts, schemas, responses, and validation diagnostics. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AnalysisRun"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                404: components["responses"]["NotFound"];
+                405: components["responses"]["MethodNotAllowed"];
+                500: components["responses"]["Internal"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/articles": {
         parameters: {
             query?: never;
@@ -683,7 +880,11 @@ export interface paths {
                 };
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["ReanalyzeInput"];
+                };
+            };
             responses: {
                 /** @description New analysis work was queued; an older accepted analysis remains readable until replacement. */
                 202: {
@@ -2585,6 +2786,108 @@ export interface components {
         EnrichmentStatus: "draft" | "processing" | "ready" | "failed";
         /** @enum {string} */
         AnalysisStatus: "needs_analysis" | "queued" | "processing" | "ready" | "failed";
+        ReasoningEffort: {
+            value: string;
+            description?: string;
+        };
+        AnalysisModel: {
+            id: string;
+            display_name: string;
+            is_default: boolean;
+            hidden: boolean;
+            supported_reasoning_efforts: components["schemas"]["ReasoningEffort"][];
+        };
+        AnalysisModelsResponse: {
+            models: components["schemas"]["AnalysisModel"][];
+            retrieved_at: string;
+            stale: boolean;
+            last_error?: string;
+        };
+        AnalysisSettingsInput: {
+            model: string;
+            effort: string;
+        };
+        AnalysisSettings: {
+            model: string;
+            effort: string;
+            updated_at: string;
+        };
+        AnalysisTurn: {
+            id: components["schemas"]["ULID"];
+            run_id: components["schemas"]["ULID"];
+            block_index: number;
+            turn_index: number;
+            /** @enum {string} */
+            turn_kind: "initial" | "corrective";
+            prompt: string;
+            output_schema: string;
+            completed_response: string;
+            response_hash: string;
+            validation_error: string;
+            provider_error: string;
+            completion_metadata_json: string;
+            provider_stderr_excerpt: string;
+            started_at: string;
+            completed_at: string;
+            /** Format: int64 */
+            duration_ms: number;
+            /** @enum {string} */
+            status: "completed" | "failed";
+        };
+        AnalysisRunSummary: {
+            id: components["schemas"]["ULID"];
+            article_id: components["schemas"]["ULID"];
+            article_title: string;
+            attempt_count: number;
+            requested_model: string;
+            requested_effort: string;
+            /** @enum {string} */
+            status: "running" | "succeeded" | "failed";
+            total_paragraphs: number;
+            completed_paragraphs: number;
+            failed_block_index: number;
+            /** Format: int64 */
+            duration_ms: number;
+            started_at: string;
+            completed_at: string;
+            error_code: string;
+        };
+        AnalysisRun: {
+            id: components["schemas"]["ULID"];
+            article_id: components["schemas"]["ULID"];
+            article_title: string;
+            job_id: components["schemas"]["ULID"];
+            attempt_count: number;
+            content_hash: components["schemas"]["SHA256"];
+            contract_version: string;
+            prompt_version: string;
+            requested_model: string;
+            requested_effort: string;
+            provider_id: string;
+            codex_cli_version: string;
+            reported_model: string;
+            started_at: string;
+            completed_at: string;
+            /** Format: int64 */
+            duration_ms: number;
+            /** @enum {string} */
+            status: "running" | "succeeded" | "failed";
+            total_paragraphs: number;
+            completed_paragraphs: number;
+            failed_block_index: number;
+            error_code: string;
+            error_detail?: string;
+            stderr_excerpt: string;
+            turns: components["schemas"]["AnalysisTurn"][];
+        };
+        AnalysisRunsPage: {
+            runs: components["schemas"]["AnalysisRunSummary"][];
+            next_cursor?: string;
+        };
+        ReanalyzeInput: {
+            /** @default false */
+            fresh: boolean;
+        };
         /** @enum {string} */
         NarrationStatus: "not_requested" | "queued" | "generating" | "partial" | "ready" | "failed" | "purged";
         /** @enum {string} */
@@ -2725,6 +3028,8 @@ export interface components {
             content_hash: components["schemas"]["SHA256"];
             analysis_status: components["schemas"]["AnalysisStatus"];
             analysis_error_code: string;
+            analysis_model: string;
+            analysis_effort: string;
             narration_status: components["schemas"]["NarrationStatus"];
             narration_error_code: string;
         };
@@ -2771,6 +3076,8 @@ export interface components {
             analysis_status: components["schemas"]["AnalysisStatus"];
             analysis_revision: string;
             analysis_error_code: string;
+            analysis_model: string;
+            analysis_effort: string;
             narration_status: components["schemas"]["NarrationStatus"];
             narration_error_code: string;
             sentences: components["schemas"]["ArticleSentence"][];
@@ -3101,6 +3408,15 @@ export interface components {
         };
         /** @description Unexpected server failure. */
         Internal: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["APIError"];
+            };
+        };
+        /** @description Required provider or service is unavailable. */
+        Unavailable: {
             headers: {
                 [name: string]: unknown;
             };

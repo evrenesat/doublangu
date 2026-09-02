@@ -2,6 +2,8 @@ package annotator
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,71 +22,214 @@ type SemanticAnnotator interface {
 	Analyze(context.Context, semantics.PreparedArticle) (semantics.Response, error)
 }
 
-// Analyze runs the same isolated app-server protocol as the legacy adapter,
-// but uses the versioned semantic response and one bounded corrective turn.
+// ChunkSemanticAnnotator is the bounded provider contract used by the durable
+// analysis runner. Implementations must return all turn artifacts collected
+// before a failure in ChunkAttempt.
+type ChunkSemanticAnnotator interface {
+	AnalyzeChunk(context.Context, semantics.PreparedChunk, AnalysisOptions) (ChunkAttempt, error)
+}
+
+type AnalysisOptions struct {
+	Model  string
+	Effort string
+}
+
+type TurnArtifact struct {
+	BlockIndex             int
+	TurnIndex              int
+	TurnKind               string
+	Prompt                 string
+	OutputSchema           string
+	CompletedResponse      string
+	ResponseHash           string
+	ValidationError        string
+	ProviderError          string
+	CompletionMetadataJSON string
+	ProviderStderrExcerpt  string
+	StartedAt              string
+	CompletedAt            string
+	Duration               time.Duration
+	Status                 string
+}
+
+type ChunkAttempt struct {
+	Response      semantics.Response
+	Turns         []TurnArtifact
+	ReportedModel string
+	CLIVersion    string
+	StderrExcerpt string
+}
+
+// Analyze is the compatibility whole-article adapter. Production orchestration
+// uses AnalyzeChunk directly so every paragraph can be validated and cached
+// independently before the next provider process starts.
 func (c *CodexAppServer) Analyze(ctx context.Context, input semantics.PreparedArticle) (semantics.Response, error) {
 	if c == nil {
 		return semantics.Response{}, &Error{Code: CodeUnavailable, Err: errors.New("nil Codex app-server adapter")}
 	}
+	chunks, err := semantics.PrepareChunks(input)
+	if err != nil {
+		return semantics.Response{}, &Error{Code: CodeInvalidInput, Err: err}
+	}
+	results := make([]semantics.ChunkResult, 0, len(chunks))
+	prior := make([]semantics.NewSense, 0)
+	for _, chunk := range chunks {
+		chunk, err = semantics.PrepareChunk(input, chunk.Block.BlockIndex, prior)
+		if err != nil {
+			return semantics.Response{}, err
+		}
+		attempt, err := c.AnalyzeChunk(ctx, chunk, AnalysisOptions{Model: c.model, Effort: c.effort})
+		if err != nil {
+			return semantics.Response{}, err
+		}
+		results = append(results, semantics.ChunkResult{Chunk: chunk, Response: attempt.Response})
+		namespaced, err := semantics.NamespaceChunkResponse(chunk.Block.BlockIndex, attempt.Response, prior)
+		if err != nil {
+			return semantics.Response{}, err
+		}
+		prior = append(prior, namespaced.NewSenses...)
+	}
+	return semantics.MergeChunks(input, results)
+}
+
+// AnalyzeChunk runs one isolated paragraph process/thread and one bounded
+// corrective turn. The returned attempt is useful even when err is non-nil.
+func (c *CodexAppServer) AnalyzeChunk(ctx context.Context, chunk semantics.PreparedChunk, options AnalysisOptions) (attempt ChunkAttempt, returnErr error) {
+	attempt = ChunkAttempt{Turns: []TurnArtifact{}}
+	if c == nil {
+		return attempt, &Error{Code: CodeUnavailable, Err: errors.New("nil Codex app-server adapter")}
+	}
+	model, effort := options.Model, options.Effort
+	if model == "" {
+		model = c.model
+	}
+	if effort == "" {
+		effort = c.effort
+	}
+	if model == "" {
+		return attempt, &Error{Code: CodeUnavailable, Err: errors.New("no Codex analysis model is selected")}
+	}
+	if effort == "" {
+		effort = "medium"
+	}
 	timeout := c.timeout
-	if timeout == defaultCodexTimeout {
+	if timeout == defaultCodexTimeout || timeout <= 0 {
 		timeout = defaultCodexAnalysisTimeout
 	}
 	runContext, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	workingDirectory, err := os.MkdirTemp("", "doublangu-codex-v2-")
 	if err != nil {
-		return semantics.Response{}, &Error{Code: CodeUnavailable, Err: fmt.Errorf("create private app-server directory: %w", err)}
+		return attempt, &Error{Code: CodeUnavailable, Err: fmt.Errorf("create private app-server directory: %w", err)}
 	}
 	defer os.RemoveAll(workingDirectory)
-	process, err := startAppServer(runContext, c.binary, workingDirectory)
+	process, err := launchAppServer(runContext, c.binary, workingDirectory)
 	if err != nil {
-		return semantics.Response{}, c.classify(runContext, nil, err, CodeUnavailable)
+		return attempt, c.classify(runContext, nil, err, CodeUnavailable)
 	}
+	defer func() { attempt.StderrExcerpt = processStderr(process) }()
 	defer process.close()
+	attempt.CLIVersion = c.cliVersion(runContext)
 	protocol := newProtocolClient(process.stdin, process.stdout)
-	outputSchema, err := outputSchemaV2JSON()
+	outputSchema, err := outputSchemaChunkJSON(chunk)
 	if err != nil {
-		return semantics.Response{}, &Error{Code: CodeProtocol, Err: err}
+		return attempt, &Error{Code: CodeProtocol, Err: err}
 	}
 	nextID := int64(1)
 	if err := protocol.call(runContext, nextID, "initialize", initializeParams{
 		ClientInfo:   initializeClientInfo{Name: "doublangu", Version: "0.1.0"},
 		Capabilities: &initializeCapabilities{ExperimentalAPI: true},
 	}, &map[string]any{}); err != nil {
-		return semantics.Response{}, c.classify(runContext, process, err, CodeProtocol)
+		return attempt, c.classify(runContext, process, err, CodeProtocol)
 	}
 	nextID++
 	var threadResponse threadStartResponse
 	if err := protocol.call(runContext, nextID, "thread/start", threadStartParams{
 		ApprovalPolicy: "never", Sandbox: "read-only", CWD: workingDirectory,
-		Ephemeral: true, DynamicTools: []any{}, Model: c.model,
+		Ephemeral: true, DynamicTools: []any{}, Model: model,
 	}, &threadResponse); err != nil {
-		return semantics.Response{}, c.classify(runContext, process, err, CodeProtocol)
+		return attempt, c.classify(runContext, process, err, CodeProtocol)
 	}
 	threadID := threadResponse.Thread.ID
 	if threadID == "" {
-		return semantics.Response{}, &Error{Code: CodeProtocol, Err: errors.New("thread/start returned no thread id")}
+		return attempt, &Error{Code: CodeProtocol, Err: errors.New("thread/start returned no thread id")}
 	}
 	nextID++
-	raw, err := protocol.runTurn(runContext, nextID, threadID, BuildV2Prompt(input), c.effort, c.model, outputSchema)
+	prompt := BuildChunkPrompt(chunk)
+	turn, err := protocol.runTurnDetailed(runContext, nextID, threadID, prompt, effort, model, outputSchema)
+	attempt.ReportedModel = turn.ReportedModel
+	attempt.Turns = append(attempt.Turns, turnArtifact(chunk.Block.BlockIndex, 0, "initial", prompt, outputSchema, turn, err, process))
 	if err != nil {
-		return semantics.Response{}, c.classify(runContext, process, err, CodeProviderFailure)
+		return attempt, c.classify(runContext, process, err, CodeProviderFailure)
 	}
-	response, validationErr := decodeV2Response(input, raw)
+	response, validationErr := decodeChunkResponse(chunk, turn.Text)
 	if validationErr != nil {
+		attempt.Turns[len(attempt.Turns)-1].ValidationError = validationErr.Error()
 		nextID++
-		correction := BuildV2CorrectionPrompt(validationErr.Error(), raw)
-		raw, err = protocol.runTurn(runContext, nextID, threadID, correction, c.effort, c.model, outputSchema)
-		if err != nil {
-			return semantics.Response{}, c.classify(runContext, process, err, CodeInvalidOutput)
+		correction := BuildV2CorrectionPrompt(validationErr.Error(), turn.Text)
+		corrected, correctionErr := protocol.runTurnDetailed(runContext, nextID, threadID, correction, effort, model, outputSchema)
+		if corrected.ReportedModel != "" {
+			attempt.ReportedModel = corrected.ReportedModel
 		}
-		response, validationErr = decodeV2Response(input, raw)
+		attempt.Turns = append(attempt.Turns, turnArtifact(chunk.Block.BlockIndex, 1, "corrective", correction, outputSchema, corrected, correctionErr, process))
+		if correctionErr != nil {
+			return attempt, c.classify(runContext, process, correctionErr, CodeInvalidOutput)
+		}
+		response, validationErr = decodeChunkResponse(chunk, corrected.Text)
+		if validationErr != nil {
+			attempt.Turns[len(attempt.Turns)-1].ValidationError = validationErr.Error()
+		}
 	}
 	if validationErr != nil {
-		return semantics.Response{}, c.classify(runContext, process, validationErr, CodeInvalidOutput)
+		return attempt, c.classify(runContext, process, validationErr, CodeInvalidOutput)
 	}
-	return response, nil
+	attempt.Response = response
+	attempt.StderrExcerpt = processStderr(process)
+	return attempt, nil
+}
+
+func decodeChunkResponse(chunk semantics.PreparedChunk, raw string) (semantics.Response, error) {
+	response, err := semantics.DecodeResponse([]byte(raw))
+	if err != nil {
+		return semantics.Response{}, err
+	}
+	_, err = semantics.ValidateChunkResponse(chunk, response)
+	return response, err
+}
+
+func turnArtifact(blockIndex, turnIndex int, kind, prompt string, schema json.RawMessage, turn protocolTurnResult, turnErr error, process *appServerProcess) TurnArtifact {
+	completedAt := time.Now().UTC().Format(time.RFC3339Nano)
+	artifact := TurnArtifact{
+		BlockIndex: blockIndex, TurnIndex: turnIndex, TurnKind: kind, Prompt: prompt,
+		OutputSchema: string(schema), CompletedResponse: turn.Text,
+		ResponseHash: hashText(turn.Text), CompletionMetadataJSON: turn.MetadataJSON,
+		StartedAt: turn.StartedAt, CompletedAt: completedAt, Duration: turn.Duration,
+		Status: "completed",
+	}
+	if artifact.StartedAt == "" {
+		artifact.StartedAt = completedAt
+	}
+	if artifact.CompletionMetadataJSON == "" {
+		artifact.CompletionMetadataJSON = "{}"
+	}
+	if turnErr != nil {
+		artifact.ProviderError = turnErr.Error()
+		artifact.ProviderStderrExcerpt = processStderr(process)
+		artifact.Status = "failed"
+	}
+	return artifact
+}
+
+func processStderr(process *appServerProcess) string {
+	if process == nil || process.stderr == nil {
+		return ""
+	}
+	return process.stderr.String()
+}
+
+func hashText(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
 }
 
 func decodeV2Response(input semantics.PreparedArticle, raw string) (semantics.Response, error) {
