@@ -112,6 +112,13 @@ func TestValidateResponseRejectsCoverageOrderAndUnsafeOutput(t *testing.T) {
 	unsafe.Tokens[0].ShadowText = "<strong>unsafe</strong>"
 	assertInvalid("unsafe shadow", unsafe)
 
+	badNormalizedSense := base
+	badNormalizedSense.NewSenses = []NewSense{{
+		Ref: "bad-normalized", Kind: KindWord, CanonicalForm: "Één keer", NormalizedForm: "een andere vorm",
+		SenseDiscriminator: "test", PrimaryTranslation: "one time",
+	}}
+	assertInvalid("sense normalized form mismatch", badNormalizedSense)
+
 	badConstruction := base
 	badConstruction.NewSenses = []NewSense{{Ref: "bad", Kind: KindExpression, CanonicalForm: "bank", NormalizedForm: "bank", SenseDiscriminator: "bad", PrimaryTranslation: "bad", CanonicalPronunciationText: "bank"}}
 	badConstruction.Constructions = []Construction{{Kind: KindExpression, Role: "contiguous_construction", NewSenseRef: "bad", ShadowText: "bad", TokenIDs: []string{"b0:t0"}, Spans: []SpanRef{{BlockIndex: 0, SourceText: "bank", Occurrence: 0}}}}

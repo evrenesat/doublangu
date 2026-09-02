@@ -11,9 +11,12 @@
   The one correction now receives the fail-fast error plus independently
   collected relation diagnostics, and a second bounded correction is available
   when the first repair exposes or introduces another error.
-- Bumped the prompt identity to `reader-analysis-prompt.v3` so v2 caches and jobs
-  cannot be reused, while retaining the existing strict schema and validator as
-  the publication gate.
+- Closed a validator/store contract gap exposed after all three live paragraphs
+  passed: deterministic `normalized_form` equality is now checked before cache
+  or persistence rather than first failing inside the publication transaction.
+- Bumped the prompt identity to `reader-analysis-prompt.v4` so older caches and
+  jobs cannot be reused, while retaining the existing strict schema and
+  validator as the publication gate.
 - Added regression coverage for simultaneous reference, occurrence, token, and
   construction errors, bounded second-correction behavior, and an opt-in live
   paragraph smoke selectable by runtime model and effort.

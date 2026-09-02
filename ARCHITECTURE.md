@@ -28,8 +28,9 @@ The request and processing flow is:
    complete token coverage, legal UTF-16 boundaries, safe bounded strings, and
    candidate-or-new-sense references. Up to two bounded corrective turns reuse
    the same dynamic schema and receive the fail-fast error plus independent
-   reference, occurrence, and construction-membership diagnostics; validation
-   remains authoritative. Valid chunks are cached independently, so a retry can
+   reference, deterministic sense-normalization, occurrence, and
+   construction-membership diagnostics; validation remains authoritative.
+   Valid chunks are cached independently, so a retry can
    reuse completed paragraphs while a fresh run bypasses both chunk and
    whole-article caches.
 5. A successful analysis transaction stores the cache, reusable semantic
