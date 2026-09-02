@@ -89,7 +89,7 @@ func NormalizeCandidates(article *Article, candidates []Candidate) (Normalizatio
 	result.Diagnostic.ShadowBudget = buckets * MaxShadowsPer150Words
 	result.Diagnostic.BudgetExceeded = len(accepted) > result.Diagnostic.AnnotationBudget
 
-	// Groups are protected first, followed by provider-requested shadows, then
+	// Groups are protected first, followed by provider-requested subtitles, then
 	// the remaining source-order candidates. This keeps useful expressions even
 	// when a provider sends an overly dense response.
 	priority := make([]candidateSpan, 0, len(accepted))
@@ -119,7 +119,7 @@ func NormalizeCandidates(article *Article, candidates []Candidate) (Normalizatio
 		if annotation.SuggestShadow {
 			if shadowCount >= result.Diagnostic.ShadowBudget {
 				// Keep the hover detail, but do not let an over-eager provider
-				// turn it into a passive shadow.
+				// turn it into a passive subtitle.
 				annotation.SuggestShadow = false
 				result.Diagnostic.ShadowSuppressed++
 			} else {

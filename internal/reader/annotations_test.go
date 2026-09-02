@@ -104,7 +104,7 @@ func testArticle(t *testing.T, body string) Article {
 	return article
 }
 
-func testCandidate(source string, kind AnnotationKind, block, occurrence int, translation string, shadow bool) Candidate {
+func testCandidate(source string, kind AnnotationKind, block, occurrence int, translation string, subtitle bool) Candidate {
 	return Candidate{
 		BlockIndex:         block,
 		SourceText:         source,
@@ -116,6 +116,6 @@ func testCandidate(source string, kind AnnotationKind, block, occurrence int, tr
 		MeaningNote:        "meaning",
 		UsageNote:          "usage",
 		PartsNote:          "parts",
-		SuggestShadow:      shadow,
+		SuggestShadow:      subtitle,
 	}
 }

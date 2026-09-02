@@ -1,5 +1,36 @@
 # Development Log
 
+## 2026-09-02 — Subtitle completeness and reader affordances
+
+- Renamed learner-facing English “shadows” to “subtitles” while retaining the
+  existing `shadow_*` persistence and API fields for compatibility.
+- Traced a subtitle-free beta paragraph to a corrective Luna response that
+  preserved token identities and senses but blanked every `shadow_text` value.
+  Translated tokens and constructions now require non-empty subtitle text, and
+  corrective prompts explicitly preserve unrelated subtitles.
+- Bumped the prompt identity to `reader-analysis-prompt.v5` so the incomplete
+  cached paragraph cannot be reused.
+- Removed the non-semantic gray dotted underline from ordinary words. The
+  yellow wavy marker and shared hover behavior for discontinuous constructions
+  remain unchanged.
+- Added semantic and browser regressions for subtitle completeness, ordinary
+  undecorated words, and retained discontinuous-construction styling.
+
+### Verification
+
+- Focused Go tests for semantics, annotator, reader, and HTTP API — passed.
+- Race tests for semantics, annotator, analysis, reader, speech, and HTTP API —
+  passed.
+- OpenAPI validation/regeneration — passed with no generated diff.
+- `npm --prefix web run check` — 0 errors and 0 warnings.
+- `npm --prefix web run test:unit -- --run` — 70 tests passed.
+- `npm --prefix web run test:e2e -- reader.spec.ts` — 8 tests passed.
+- `go test ./... -count=1 -buildvcs=false` and `make verify` — passed.
+- Beta-path static production build — passed.
+- Authenticated legacy and `gpt-5.6-luna / medium` chunk live tests — passed;
+  the Luna response satisfied the stricter subtitle validator.
+- `go mod tidy -diff` and `git diff --check` — passed.
+
 ## 2026-09-02 — Luna relational correction repair
 
 - Traced the live beta article failure to three independent weak-model relation

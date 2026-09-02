@@ -76,7 +76,7 @@
 		feedbackIsError = false;
 		try {
 			await onLearningStatus(annotation, status);
-			feedback = status === 'learned' ? 'Marked learned. Shadow hidden.' : 'Marked unlearned. Shadow restored.';
+			feedback = status === 'learned' ? 'Marked learned. Subtitle hidden.' : 'Marked unlearned. Subtitle restored.';
 		} catch (cause) {
 			feedbackIsError = true;
 			if (cause instanceof DoublanguAPIError) feedback = cause.message;
@@ -99,7 +99,7 @@
 		onpointerleave={scheduleClose}
 		onblur={scheduleClose}
 		onclick={(event) => open(run.annotation!, event.currentTarget as HTMLElement, true)}
-	><span class="source-text">{run.text}</span>{#if run.annotation.show_shadow}<span class="translation-shadow" aria-hidden="true">{run.annotation.primary_translation}</span>{/if}</button>{:else}{run.text}{/if}{/each}
+	><span class="source-text">{run.text}</span>{#if run.annotation.show_shadow}<span class="translation-subtitle" aria-hidden="true">{run.annotation.primary_translation}</span>{/if}</button>{:else}{run.text}{/if}{/each}
 </p>
 
 {#if selectedAnnotation && anchor}
@@ -147,14 +147,7 @@
 		outline-offset: 1px;
 	}
 
-	.source-text {
-		text-decoration-line: underline;
-		text-decoration-style: dotted;
-		text-decoration-color: color-mix(in srgb, var(--color-accent, #2563eb) 65%, transparent);
-		text-underline-offset: 0.18em;
-	}
-
-	.translation-shadow {
+	.translation-subtitle {
 		display: block;
 		max-width: 100%;
 		overflow: hidden;

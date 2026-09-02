@@ -45,7 +45,7 @@ func TestStoreArticleLifecycleAndLearningPrecedence(t *testing.T) {
 	}
 	annotation := got.Blocks[0].Annotations[0]
 	if !annotation.ShowShadow || annotation.ID.IsZero() {
-		t.Fatalf("default shadow/id = %+v", annotation)
+		t.Fatalf("default subtitle/id = %+v", annotation)
 	}
 
 	state, err := articles.UpsertLearningState(context.Background(), &LearningState{
@@ -76,7 +76,7 @@ func TestStoreArticleLifecycleAndLearningPrecedence(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got.Blocks[0].Annotations[0].ShowShadow != true {
-		t.Fatal("explicit unlearned state did not show shadow")
+		t.Fatal("explicit unlearned state did not show subtitle")
 	}
 }
 

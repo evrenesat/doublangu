@@ -119,7 +119,7 @@
 	const analysisLabel = $derived.by(() => {
 		switch (current.analysis_status) {
 			case 'queued':
-			case 'processing': return 'Preparing English shadows…';
+			case 'processing': return 'Preparing English subtitles…';
 			case 'ready': return 'Ready';
 			case 'failed': return 'Needs retry';
 		default: return 'Waiting to start';
@@ -321,7 +321,7 @@
 				status
 			});
 			emit(withSemanticLearning(current, occurrence.semantic_sense_id, saved));
-			feedback = status === 'learned' ? 'Marked learned. Shadow hidden.' : 'Marked unlearned. Shadow restored.';
+			feedback = status === 'learned' ? 'Marked learned. Subtitle hidden.' : 'Marked unlearned. Subtitle restored.';
 			feedbackIsError = false;
 		} catch (cause) {
 			emit(previous);
@@ -512,7 +512,7 @@
 <section class="reader-shell" aria-label="Audible article reader">
 	<div class="reader-status-row">
 		<div class="status-item">
-				<span class="status-label">English shadows</span>
+				<span class="status-label">English subtitles</span>
 				<strong class:status-ready={current.analysis_status === 'ready'} class:status-error={current.analysis_status === 'failed'}>{analysisLabel}</strong>
 				{#if current.analysis_model}
 					<span class="analysis-provenance">{current.analysis_model} · {current.analysis_effort}</span>
@@ -605,7 +605,7 @@
 		--reader-muted: var(--reader-page-muted);
 		--reader-accent: var(--reader-page-accent);
 		--reader-construction: var(--reader-page-construction);
-		--reader-shadow: var(--reader-page-shadow);
+		--reader-subtitle: var(--reader-page-subtitle);
 		--reader-danger: #ffabbc;
 		max-width: 54rem;
 		margin: 0 auto;

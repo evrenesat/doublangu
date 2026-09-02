@@ -8,7 +8,7 @@ authentication, SQLite persistence, background enrichment, and media; a Svelte
 
 The working product is an article reader for one owner:
 
-- paste Dutch text and receive contextual English shadows from Codex
+- paste Dutch text and receive contextual English subtitles from Codex
 - choose the available Codex model and reasoning effort for new analysis runs
 - inspect words, idioms, and discontinuous constructions without altering the
   source text

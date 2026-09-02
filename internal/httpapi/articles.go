@@ -104,7 +104,7 @@ func (h *ArticleHandler) ServeGenerateNarration(w http.ResponseWriter, r *http.R
 		return
 	}
 	if article.AnalysisStatus != reader.AnalysisReady {
-		WriteError(w, http.StatusConflict, "article analysis is not ready; wait for English shadows before generating narration", ErrCodeAnalysisNotReady)
+		WriteError(w, http.StatusConflict, "article analysis is not ready; wait for English subtitles before generating narration", ErrCodeAnalysisNotReady)
 		return
 	}
 	if err := h.speech.QueueArticleAudio(r.Context(), id, true); err != nil {

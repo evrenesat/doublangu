@@ -60,13 +60,13 @@ afterEach(() => {
 });
 
 describe('ArticleBlock', () => {
-	it('shows a faint shadow and opens immediate translation details on hover', async () => {
+	it('shows a faint subtitle and opens immediate translation details on hover', async () => {
 		const onLearningStatus = vi.fn(async () => {});
 		render(ArticleBlockView, { block, onLearningStatus });
 		const paragraph = document.querySelector('.article-block');
 		if (!paragraph) throw new Error('article block was not rendered');
 		const rendered = paragraph.cloneNode(true) as HTMLElement;
-		rendered.querySelectorAll('.translation-shadow').forEach((node) => node.remove());
+		rendered.querySelectorAll('.translation-subtitle').forEach((node) => node.remove());
 		expect(rendered.textContent).toBe(block.source_text);
 		const trigger = screen.getByRole('button', { name: 'tot rust komen: to calm down' });
 		expect(screen.getByText('to calm down')).toBeTruthy();
@@ -118,7 +118,7 @@ describe('ArticleBlock', () => {
 		expect(screen.getByRole('dialog')).toBeTruthy();
 	});
 
-	it('calls the optimistic learning action and keeps the annotated word hoverable without a shadow', async () => {
+	it('calls the optimistic learning action and keeps the annotated word hoverable without a subtitle', async () => {
 		const onLearningStatus = vi.fn(async () => {});
 		const learnedBlock = { ...block, annotations: [{ ...annotation, show_shadow: false }] };
 		render(ArticleBlockView, { block: learnedBlock, onLearningStatus });

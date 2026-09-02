@@ -61,15 +61,15 @@ diagnostics. The related article is requeued so the durable worker can retry
 the unfinished analysis.
 
 Semantic identity is `semantic_sense.id`, not spelling. An occurrence points to
-   one sense and carries its effective shadow and pronunciation identity. Every
+   one sense and carries its effective subtitle and pronunciation identity. Every
    deterministic word token is represented. A contiguous phrase/idiom is a
-   single group occurrence whose component token shadows are suppressed;
+   single group occurrence whose component token subtitles are suppressed;
    discontinuous constructions keep ordered multi-spans and marker styling
    while their member word occurrences remain available. This layered model is
    rendered directly instead of flattening spans into a non-overlapping list.
 
 The web reader reconstructs source text from stored spans without HTML
-injection. Source wrappers remain inline and shadows occupy a reserved visual
+injection. Source wrappers remain inline and subtitles occupy a reserved visual
 band, so English labels do not drive Dutch line breaking. Hover/focus/click,
 keyboard, touch, and narration can open the compact popover or focus a sentence;
 focus reflow compensates the viewport delta. Midnight, paper, and high-contrast
