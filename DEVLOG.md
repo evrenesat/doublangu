@@ -1,5 +1,40 @@
 # Development Log
 
+## 2026-09-02 — Luna relational correction repair
+
+- Traced the live beta article failure to three independent weak-model relation
+  mistakes: sentence ordinal values used as substring occurrences, undefined or
+  duplicated local sense references, and construction tokens outside their
+  declared spans. Strict local validation rejected every malformed response.
+- Made the chunk prompt explicit about cross-field sense definitions, exact
+  occurrence semantics, unique definitions, and construction span membership.
+  The one correction now receives the fail-fast error plus independently
+  collected relation diagnostics, and a second bounded correction is available
+  when the first repair exposes or introduces another error.
+- Bumped the prompt identity to `reader-analysis-prompt.v3` so v2 caches and jobs
+  cannot be reused, while retaining the existing strict schema and validator as
+  the publication gate.
+- Added regression coverage for simultaneous reference, occurrence, token, and
+  construction errors, bounded second-correction behavior, and an opt-in live
+  paragraph smoke selectable by runtime model and effort.
+
+### Verification
+
+- Formatting and `go mod tidy -diff` — passed.
+- `go test ./... -count=1 -buildvcs=false` — passed.
+- Race tests for semantics, annotator, analysis, reader, speech, and HTTP API —
+  passed.
+- OpenAPI validation/regeneration — passed with no generated diff.
+- `npm --prefix web run check` — 0 errors and 0 warnings.
+- `npm --prefix web run test:unit -- --run` — 70 tests passed.
+- `npm --prefix web run test:e2e -- reader.spec.ts` — 8 tests passed in the
+  isolated rerun; one concurrent run first timed out during navigation while
+  other web checks were active.
+- `make verify` — passed.
+- Authenticated legacy and `gpt-5.6-luna / medium` chunk live tests — passed;
+  the live chunk satisfied the unchanged deterministic validator.
+- `git diff --check` — passed.
+
 ## 2026-09-02 — Analysis reliability recovery follow-up
 
 - Changed owner settings writes to reject a changed model/effort pair while

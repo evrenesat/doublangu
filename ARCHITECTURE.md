@@ -26,10 +26,12 @@ The request and processing flow is:
    from the exact token IDs and candidates in that chunk.
 4. The validator requires exact sentence/token/construction occurrences,
    complete token coverage, legal UTF-16 boundaries, safe bounded strings, and
-   candidate-or-new-sense references. One corrective turn reuses the same
-   dynamic schema. Valid chunks are cached independently, so a retry can reuse
-   completed paragraphs while a fresh run bypasses both chunk and whole-article
-   caches.
+   candidate-or-new-sense references. Up to two bounded corrective turns reuse
+   the same dynamic schema and receive the fail-fast error plus independent
+   reference, occurrence, and construction-membership diagnostics; validation
+   remains authoritative. Valid chunks are cached independently, so a retry can
+   reuse completed paragraphs while a fresh run bypasses both chunk and
+   whole-article caches.
 5. A successful analysis transaction stores the cache, reusable semantic
    items/senses, ordered sentences, layered occurrences/spans, sense-keyed
    learning state, and deduplicated speech requests. Failed attempts retain

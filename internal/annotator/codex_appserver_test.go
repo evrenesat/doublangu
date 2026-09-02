@@ -20,6 +20,7 @@ type scriptedAppServer struct {
 	turnParams []map[string]any
 	turnNumber int
 	validJSON  string
+	validAfter int
 }
 
 type scriptedAppServerInput struct {
@@ -54,7 +55,7 @@ func (s *scriptedAppServerInput) Write(data []byte) (int, error) {
 		turnID := fmt.Sprintf("turn-%d", turnNumber)
 		s.server.emit(map[string]any{"id": request.ID, "result": map[string]any{"turn": map[string]any{"id": turnID}}})
 		text := `{"version":"wrong"}`
-		if turnNumber > 1 {
+		if turnNumber >= s.server.validAfter {
 			text = s.server.validJSON
 		}
 		s.server.emit(map[string]any{"method": "item/completed", "params": map[string]any{
@@ -80,9 +81,13 @@ func (s *scriptedAppServer) emit(value any) {
 	s.output <- data
 }
 
-func newScriptedAppServer(validJSON string) (*scriptedAppServer, *appServerProcess) {
+func newScriptedAppServer(validJSON string, validAfter ...int) (*scriptedAppServer, *appServerProcess) {
 	stdoutReader, stdoutWriter := io.Pipe()
-	server := &scriptedAppServer{output: make(chan []byte, 16), stdout: stdoutWriter, validJSON: validJSON}
+	validTurn := 2
+	if len(validAfter) > 0 {
+		validTurn = validAfter[0]
+	}
+	server := &scriptedAppServer{output: make(chan []byte, 16), stdout: stdoutWriter, validJSON: validJSON, validAfter: validTurn}
 	go func() {
 		for data := range server.output {
 			_, _ = server.stdout.Write(data)
@@ -94,6 +99,28 @@ func newScriptedAppServer(validJSON string) (*scriptedAppServer, *appServerProce
 		stdin:  &scriptedAppServerInput{server: server},
 		stdout: stdoutReader,
 		stderr: &boundedBuffer{limit: maxStderrBytes},
+	}
+}
+
+func TestAnalyzeChunkUsesSecondBoundedCorrection(t *testing.T) {
+	chunk := testPreparedChunk(t)
+	validJSONBytes, err := json.Marshal(testValidChunkResponse(chunk))
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldLaunch := launchAppServer
+	launchAppServer = func(context.Context, string, string) (*appServerProcess, error) {
+		_, process := newScriptedAppServer(string(validJSONBytes), 3)
+		return process, nil
+	}
+	defer func() { launchAppServer = oldLaunch }()
+
+	attempt, err := NewCodexAppServer(CodexConfig{Binary: "true"}).AnalyzeChunk(context.Background(), chunk, AnalysisOptions{Model: "requested-model", Effort: "low"})
+	if err != nil {
+		t.Fatalf("AnalyzeChunk: %v", err)
+	}
+	if len(attempt.Turns) != 3 || attempt.Turns[1].TurnKind != "corrective" || attempt.Turns[2].TurnKind != "corrective" {
+		t.Fatalf("bounded correction turns = %+v", attempt.Turns)
 	}
 }
 
