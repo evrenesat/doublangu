@@ -160,6 +160,7 @@ func TestChunkPromptExplainsCrossFieldReferencesAndSpanOccurrences(t *testing.T)
 		"must exactly match either a ref object included in this response's new_senses array",
 		"occurrence is the zero-based occurrence of that exact source_text substring",
 		"never the sentence or span ordinal",
+		"normalized_form must be the deterministic Unicode case-folded, whitespace-collapsed form of canonical_form",
 	} {
 		if !strings.Contains(prompt, expected) {
 			t.Errorf("chunk prompt missing %q", expected)
@@ -201,6 +202,7 @@ func TestBuildV2CorrectionPromptRestatesRelationalChecklist(t *testing.T) {
 		"new_senses[].ref",
 		"occurrence counts repeats of that exact source_text",
 		"otherwise remove that construction",
+		"normalized_form must equal the Unicode case-folded, whitespace-collapsed normalization of canonical_form",
 	} {
 		if !strings.Contains(prompt, expected) {
 			t.Errorf("correction prompt missing %q", expected)

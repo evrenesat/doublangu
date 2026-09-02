@@ -28,7 +28,7 @@ const (
 	// AnalysisContractVersion is part of the article cache key. A contract
 	// change is intentionally an explicit cache invalidation event.
 	AnalysisContractVersion = "reader.analysis.v2"
-	PromptVersion           = "reader-analysis-prompt.v3"
+	PromptVersion           = "reader-analysis-prompt.v4"
 	ProviderID              = "codex-app-server"
 	MaxAlternatives         = 3
 	MaxShadowScalars        = 160
@@ -701,6 +701,17 @@ func validateSense(sense NewSense, name string) error {
 		if err := safeProviderText(name+"."+field, value, max); err != nil {
 			return err
 		}
+	}
+	canonicalNormalized, err := NormalizeForm(sense.CanonicalForm)
+	if err != nil {
+		return fmt.Errorf("%s.canonical_form: %w", name, err)
+	}
+	suppliedNormalized, err := NormalizeForm(sense.NormalizedForm)
+	if err != nil {
+		return fmt.Errorf("%s.normalized_form: %w", name, err)
+	}
+	if suppliedNormalized != canonicalNormalized {
+		return fmt.Errorf("%s.normalized_form must equal the deterministic normalization of canonical_form", name)
 	}
 	if len(sense.Alternatives) > MaxAlternatives {
 		return fmt.Errorf("%s has too many alternatives", name)
