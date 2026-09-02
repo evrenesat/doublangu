@@ -673,7 +673,7 @@ All verification commands pass:
 - Focused Go speech/worker tests pass, including the regional Dutch queue and
   lease test. Formatting and `git diff --check` pass.
 
-## 2026-09-02 — Progressive reader fixes (implementation in progress)
+## 2026-09-02 — Progressive reader fixes
 
 Implementing plans/progressive-reader-fixes-handoff.md on top of b8cbaf2:
 
@@ -770,3 +770,14 @@ Verification: nine focused Go packages pass; race suites pass; svelte-check
 
 Verification: nine focused Go packages pass, race suites pass, svelte-check
 0/0, 76 web unit tests pass, 15 reader E2E tests pass.
+
+### Beta deployment (2026-09-02)
+
+- Merged the reviewed implementation to `main` at `8b85a3a` and deployed
+  immutable beta release
+  `f8a864c3c59ce5986e1cbd50f28cb665c1ea12b433b18003c3bdb7f520610ef6`.
+- The isolated `doublangu-beta` service restarted successfully. Database
+  readiness, pinned Codex authentication, TLS, the unauthenticated Basic Auth
+  challenge, authenticated shell delivery, and authenticated proxied health
+  all passed. Existing protected credentials were retained and production was
+  unchanged.
