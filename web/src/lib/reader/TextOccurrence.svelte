@@ -56,6 +56,7 @@
 	class:learned={!occurrence.show_shadow}
 	class:construction-member={constructionIDs.length > 0}
 	class:construction-active={constructionIDs.some((id) => activeConstructionIDs.includes(id))}
+	class:group-unit={occurrence.role === 'contiguous_construction'}
 	data-occurrence-id={occurrence.id}
 	data-construction-ids={constructionIDs.join(' ')}
 	role="button"
@@ -74,10 +75,20 @@
 
 <style>
 	.text-occurrence {
-		position: relative;
-		display: inline;
+		/* In-flow interlinear unit: source and subtitle participate in layout,
+		   so adjacent visible subtitle boxes can never overlap. The unit may
+		   shrink and wrap at source spaces within the paragraph width: no
+		   max-content minimum, so long group text cannot overflow narrow
+		   readers. */
+		display: inline-grid;
+		grid-template-rows: auto auto;
+		justify-items: center;
+		min-width: 0;
+		max-width: 100%;
+		margin: 0 0.04em;
 		border-radius: 0.2rem;
 		cursor: pointer;
+		vertical-align: baseline;
 		-webkit-box-decoration-break: clone;
 		box-decoration-break: clone;
 	}
@@ -89,22 +100,33 @@
 		outline-offset: 2px;
 	}
 
+	.source-text {
+		white-space: pre-wrap;
+		word-break: normal;
+		overflow-wrap: anywhere;
+	}
+
 	.translation-subtitle {
-		position: absolute;
-		left: 50%;
-		top: calc(100% + 0.05em);
-		max-width: min(16rem, 36vw);
-		transform: translateX(-50%);
-		overflow: hidden;
+		display: -webkit-box;
+		max-width: min(17rem, 58vw);
 		color: var(--reader-subtitle);
 		font-size: 0.57em;
 		font-weight: 550;
-		line-height: 1;
+		line-height: 1.15;
 		text-align: center;
-		text-overflow: ellipsis;
-		white-space: nowrap;
+		overflow: hidden;
+		-webkit-box-orient: vertical;
+		-webkit-line-clamp: 1;
+		line-clamp: 1;
 		pointer-events: none;
 		opacity: 0.82;
+	}
+
+	/* Long contiguous-group subtitles may wrap to at most two lines. */
+	.text-occurrence.group-unit .translation-subtitle {
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
+		overflow-wrap: anywhere;
 	}
 
 	.text-occurrence.construction-member .source-text {
@@ -117,5 +139,9 @@
 	.text-occurrence.construction-active .source-text {
 		background: color-mix(in srgb, var(--reader-construction) 22%, transparent);
 		text-decoration-thickness: 0.15em;
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.text-occurrence { transition: none; }
 	}
 </style>

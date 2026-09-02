@@ -22,12 +22,17 @@
 	let enriching = $state(false);
 	let error = $state('');
 	let pollTimer: ReturnType<typeof setTimeout> | undefined;
-	let pollStep = 0;
 	let destroyed = false;
 
 	const articleID = $derived($page.params.id ?? '');
 	const enrichAfterLoad = $derived($page.url.searchParams.get('enrich') === '1');
-	const pollDelays = [0, 1000, 2000, 4000, 8000] as const;
+
+	// While analysis is processing, poll every second so paragraph commits
+	// appear promptly; while merely queued (or only speech is pending), poll
+	// every two seconds. The eight-second delay is reserved for failures.
+	function pollDelayFor(next: Article): number {
+		return next.analysis_status === 'processing' ? 1000 : 2000;
+	}
 
 	onMount(() => {
 		if (!articleID) {
@@ -80,15 +85,12 @@
 			const next = await getArticle(articleID);
 			if (destroyed) return;
 			article = next;
-			if (shouldPoll(next)) {
-				pollStep = Math.min(pollStep + 1, pollDelays.length - 1);
-				schedulePoll(pollDelays[pollStep] ?? 8000);
-			} else {
-				pollStep = 0;
-			}
+			if (shouldPoll(next)) schedulePoll(pollDelayFor(next));
 		} catch (cause) {
 			if (!destroyed) {
 				error = errorMessage(cause, 'Could not refresh the article.');
+				// Back off after request failures only; a later success resets
+				// to the state-based cadence above.
 				schedulePoll(8000);
 			}
 		}
@@ -104,7 +106,6 @@
 				await runLegacyEnrichment();
 				await goto(appPath(`/reader/${encodeURIComponent(articleID)}`), { replaceState: true, noScroll: true });
 			} else if (shouldPoll(loaded)) {
-				pollStep = 0;
 				schedulePoll(0);
 			}
 		} catch (cause) {

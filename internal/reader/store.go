@@ -74,7 +74,19 @@ func (s *Store) ListArticles(ctx context.Context) ([]ArticleSummary, error) {
 		SELECT id, title, source_language, target_language, enrichment_status,
 		       enrichment_error_code, created_at, updated_at, content_hash,
 		       analysis_status, analysis_error_code, analysis_model, analysis_effort,
-		       narration_status, narration_error_code
+		       narration_status, narration_error_code,
+		       (SELECT COUNT(*) FROM article_block AS b WHERE b.article_id = article.id),
+		       (SELECT COUNT(*) FROM article_block AS b WHERE b.article_id = article.id
+		          AND b.analysis_job_id = article.analysis_job_id AND b.analysis_status = 'ready'),
+		       (SELECT COALESCE(MIN(b.block_index), -1) FROM article_block AS b
+		          WHERE b.article_id = article.id AND b.analysis_job_id = article.analysis_job_id
+		            AND b.analysis_status = 'processing'),
+		       (SELECT COALESCE(MIN(b.block_index), -1) FROM article_block AS b
+		          WHERE b.article_id = article.id AND b.analysis_job_id = article.analysis_job_id
+		            AND b.analysis_status = 'failed'),
+		       (SELECT COALESCE(MIN(b.block_index), -1) FROM article_block AS b
+		          WHERE b.article_id = article.id AND b.analysis_job_id = article.analysis_job_id
+		            AND b.analysis_status = 'pending')
 		FROM article ORDER BY created_at DESC, id DESC
 	`)
 	if err != nil {
@@ -86,13 +98,22 @@ func (s *Store) ListArticles(ctx context.Context) ([]ArticleSummary, error) {
 		var article ArticleSummary
 		var id, status string
 		var analysisStatus, narrationStatus string
-		if err := rows.Scan(&id, &article.Title, &article.SourceLanguage, &article.TargetLanguage, &status, &article.EnrichmentErrorCode, &article.CreatedAt, &article.UpdatedAt, &article.ContentHash, &analysisStatus, &article.AnalysisErrorCode, &article.AnalysisModel, &article.AnalysisEffort, &narrationStatus, &article.NarrationErrorCode); err != nil {
+		var total, completed, processingIndex, failedIndex, pendingIndex int
+		if err := rows.Scan(&id, &article.Title, &article.SourceLanguage, &article.TargetLanguage, &status, &article.EnrichmentErrorCode, &article.CreatedAt, &article.UpdatedAt, &article.ContentHash, &analysisStatus, &article.AnalysisErrorCode, &article.AnalysisModel, &article.AnalysisEffort, &narrationStatus, &article.NarrationErrorCode, &total, &completed, &processingIndex, &failedIndex, &pendingIndex); err != nil {
 			return nil, fmt.Errorf("reader list articles: %w", err)
 		}
 		article.ID = library.ULID(id)
 		article.EnrichmentStatus = EnrichmentStatus(status)
 		article.AnalysisStatus = AnalysisStatus(analysisStatus)
 		article.NarrationStatus = NarrationStatus(narrationStatus)
+		current := processingIndex
+		if current < 0 && (article.AnalysisStatus == AnalysisProcessing || article.AnalysisStatus == AnalysisQueued) {
+			current = pendingIndex
+		}
+		article.AnalysisProgress = AnalysisProgress{
+			TotalParagraphs: total, CompletedParagraphs: completed,
+			CurrentBlockIndex: current, FailedBlockIndex: failedIndex,
+		}
 		articles = append(articles, article)
 	}
 	if err := rows.Err(); err != nil {
@@ -136,7 +157,10 @@ func (s *Store) getArticleTx(ctx context.Context, tx *sql.Tx, id library.ULID) (
 	article.Blocks = make([]ArticleBlock, 0)
 
 	rows, err := tx.QueryContext(ctx, `
-		SELECT id, article_id, block_index, kind, source_text
+		SELECT id, article_id, block_index, kind, source_text,
+		       analysis_status, analysis_error_code, analysis_job_id,
+		       published_analysis_job_id, published_analysis_revision,
+		       published_analysis_model, published_analysis_effort, published_at
 		FROM article_block WHERE article_id = ? ORDER BY block_index
 	`, id.String())
 	if err != nil {
@@ -146,7 +170,10 @@ func (s *Store) getArticleTx(ctx context.Context, tx *sql.Tx, id library.ULID) (
 	for rows.Next() {
 		var block ArticleBlock
 		var rawBlockID, rawArticleID string
-		if err := rows.Scan(&rawBlockID, &rawArticleID, &block.BlockIndex, &block.Kind, &block.SourceText); err != nil {
+		if err := rows.Scan(&rawBlockID, &rawArticleID, &block.BlockIndex, &block.Kind, &block.SourceText,
+			&block.AnalysisStatus, &block.AnalysisErrorCode, &block.analysisJobID,
+			&block.publishedJobID, &block.PublishedRevision,
+			&block.PublishedModel, &block.PublishedEffort, &block.PublishedAt); err != nil {
 			rows.Close()
 			return nil, fmt.Errorf("reader scan article block: %w", err)
 		}
@@ -155,6 +182,7 @@ func (s *Store) getArticleTx(ctx context.Context, tx *sql.Tx, id library.ULID) (
 		block.Annotations = make([]Annotation, 0)
 		block.Sentences = make([]ArticleSentence, 0)
 		block.Occurrences = make([]ArticleOccurrence, 0)
+		block.HasAnalysis = block.PublishedRevision != ""
 		blockByID[rawBlockID] = len(article.Blocks)
 		article.Blocks = append(article.Blocks, block)
 	}
@@ -382,6 +410,16 @@ func (s *Store) RecoverInterrupted(ctx context.Context) error {
 		`)
 		if err != nil {
 			return fmt.Errorf("reader recover interrupted analysis: %w", err)
+		}
+		// The interrupted paragraph is durably failed under its own job; later
+		// paragraphs stay pending and published paragraphs keep their
+		// materialization. A retry reactivates the job and resets the blocks.
+		_, err = tx.ExecContext(ctx, `
+			UPDATE article_block SET analysis_status = 'failed', analysis_error_code = 'v1.analysis_interrupted'
+			WHERE analysis_status = 'processing'
+		`)
+		if err != nil {
+			return fmt.Errorf("reader recover interrupted analysis blocks: %w", err)
 		}
 		recoveredAt := store.NowUTC()
 		_, err = tx.ExecContext(ctx, `

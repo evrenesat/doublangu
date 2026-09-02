@@ -90,11 +90,18 @@ func (r *Runner) process(ctx context.Context, lease *jobs.Lease) error {
 	if prepared.ContentHash != lease.InputHash {
 		return r.fail(ctx, lease, "v1.analysis_source_changed", errors.New("article content hash changed"))
 	}
-	if err := r.reader.MarkAnalysisProcessing(ctx, id); err != nil {
+	if err := r.reader.MarkAnalysisProcessing(ctx, id, lease.ID); err != nil {
 		article, getErr := r.reader.GetArticle(ctx, id)
 		if getErr == nil && article.AnalysisStatus == reader.AnalysisReady && article.ContentHash == prepared.ContentHash {
 			return r.jobs.Complete(ctx, lease.ID, lease.AttemptCount, lease.LeaseToken)
 		}
+		return r.fail(ctx, lease, "v1.analysis_processing_conflict", err)
+	}
+	// A scheduler retry of the same job must reinitialize this job's block
+	// lifecycle: paragraphs published or failed by the earlier attempt reset
+	// to pending so the retry republishes them through the normal paragraph
+	// transaction. Published materialization stays readable until replaced.
+	if err := r.reader.ResetBlocksForJob(ctx, id, lease.ID); err != nil {
 		return r.fail(ctx, lease, "v1.analysis_processing_conflict", err)
 	}
 
@@ -122,6 +129,12 @@ func (r *Runner) process(ctx context.Context, lease *jobs.Lease) error {
 	}
 	failRun := func(code string, cause error, failedBlock int, stderr string) error {
 		_ = r.history.UpdateProgress(ctx, run.ID, completedParagraphs, failedBlock)
+		if failedBlock >= 0 {
+			// The failing paragraph is durably marked failed under its own
+			// job; later paragraphs stay pending and untouched blocks retain
+			// their prior materialization or raw source.
+			_ = r.reader.FailBlockForJob(ctx, id, failedBlock, lease.ID, code)
+		}
 		historyErr := finishRun("failed", code, cause.Error(), stderr, failedBlock)
 		jobErr := r.failAnalysis(ctx, lease, id, code, cause)
 		var result error
@@ -147,109 +160,105 @@ func (r *Runner) process(ctx context.Context, lease *jobs.Lease) error {
 		return failRun(annotator.CodeUnavailable, errors.New("semantic annotator is unavailable"), -1, "")
 	}
 
-	var response semantics.Response
-	providerModel := payload.Model
-	if !payload.Fresh {
-		cached, cachedModel, hit, cacheErr := r.reader.CachedAnalysis(ctx, prepared, payload.Model, payload.Effort)
-		if cacheErr != nil {
-			return failRun("v1.analysis_cache_failure", cacheErr, -1, "")
+	var chunks []semantics.ChunkResult
+	prior := make([]semantics.NewSense, 0)
+	chunker, ok := r.provider.(annotator.ChunkSemanticAnnotator)
+	if !ok {
+		return failRun(annotator.CodeUnavailable, errors.New("semantic annotator does not support paragraph analysis"), -1, "")
+	}
+	for blockIndex := range prepared.Blocks {
+		// Every block transition and publication verifies the durable lease
+		// and the article's active job: a superseded runner cannot publish a
+		// late paragraph.
+		if err := r.verifyAnalysisLease(ctx, lease); err != nil {
+			_ = finishRun("failed", "v1.analysis_lease_lost", err.Error(), "", -1)
+			return wrapFailure("v1.analysis_lease_lost", err, -1)
 		}
-		if hit {
-			response, providerModel = cached, cachedModel
-			if providerModel == "" {
-				providerModel = payload.Model
+		if err := r.reader.MarkBlockProcessing(ctx, id, blockIndex, lease.ID); err != nil {
+			return failRun("v1.analysis_processing_conflict", err, blockIndex, "")
+		}
+		chunk, chunkErr := semantics.PrepareChunk(prepared, blockIndex, prior)
+		if chunkErr != nil {
+			return failRun("v1.analysis_prepare_failed", chunkErr, blockIndex, "")
+		}
+		var chunkResponse semantics.Response
+		cacheHit := false
+		if !payload.Fresh {
+			chunkResponse, cacheHit, chunkErr = r.reader.CachedChunk(ctx, chunk, payload.Model, payload.Effort)
+			if chunkErr != nil {
+				return failRun("v1.analysis_cache_failure", chunkErr, blockIndex, "")
 			}
-			completedParagraphs = len(prepared.Blocks)
-			if err := r.history.UpdateProgress(ctx, run.ID, completedParagraphs, -1); err != nil {
-				return failRun("v1.analysis_history_failed", err, -1, "")
+		}
+		if !cacheHit {
+			attempt, providerErr := r.analyzeChunkWithHeartbeat(ctx, lease, chunker, chunk, annotator.AnalysisOptions{Model: payload.Model, Effort: payload.Effort})
+			if attempt.ReportedModel != "" {
+				reportedModel = attempt.ReportedModel
 			}
+			if attempt.CLIVersion != "" {
+				_ = r.history.UpdateProvenance(ctx, run.ID, attempt.CLIVersion, reportedModel)
+			}
+			if err := r.appendTurnArtifacts(ctx, run.ID, attempt.Turns); err != nil {
+				return failRun("v1.analysis_history_failed", err, blockIndex, attempt.StderrExcerpt)
+			}
+			if providerErr != nil {
+				if errors.Is(providerErr, jobs.ErrLeaseLost) || errors.Is(providerErr, jobs.ErrLeaseExpired) {
+					_ = finishRun("failed", "v1.analysis_lease_lost", providerErr.Error(), attempt.StderrExcerpt, blockIndex)
+					return wrapFailure("v1.analysis_lease_lost", providerErr, blockIndex)
+				}
+				return failRun(annotator.CodeOf(providerErr), providerErr, blockIndex, attempt.StderrExcerpt)
+			}
+			if _, validationErr := semantics.ValidateChunkResponse(chunk, attempt.Response); validationErr != nil {
+				return failRun(annotator.CodeInvalidOutput, validationErr, blockIndex, attempt.StderrExcerpt)
+			}
+			chunkResponse = attempt.Response
+			if err := r.reader.SaveChunk(ctx, chunk, chunkResponse, providerID, payload.Model, payload.Effort, run.ID); err != nil {
+				return failRun("v1.analysis_cache_failure", err, blockIndex, attempt.StderrExcerpt)
+			}
+		}
+		// Namespace local refs, revalidate the exact namespaced chunk, and
+		// publish this paragraph immediately: later paragraphs never block it.
+		namespaced, namespaceErr := semantics.NamespaceChunkResponse(blockIndex, chunkResponse, prior)
+		if namespaceErr != nil {
+			return failRun(annotator.CodeInvalidOutput, namespaceErr, blockIndex, "")
+		}
+		namespacedValidated, validationErr := semantics.ValidateChunkResponse(chunk, namespaced)
+		if validationErr != nil {
+			return failRun(annotator.CodeInvalidOutput, validationErr, blockIndex, "")
+		}
+		if err := r.reader.PersistAnalysisChunk(ctx, id, blockIndex, lease.ID, run.ID, prepared, namespacedValidated, providerID, payload.Model, payload.Effort, chunk.PriorValidatedSenses); err != nil {
+			return failRun("v1.analysis_persist_failed", err, blockIndex, "")
+		}
+		// The audit receives the raw provider responses: MergeChunks performs
+		// its own namespacing. Storing the namespaced form here would prefix
+		// local refs twice (b0:b0:...) and fail the final validation.
+		chunks = append(chunks, semantics.ChunkResult{Chunk: chunk, Response: chunkResponse})
+		prior = append(prior, namespaced.NewSenses...)
+		completedParagraphs = blockIndex + 1
+		// Durable progress advances only after the paragraph transaction
+		// committed, so a crash can never over-report completed paragraphs.
+		if err := r.history.UpdateProgress(ctx, run.ID, completedParagraphs, -1); err != nil {
+			return failRun("v1.analysis_history_failed", err, blockIndex, "")
+		}
+		percent := completedParagraphs * 100 / len(prepared.Blocks)
+		if _, err := r.jobs.Heartbeat(ctx, lease.ID, lease.AttemptCount, lease.LeaseToken, percent); err != nil {
+			_ = finishRun("failed", "v1.analysis_lease_lost", err.Error(), "", blockIndex)
+			return wrapFailure("v1.analysis_lease_lost", err, blockIndex)
 		}
 	}
 
-	if response.Version == "" {
-		if chunker, ok := r.provider.(annotator.ChunkSemanticAnnotator); ok {
-			chunks := make([]semantics.ChunkResult, 0, len(prepared.Blocks))
-			prior := make([]semantics.NewSense, 0)
-			for blockIndex := range prepared.Blocks {
-				chunk, chunkErr := semantics.PrepareChunk(prepared, blockIndex, prior)
-				if chunkErr != nil {
-					return failRun("v1.analysis_prepare_failed", chunkErr, blockIndex, "")
-				}
-				var chunkResponse semantics.Response
-				cacheHit := false
-				if !payload.Fresh {
-					chunkResponse, cacheHit, chunkErr = r.reader.CachedChunk(ctx, chunk, payload.Model, payload.Effort)
-					if chunkErr != nil {
-						return failRun("v1.analysis_cache_failure", chunkErr, blockIndex, "")
-					}
-				}
-				if !cacheHit {
-					attempt, providerErr := r.analyzeChunkWithHeartbeat(ctx, lease, chunker, chunk, annotator.AnalysisOptions{Model: payload.Model, Effort: payload.Effort})
-					if attempt.ReportedModel != "" {
-						reportedModel = attempt.ReportedModel
-					}
-					if attempt.CLIVersion != "" {
-						_ = r.history.UpdateProvenance(ctx, run.ID, attempt.CLIVersion, reportedModel)
-					}
-					if err := r.appendTurnArtifacts(ctx, run.ID, attempt.Turns); err != nil {
-						return failRun("v1.analysis_history_failed", err, blockIndex, attempt.StderrExcerpt)
-					}
-					if providerErr != nil {
-						if errors.Is(providerErr, jobs.ErrLeaseLost) || errors.Is(providerErr, jobs.ErrLeaseExpired) {
-							_ = finishRun("failed", "v1.analysis_lease_lost", providerErr.Error(), attempt.StderrExcerpt, blockIndex)
-							return wrapFailure("v1.analysis_lease_lost", providerErr, blockIndex)
-						}
-						return failRun(annotator.CodeOf(providerErr), providerErr, blockIndex, attempt.StderrExcerpt)
-					}
-					if _, validationErr := semantics.ValidateChunkResponse(chunk, attempt.Response); validationErr != nil {
-						return failRun(annotator.CodeInvalidOutput, validationErr, blockIndex, attempt.StderrExcerpt)
-					}
-					chunkResponse = attempt.Response
-					if err := r.reader.SaveChunk(ctx, chunk, chunkResponse, providerID, payload.Model, payload.Effort, run.ID); err != nil {
-						return failRun("v1.analysis_cache_failure", err, blockIndex, attempt.StderrExcerpt)
-					}
-				}
-				chunks = append(chunks, semantics.ChunkResult{Chunk: chunk, Response: chunkResponse})
-				namespaced, namespaceErr := semantics.NamespaceChunkResponse(blockIndex, chunkResponse, prior)
-				if namespaceErr != nil {
-					return failRun(annotator.CodeInvalidOutput, namespaceErr, blockIndex, "")
-				}
-				prior = append(prior, namespaced.NewSenses...)
-				completedParagraphs = blockIndex + 1
-				if err := r.history.UpdateProgress(ctx, run.ID, completedParagraphs, -1); err != nil {
-					return failRun("v1.analysis_history_failed", err, blockIndex, "")
-				}
-			}
-			response, err = semantics.MergeChunks(prepared, chunks)
-			if err != nil {
-				return failRun(annotator.CodeInvalidOutput, err, completedParagraphs, "")
-			}
-		} else {
-			response, err = r.analyzeWithHeartbeat(ctx, lease, prepared)
-			if err != nil {
-				if errors.Is(err, jobs.ErrLeaseLost) || errors.Is(err, jobs.ErrLeaseExpired) {
-					_ = finishRun("failed", "v1.analysis_lease_lost", err.Error(), "", -1)
-					return wrapFailure("v1.analysis_lease_lost", err, -1)
-				}
-				return failRun(annotator.CodeOf(err), err, -1, "")
-			}
-			completedParagraphs = len(prepared.Blocks)
-			if err := r.history.UpdateProgress(ctx, run.ID, completedParagraphs, -1); err != nil {
-				return failRun("v1.analysis_history_failed", err, -1, "")
-			}
-		}
+	// The whole-response consistency audit is an invariant check over the
+	// accumulated validated chunks, not a publication gate: accepted
+	// paragraphs remain visible and later blocks keep their materialization
+	// or raw source if the audit unexpectedly fails.
+	if _, err := semantics.MergeChunks(prepared, chunks); err != nil {
+		return failRun(annotator.CodeInvalidOutput, err, completedParagraphs, "")
 	}
-
 	if err := r.verifyAnalysisLease(ctx, lease); err != nil {
 		_ = finishRun("failed", "v1.analysis_lease_lost", err.Error(), "", -1)
 		return wrapFailure("v1.analysis_lease_lost", err, -1)
 	}
-	validated, err := semantics.ValidateResponse(prepared, response)
-	if err != nil {
-		return failRun(annotator.CodeInvalidOutput, err, completedParagraphs, "")
-	}
-	if err := r.reader.PersistAnalysis(ctx, id, prepared, validated, providerID, providerModel, payload.Effort, payload.Model, reportedModel); err != nil {
-		return failRun("v1.analysis_persist_failed", err, completedParagraphs, "")
+	if err := r.reader.MarkAnalysisReady(ctx, id, lease.ID, payload.Model, payload.Effort); err != nil {
+		return failRun("v1.analysis_persist_failed", err, -1, "")
 	}
 	if err := finishRun("succeeded", "", "", "", -1); err != nil {
 		return wrapFailure("v1.analysis_history_failed", r.fail(ctx, lease, "v1.analysis_history_failed", err), -1)

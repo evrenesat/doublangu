@@ -198,6 +198,289 @@ func assertMigration006Schema(t *testing.T, db *DB) {
 	}
 }
 
+func assertMigration007Schema(t *testing.T, db *DB) {
+	t.Helper()
+	ctx := context.Background()
+	for _, name := range []string{
+		"article_construction_member", "reader_settings", "idx_construction_member_token",
+	} {
+		var count int
+		if err := db.QueryRow(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE name = ?", name).Scan(&count); err != nil {
+			t.Fatalf("find progressive-reader schema object %s: %v", name, err)
+		}
+		if count != 1 {
+			t.Errorf("progressive-reader schema object %s count = %d, want 1", name, count)
+		}
+	}
+	for _, column := range []string{"analysis_job_id", "sentence_revision"} {
+		var count int
+		if err := db.QueryRow(ctx, `SELECT COUNT(*) FROM pragma_table_info('article') WHERE name = ?`, column).Scan(&count); err != nil || count != 1 {
+			t.Errorf("article column %s count = %d err=%v, want 1", column, count, err)
+		}
+	}
+	for _, column := range []string{
+		"analysis_job_id", "analysis_status", "analysis_error_code",
+		"published_analysis_job_id", "published_analysis_run_id",
+		"published_analysis_revision", "published_analysis_model",
+		"published_analysis_effort", "published_at",
+	} {
+		var count int
+		if err := db.QueryRow(ctx, `SELECT COUNT(*) FROM pragma_table_info('article_block') WHERE name = ?`, column).Scan(&count); err != nil || count != 1 {
+			t.Errorf("article_block column %s count = %d err=%v, want 1", column, count, err)
+		}
+	}
+	// reader_settings must exist as a seeded singleton with hover enabled.
+	var count int
+	var pronounceOnHover int
+	var updatedAt string
+	if err := db.QueryRow(ctx, `SELECT COUNT(*), COALESCE(MAX(pronounce_on_hover), -1), COALESCE(MAX(updated_at), '') FROM reader_settings`).Scan(&count, &pronounceOnHover, &updatedAt); err != nil {
+		t.Fatalf("read reader_settings seed: %v", err)
+	}
+	if count != 1 || pronounceOnHover != 1 || updatedAt == "" {
+		t.Errorf("reader_settings seed = count %d hover %d updated %q", count, pronounceOnHover, updatedAt)
+	}
+}
+
+// TestMigration007_ProgressiveReaderSchema verifies the new tables, columns,
+// constraints, and the seeded owner preference on a clean database.
+func TestMigration007_ProgressiveReaderSchema(t *testing.T) {
+	db, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	assertMigration007Schema(t, db)
+
+	// reader_settings is a strict singleton whose value is constrained.
+	if _, err := db.Exec(ctx, `INSERT INTO reader_settings (id, pronounce_on_hover, updated_at) VALUES (2, 1, 'now')`); err == nil {
+		t.Fatal("second reader_settings row unexpectedly accepted")
+	}
+	if _, err := db.Exec(ctx, `UPDATE reader_settings SET pronounce_on_hover = 7`); err == nil {
+		t.Fatal("out-of-range pronounce_on_hover unexpectedly accepted")
+	}
+
+	// article_block analysis_status CHECK accepts the documented vocabulary.
+	if _, err := db.Exec(ctx, `INSERT INTO article (id, title, source_language, target_language, enrichment_status) VALUES ('01J00000000000000000000000', 'Prog', 'nl', 'en', 'draft')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO article_block (id, article_id, block_index, kind, source_text) VALUES ('01J00000000000000000000001', '01J00000000000000000000000', 0, 'paragraph', 'Een zin.')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `UPDATE article_block SET analysis_status = 'nonsense'`); err == nil {
+		t.Fatal("invalid analysis_status unexpectedly accepted")
+	}
+
+	// Construction membership rows require distinct ordered members that
+	// cascade with their occurrences.
+	insertOccurrence := func(id, blockID string, role string) {
+		t.Helper()
+		if _, err := db.Exec(ctx, `INSERT INTO article_occurrence (id, article_block_id, kind, role, shadow_policy) VALUES (?, ?, 'word', ?, 'none')`, id, blockID, role); err != nil {
+			t.Fatalf("insert occurrence %s: %v", id, err)
+		}
+	}
+	insertOccurrence("01J00000000000000000000010", "01J00000000000000000000001", "token")
+	insertOccurrence("01J00000000000000000000011", "01J00000000000000000000001", "token")
+	insertOccurrence("01J00000000000000000000012", "01J00000000000000000000001", "discontinuous_construction")
+	if _, err := db.Exec(ctx, `INSERT INTO article_construction_member (construction_occurrence_id, token_occurrence_id, member_index) VALUES ('01J00000000000000000000012', '01J00000000000000000000010', 0), ('01J00000000000000000000012', '01J00000000000000000000011', 1)`); err != nil {
+		t.Fatalf("insert construction members: %v", err)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO article_construction_member (construction_occurrence_id, token_occurrence_id, member_index) VALUES ('01J00000000000000000000012', '01J00000000000000000000011', 2)`); err == nil {
+		t.Fatal("duplicate member token unexpectedly accepted")
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO article_construction_member (construction_occurrence_id, token_occurrence_id, member_index) VALUES ('01J00000000000000000000012', '01J00000000000000000000011', 1)`); err == nil {
+		t.Fatal("duplicate member order unexpectedly accepted")
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO article_construction_member (construction_occurrence_id, token_occurrence_id, member_index) VALUES ('01J00000000000000000000012', '01J00000000000000000000012', 3)`); err == nil {
+		t.Fatal("self-member construction row unexpectedly accepted")
+	}
+	if _, err := db.Exec(ctx, `DELETE FROM article_occurrence WHERE id = '01J00000000000000000000010'`); err != nil {
+		t.Fatal(err)
+	}
+	var members int
+	if err := db.QueryRow(ctx, `SELECT COUNT(*) FROM article_construction_member WHERE token_occurrence_id = '01J00000000000000000000010'`).Scan(&members); err != nil {
+		t.Fatal(err)
+	}
+	if members != 0 {
+		t.Errorf("member row survived token occurrence delete: %d", members)
+	}
+}
+
+// TestMigration007_UpgradeBackfill verifies the deterministic provider-free
+// backfill of the progressive-reader columns from a 006 fixture.
+func TestMigration007_UpgradeBackfill(t *testing.T) {
+	conn, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn.SetMaxOpenConns(1)
+	if _, err := conn.Exec("PRAGMA foreign_keys = ON"); err != nil {
+		conn.Close()
+		t.Fatal(err)
+	}
+	db := &DB{conn: conn}
+	t.Cleanup(func() { _ = db.Close() })
+
+	through006 := fstest.MapFS{}
+	for _, name := range []string{
+		"001_initial.sql", "002_library.sql", "003_media.sql", "004_reader_mvp.sql",
+		"005_audible_reader.sql", "006_analysis_reliability.sql",
+	} {
+		through006["migrations/"+name] = &fstest.MapFile{Data: checkedInMigration(t, name)}
+	}
+	if err := migrateWithSource(db, through006); err != nil {
+		t.Fatalf("apply migrations through 006: %v", err)
+	}
+	ctx := context.Background()
+
+	insertArticle := func(id, status, revision, model, effort string) {
+		t.Helper()
+		if _, err := db.Exec(ctx, `INSERT INTO article (id, title, source_language, target_language, enrichment_status, content_hash, analysis_status, analysis_revision, analysis_error_code, analysis_model, analysis_effort, narration_status) VALUES (?, 'T', 'nl', 'en', 'ready', 'hash', ?, ?, '', ?, ?, 'not_requested')`, id, status, revision, model, effort); err != nil {
+			t.Fatalf("insert article %s: %v", id, err)
+		}
+	}
+	insertBlock := func(blockID, articleID string, index int) {
+		t.Helper()
+		if _, err := db.Exec(ctx, `INSERT INTO article_block (id, article_id, block_index, kind, source_text) VALUES (?, ?, ?, 'paragraph', 'De bank staat.')`, blockID, articleID, index); err != nil {
+			t.Fatalf("insert block %s: %v", blockID, err)
+		}
+	}
+	insertSentence := func(sentenceID, blockID string, index int) {
+		t.Helper()
+		if _, err := db.Exec(ctx, `INSERT INTO article_sentence (id, article_block_id, sentence_index, start_utf16, end_utf16, source_text, source_hash) VALUES (?, ?, ?, 0, 15, 'De bank staat.', 'sentence-hash')`, sentenceID, blockID, index); err != nil {
+			t.Fatalf("insert sentence %s: %v", sentenceID, err)
+		}
+	}
+	insertOccurrence := func(occurrenceID, blockID string) {
+		t.Helper()
+		if _, err := db.Exec(ctx, `INSERT INTO article_occurrence (id, article_block_id, kind, role, shadow_policy, shadow_text) VALUES (?, ?, 'word', 'token', 'token', 'the bank')`, occurrenceID, blockID); err != nil {
+			t.Fatalf("insert occurrence %s: %v", occurrenceID, err)
+		}
+	}
+
+	// Article A is ready and has accepted semantics on block 0 only.
+	insertArticle("01J000000000000000000000A0", "ready", "reader.analysis.v2", "legacy-model", "low")
+	insertBlock("01J000000000000000000000A1", "01J000000000000000000000A0", 0)
+	insertBlock("01J000000000000000000000A2", "01J000000000000000000000A0", 1)
+	insertSentence("01J000000000000000000000A3", "01J000000000000000000000A1", 0)
+	insertOccurrence("01J000000000000000000000A4", "01J000000000000000000000A1")
+
+	// Article B failed before any paragraph was accepted.
+	insertArticle("01J000000000000000000000B0", "failed", "", "", "")
+	insertBlock("01J000000000000000000000B1", "01J000000000000000000000B0", 0)
+	insertBlock("01J000000000000000000000B2", "01J000000000000000000000B0", 1)
+	insertBlock("01J000000000000000000000B3", "01J000000000000000000000B0", 2)
+
+	// Article C has a sentence row but no accepted semantics yet.
+	insertArticle("01J000000000000000000000C0", "needs_analysis", "", "", "")
+	insertBlock("01J000000000000000000000C1", "01J000000000000000000000C0", 0)
+	insertSentence("01J000000000000000000000C2", "01J000000000000000000000C1", 0)
+
+	// Article D failed after a reanalysis, but every block still holds an
+	// older accepted materialization; no unresolved block exists.
+	insertArticle("01J000000000000000000000D0", "failed", "reader.analysis.v2", "legacy-model", "medium")
+	insertBlock("01J000000000000000000000D1", "01J000000000000000000000D0", 0)
+	insertOccurrence("01J000000000000000000000D2", "01J000000000000000000000D1")
+
+	if err := migrateWithSource(db, migrationFS); err != nil {
+		t.Fatalf("upgrade through migration 007: %v", err)
+	}
+	assertMigration007Schema(t, db)
+
+	row := func(query string, args ...any) map[string]any {
+		t.Helper()
+		result := map[string]any{}
+		rows, err := db.Query(ctx, query, args...)
+		if err != nil {
+			t.Fatalf("query %q: %v", query, err)
+		}
+		defer rows.Close()
+		columns, _ := rows.Columns()
+		values := make([]any, len(columns))
+		pointers := make([]any, len(columns))
+		for index := range values {
+			pointers[index] = &values[index]
+		}
+		if !rows.Next() {
+			t.Fatalf("query %q returned no rows", query)
+		}
+		if err := rows.Scan(pointers...); err != nil {
+			t.Fatalf("scan %q: %v", query, err)
+		}
+		for index, column := range columns {
+			if text, ok := values[index].(string); ok {
+				result[column] = text
+			} else if number, ok := values[index].(int64); ok {
+				result[column] = int(number)
+			}
+		}
+		return result
+	}
+
+	// Rule 1: accepted blocks under a ready article keep their materialization
+	// published with article provenance copied.
+	blockA0 := row(`SELECT analysis_status, published_analysis_job_id, published_analysis_run_id, published_analysis_revision, published_analysis_model, published_analysis_effort, analysis_job_id FROM article_block WHERE id = '01J000000000000000000000A1'`)
+	if blockA0["analysis_status"] != "ready" || blockA0["published_analysis_revision"] != "reader.analysis.v2" ||
+		blockA0["published_analysis_model"] != "legacy-model" || blockA0["published_analysis_effort"] != "low" ||
+		blockA0["published_analysis_job_id"] != "" || blockA0["published_analysis_run_id"] != "" ||
+		blockA0["analysis_job_id"] != "" {
+		t.Errorf("ready block provenance = %#v", blockA0)
+	}
+
+	// Rule 2: unresolved blocks stay pending; under a failed article the first
+	// unresolved block is failed and later blocks remain pending.
+	blockA1 := row(`SELECT analysis_status FROM article_block WHERE id = '01J000000000000000000000A2'`)
+	if blockA1["analysis_status"] != "pending" {
+		t.Errorf("unresolved block under ready article = %#v, want pending", blockA1)
+	}
+	blockB0 := row(`SELECT analysis_status FROM article_block WHERE id = '01J000000000000000000000B1'`)
+	blockB1 := row(`SELECT analysis_status FROM article_block WHERE id = '01J000000000000000000000B2'`)
+	blockB2 := row(`SELECT analysis_status FROM article_block WHERE id = '01J000000000000000000000B3'`)
+	if blockB0["analysis_status"] != "failed" || blockB1["analysis_status"] != "pending" || blockB2["analysis_status"] != "pending" {
+		t.Errorf("failed-article block states = %#v %#v %#v", blockB0, blockB1, blockB2)
+	}
+
+	// Rule 3: existing sentence rows are marked legacy; articles without rows
+	// stay blank for lazy deterministic creation.
+	articleA := row(`SELECT sentence_revision FROM article WHERE id = '01J000000000000000000000A0'`)
+	articleB := row(`SELECT sentence_revision FROM article WHERE id = '01J000000000000000000000B0'`)
+	articleC := row(`SELECT sentence_revision FROM article WHERE id = '01J000000000000000000000C0'`)
+	if articleA["sentence_revision"] != "legacy.analysis" || articleC["sentence_revision"] != "legacy.analysis" {
+		t.Errorf("legacy sentence revisions = A %#v C %#v", articleA, articleC)
+	}
+	if articleB["sentence_revision"] != "" {
+		t.Errorf("sentence-less article revision = %#v, want empty", articleB)
+	}
+
+	// No semantic or sentence row is lost by the backfill.
+	var occurrences, sentences int
+	if err := db.QueryRow(ctx, `SELECT COUNT(*) FROM article_occurrence`).Scan(&occurrences); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(ctx, `SELECT COUNT(*) FROM article_sentence`).Scan(&sentences); err != nil {
+		t.Fatal(err)
+	}
+	if occurrences != 2 || sentences != 2 {
+		t.Errorf("row preservation = occurrences %d sentences %d", occurrences, sentences)
+	}
+
+	// Failed articles whose blocks all still carry accepted semantics keep
+	// every block readable without a failed marker: article D.
+	blockD0 := row(`SELECT analysis_status FROM article_block WHERE id = '01J000000000000000000000D1'`)
+	if blockD0["analysis_status"] != "ready" {
+		t.Errorf("failed article with accepted semantics = %#v, want ready", blockD0)
+	}
+
+	// A second migration pass must be a no-op and leave every state intact.
+	if err := migrateWithSource(db, migrationFS); err != nil {
+		t.Fatalf("second migration pass failed: %v", err)
+	}
+	blockA0Again := row(`SELECT analysis_status FROM article_block WHERE id = '01J000000000000000000000A1'`)
+	if blockA0Again["analysis_status"] != "ready" {
+		t.Errorf("ready block changed after no-op migration pass = %#v", blockA0Again)
+	}
+}
+
 func TestMigration004ReaderConstraintsAndCascades(t *testing.T) {
 	db, err := OpenTest()
 	if err != nil {
@@ -336,8 +619,8 @@ func TestMigrationVersionRecorded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("version query: %v", err)
 	}
-	if version != 6 {
-		t.Errorf("expected version 6, got %d", version)
+	if version != 7 {
+		t.Errorf("expected version 7, got %d", version)
 	}
 }
 
@@ -361,8 +644,8 @@ func TestMigrationFreshInMemoryAlwaysApplies(t *testing.T) {
 		t.Fatalf("version count: %v", err)
 	}
 	// Each in-memory OpenTest starts fresh — all migrations run once per open.
-	if count != 6 {
-		t.Errorf("expected 6 migration records, got %d", count)
+	if count != 7 {
+		t.Errorf("expected 7 migration records, got %d", count)
 	}
 }
 
@@ -548,8 +831,8 @@ func TestFileBasedDBDoesNotReapplyMigrations(t *testing.T) {
 	if err := db2.QueryRow(context.Background(), "SELECT COUNT(*) FROM schema_version").Scan(&count); err != nil {
 		t.Fatalf("count: %v", err)
 	}
-	if count != 6 {
-		t.Errorf("expected 6 migration records, got %d (migrations should not reapply)", count)
+	if count != 7 {
+		t.Errorf("expected 7 migration records, got %d (migrations should not reapply)", count)
 	}
 }
 
@@ -854,7 +1137,8 @@ func TestMigration002_UpgradeFromV1ToV2(t *testing.T) {
 	assertMigration004Schema(t, db)
 	assertMigration005Schema(t, db)
 	assertMigration006Schema(t, db)
-	assertMigrationVersion(t, db, 6)
+	assertMigration007Schema(t, db)
+	assertMigrationVersion(t, db, 7)
 }
 
 func TestMetadataStoreCRUDOnCleanAndUpgradedDatabases(t *testing.T) {
@@ -1036,7 +1320,8 @@ func TestMigration002_RollbackLeavesNoLibraryTables(t *testing.T) {
 	assertMigration004Schema(t, db)
 	assertMigration005Schema(t, db)
 	assertMigration006Schema(t, db)
-	assertMigrationVersion(t, db, 6)
+	assertMigration007Schema(t, db)
+	assertMigrationVersion(t, db, 7)
 }
 
 func TestFileDatabaseUsesWALForeignKeysBusyTimeoutAndCurrentVersion(t *testing.T) {
@@ -1060,7 +1345,77 @@ func TestFileDatabaseUsesWALForeignKeysBusyTimeoutAndCurrentVersion(t *testing.T
 	if err := db.QueryRow(ctx, "SELECT MAX(version) FROM schema_version").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if journal != "wal" || foreignKeys != 1 || busyTimeout != 5000 || version != 6 {
+	if journal != "wal" || foreignKeys != 1 || busyTimeout != 5000 || version != 7 {
 		t.Fatalf("journal=%q foreign_keys=%d busy_timeout=%d version=%d", journal, foreignKeys, busyTimeout, version)
+	}
+}
+
+// TestMigration007_CancelsIncompatibleActiveAnalysisJobs proves that an
+// upgrade with in-flight or queued v2 analysis jobs cancels them and moves
+// their articles to the recoverable failed state without invoking a provider.
+func TestMigration007_CancelsIncompatibleActiveAnalysisJobs(t *testing.T) {
+	conn, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn.SetMaxOpenConns(1)
+	if _, err := conn.Exec("PRAGMA foreign_keys = ON"); err != nil {
+		conn.Close()
+		t.Fatal(err)
+	}
+	db := &DB{conn: conn}
+	t.Cleanup(func() { _ = db.Close() })
+
+	through006 := fstest.MapFS{}
+	for _, name := range []string{
+		"001_initial.sql", "002_library.sql", "003_media.sql", "004_reader_mvp.sql",
+		"005_audible_reader.sql", "006_analysis_reliability.sql",
+	} {
+		through006["migrations/"+name] = &fstest.MapFile{Data: checkedInMigration(t, name)}
+	}
+	if err := migrateWithSource(db, through006); err != nil {
+		t.Fatalf("apply migrations through 006: %v", err)
+	}
+	ctx := context.Background()
+	insertArticle := func(id, status string) {
+		t.Helper()
+		if _, err := db.Exec(ctx, `INSERT INTO article (id, title, source_language, target_language, enrichment_status, content_hash, analysis_status, narration_status) VALUES (?, 'T', 'nl', 'en', 'ready', 'hash', ?, 'not_requested')`, id, status); err != nil {
+			t.Fatalf("insert article %s: %v", id, err)
+		}
+	}
+	insertJob := func(jobID, articleID, state string) {
+		t.Helper()
+		if _, err := db.Exec(ctx, `INSERT INTO job (id, job_type, execution_target, owner_type, owner_id, idempotency_key, input_hash, payload_json, state) VALUES (?, 'reader.analysis.v2', 'server', 'article', ?, ?, 'hash', '{"contract_version":"reader.analysis.v2"}', ?)`, jobID, articleID, jobID, state); err != nil {
+			t.Fatalf("insert job %s: %v", jobID, err)
+		}
+	}
+	insertArticle("01J000000000000000000000E0", "queued")
+	insertJob("01J000000000000000000000E1", "01J000000000000000000000E0", "queued")
+	insertArticle("01J000000000000000000000E2", "processing")
+	insertJob("01J000000000000000000000E3", "01J000000000000000000000E2", "leased")
+
+	if err := migrateWithSource(db, migrationFS); err != nil {
+		t.Fatalf("upgrade through migration 007: %v", err)
+	}
+	var canceled int
+	if err := db.QueryRow(ctx, `SELECT COUNT(*) FROM job WHERE state = 'canceled' AND error_code = 'v1.analysis_contract_upgraded'`).Scan(&canceled); err != nil {
+		t.Fatal(err)
+	}
+	if canceled != 2 {
+		t.Errorf("canceled v2 jobs = %d, want 2", canceled)
+	}
+	var failed int
+	if err := db.QueryRow(ctx, `SELECT COUNT(*) FROM article WHERE analysis_status = 'failed' AND analysis_error_code = 'v1.analysis_contract_upgraded'`).Scan(&failed); err != nil {
+		t.Fatal(err)
+	}
+	if failed != 2 {
+		t.Errorf("transitioned articles = %d, want 2", failed)
+	}
+	var active int
+	if err := db.QueryRow(ctx, `SELECT COUNT(*) FROM job WHERE job_type = 'reader.analysis.v2' AND state IN ('queued', 'leased', 'running')`).Scan(&active); err != nil {
+		t.Fatal(err)
+	}
+	if active != 0 {
+		t.Errorf("active v2 jobs after migration = %d", active)
 	}
 }

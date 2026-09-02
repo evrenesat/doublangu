@@ -428,3 +428,34 @@ Checkpoint 10 will persist these validated canonical metadata values; Checkpoint
 
 The migration runner applies it transactionally after 001_initial; a failing
 migration rollback leaves no schema changes and no version record.
+
+## Progressive publication, source sentences, and reader preference (007)
+
+Migration 007 adds `article.analysis_job_id`, `article.sentence_revision`, the
+per-block analysis lifecycle (`analysis_status`, `analysis_job_id`,
+`analysis_error_code`, `published_analysis_*`, `published_at`), exact
+`article_construction_member` rows, and the seeded `reader_settings` singleton.
+Backfill is deterministic and provider-free: accepted materialization stays
+published, legacy sentence rows are marked `legacy.analysis`, and no
+membership is guessed from v2 spans.
+
+Sentence rows are source-owned: they are created deterministically with the
+article (`source-sentence.v1`) or lazily for legacy articles, and semantic
+reanalysis never deletes, renumbers, or replaces them. Contract `reader.analysis.v3`
+responses contain no sentences; prepared chunks carry stable anchors that are
+also part of the cache identity, so v2 caches never satisfy v3 work.
+
+The runner publishes each validated or cache-hit paragraph with
+`reader.PersistAnalysisChunk` in its own transaction (guarded by the article
+content hash, active job id, and block job id), advances `analysis_run`
+completion and the durable job percentage only after commit, and then runs the
+whole-response consistency audit as a non-gating invariant check. Narration is
+queued from source sentences at creation; lexical pronunciation is queued per
+published paragraph. Speech helpers are split into
+`QueueArticleNarrationTx`, `QueueBlockPronunciationsTx`, and the
+`QueueArticleAudioTx` compatibility wrapper.
+
+Display state derives at load: effective subtitle text falls back to the sense
+translation, suppression reasons (`none`, `special_token`,
+`contiguous_group_member`) explain why an unlearned occurrence is not shown,
+and construction spans come from maximal adjacent member runs.

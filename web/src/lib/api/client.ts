@@ -32,6 +32,8 @@ export type AnalysisTurn = components['schemas']['AnalysisTurn'];
 export type AnalysisRunSummary = components['schemas']['AnalysisRunSummary'];
 export type AnalysisRun = components['schemas']['AnalysisRun'];
 export type AnalysisRunsPage = components['schemas']['AnalysisRunsPage'];
+export type ReaderSettings = components['schemas']['ReaderSettings'];
+export type ReaderSettingsInput = components['schemas']['ReaderSettingsInput'];
 export type NarrationStatus = components['schemas']['NarrationStatus'];
 export type SemanticLearningState = components['schemas']['SemanticLearningState'];
 export type SemanticLearningStateInput = components['schemas']['SemanticLearningStateInput'];
@@ -269,6 +271,14 @@ export async function getAnalysisModels(refresh = false): Promise<AnalysisModels
 
 export async function getAnalysisSettings(): Promise<AnalysisSettings> {
 	return apiFetch('/api/v1/analysis/settings');
+}
+
+export async function getReaderSettings(): Promise<ReaderSettings> {
+	return apiFetch('/api/v1/reader/settings');
+}
+
+export async function saveReaderSettings(data: ReaderSettingsInput): Promise<ReaderSettings> {
+	return apiFetch('/api/v1/reader/settings', { method: 'PUT', body: JSON.stringify(data), csrf: true });
 }
 
 export async function saveAnalysisSettings(data: AnalysisSettingsInput): Promise<AnalysisSettings> {

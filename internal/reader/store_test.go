@@ -142,7 +142,11 @@ func TestStoreRecoveryFinalizesInterruptedAnalysisRunAndPreservesProgress(t *tes
 	if err := articles.CreateArticle(ctx, &article); err != nil {
 		t.Fatal(err)
 	}
-	if err := articles.MarkAnalysisProcessing(ctx, article.ID); err != nil {
+	jobID := library.NewULID()
+	if _, err := db.Exec(ctx, `UPDATE article SET analysis_status = 'queued', analysis_job_id = ? WHERE id = ?`, jobID.String(), article.ID.String()); err != nil {
+		t.Fatal(err)
+	}
+	if err := articles.MarkAnalysisProcessing(ctx, article.ID, jobID); err != nil {
 		t.Fatal(err)
 	}
 	runID := library.NewULID()

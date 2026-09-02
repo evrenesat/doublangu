@@ -298,6 +298,39 @@ paths:
         "503": { $ref: "#/components/responses/Unavailable" }
         "405": { $ref: "#/components/responses/MethodNotAllowed" }
 
+  /api/v1/reader/settings:
+    get:
+      summary: Get the owner-wide reader preference
+      security: [{ sessionCookie: [] }]
+      responses:
+        "200":
+          description: Current owner reader preference.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReaderSettings" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500": { $ref: "#/components/responses/Internal" }
+        "405": { $ref: "#/components/responses/MethodNotAllowed" }
+    put:
+      summary: Save the owner-wide reader preference
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReaderSettingsInput" }
+      responses:
+        "200":
+          description: Saved owner reader preference.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReaderSettings" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/Internal" }
+        "405": { $ref: "#/components/responses/MethodNotAllowed" }
+
   /api/v1/analysis/runs:
     get:
       summary: List retained owner-visible analysis runs
@@ -2236,8 +2269,9 @@ components:
     ArticleOccurrence:
       type: object
       required: [id, article_block_id, article_sentence_id, semantic_sense_id, kind, role,
-        shadow_policy, shadow_text, canonical_pronunciation_text, context_pronunciation_key,
-        confidence_milli, sense, learning_state, show_shadow, pronunciation, spans]
+        shadow_policy, shadow_text, subtitle_suppression_reason,
+        canonical_pronunciation_text, context_pronunciation_key,
+        confidence_milli, sense, learning_state, show_shadow, member_occurrence_ids, pronunciation, spans]
       properties:
         id: { $ref: "#/components/schemas/ULID" }
         article_block_id: { $ref: "#/components/schemas/ULID" }
@@ -2247,12 +2281,17 @@ components:
         role: { $ref: "#/components/schemas/OccurrenceRole" }
         shadow_policy: { $ref: "#/components/schemas/ShadowPolicy" }
         shadow_text: { type: string }
+        subtitle_suppression_reason: { type: string, enum: [none, special_token, contiguous_group_member] }
         canonical_pronunciation_text: { type: string }
         context_pronunciation_key: { type: string }
         confidence_milli: { type: integer, minimum: 0, maximum: 1000 }
         sense: { nullable: true, allOf: [{ $ref: "#/components/schemas/SemanticSense" }] }
         learning_state: { nullable: true, allOf: [{ $ref: "#/components/schemas/SemanticLearningState" }] }
         show_shadow: { type: boolean }
+        member_occurrence_ids:
+          type: array
+          items: { $ref: "#/components/schemas/ULID" }
+          description: Exact ordered lexical member occurrence ids for construction occurrences; empty for token occurrences and legacy v2 rows.
         pronunciation: { nullable: true, allOf: [{ $ref: "#/components/schemas/AudioRef" }] }
         spans: { type: array, minItems: 1, items: { $ref: "#/components/schemas/ArticleOccurrenceSpan" } }
 
@@ -2265,6 +2304,14 @@ components:
         block_index: { type: integer, minimum: 0 }
         kind: { type: string, enum: [paragraph] }
         source_text: { type: string, minLength: 1 }
+        analysis_status: { type: string, enum: [pending, processing, ready, failed] }
+        analysis_error_code: { type: string }
+        has_analysis: { type: boolean }
+        analysis_is_current: { type: boolean }
+        published_analysis_revision: { type: string }
+        published_analysis_model: { type: string }
+        published_analysis_effort: { type: string }
+        published_at: { type: string }
         annotations:
           type: array
           items: { $ref: "#/components/schemas/ArticleAnnotation" }
@@ -2279,7 +2326,8 @@ components:
       type: object
       required: [id, title, source_language, target_language, enrichment_status,
         enrichment_error_code, created_at, updated_at, content_hash, analysis_status,
-        analysis_error_code, analysis_model, analysis_effort, narration_status, narration_error_code]
+        analysis_error_code, analysis_model, analysis_effort, analysis_progress,
+        narration_status, narration_error_code]
       properties:
         id: { $ref: "#/components/schemas/ULID" }
         title: { type: string }
@@ -2296,6 +2344,7 @@ components:
         analysis_effort: { type: string }
         narration_status: { $ref: "#/components/schemas/NarrationStatus" }
         narration_error_code: { type: string }
+        analysis_progress: { $ref: "#/components/schemas/AnalysisProgress" }
 
     Narration:
       type: object
@@ -2334,7 +2383,8 @@ components:
       type: object
       required: [id, title, source_language, target_language, enrichment_status,
         enrichment_error_code, created_at, updated_at, blocks, content_hash,
-        analysis_status, analysis_revision, analysis_error_code, analysis_model, analysis_effort, narration_status,
+        analysis_status, analysis_revision, analysis_error_code, analysis_model, analysis_effort,
+        analysis_progress, narration_status,
         narration_error_code, sentences, occurrences, narration]
       properties:
         id: { $ref: "#/components/schemas/ULID" }
@@ -2357,9 +2407,34 @@ components:
         analysis_effort: { type: string }
         narration_status: { $ref: "#/components/schemas/NarrationStatus" }
         narration_error_code: { type: string }
+        analysis_progress: { $ref: "#/components/schemas/AnalysisProgress" }
         sentences: { type: array, items: { $ref: "#/components/schemas/ArticleSentence" } }
         occurrences: { type: array, items: { $ref: "#/components/schemas/ArticleOccurrence" } }
         narration: { $ref: "#/components/schemas/NarrationSummary" }
+
+    AnalysisProgress:
+      type: object
+      required: [total_paragraphs, completed_paragraphs, current_block_index, failed_block_index]
+      properties:
+        total_paragraphs: { type: integer, minimum: 0 }
+        completed_paragraphs: { type: integer, minimum: 0 }
+        current_block_index: { type: integer, minimum: -1 }
+        failed_block_index: { type: integer, minimum: -1 }
+
+    ReaderSettings:
+      type: object
+      additionalProperties: false
+      required: [pronounce_on_hover, updated_at]
+      properties:
+        pronounce_on_hover: { type: boolean }
+        updated_at: { type: string }
+
+    ReaderSettingsInput:
+      type: object
+      additionalProperties: false
+      required: [pronounce_on_hover]
+      properties:
+        pronounce_on_hover: { type: boolean }
 
     NarrationSummary:
       type: object

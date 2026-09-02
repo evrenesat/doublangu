@@ -672,3 +672,101 @@ All verification commands pass:
   failures; the new mixed-digit lease and offline-recovery-gate tests pass.
 - Focused Go speech/worker tests pass, including the regional Dutch queue and
   lease test. Formatting and `git diff --check` pass.
+
+## 2026-09-02 — Progressive reader fixes (implementation in progress)
+
+Implementing plans/progressive-reader-fixes-handoff.md on top of b8cbaf2:
+
+- Migration 007 adds per-block analysis lifecycle and published provenance
+  columns, `article_construction_member`, and the seeded owner
+  `reader_settings` singleton; deterministic provider-free backfill preserves
+  accepted materialization and legacy sentence rows.
+- Source sentences are deterministic and server-owned: created with the
+  article (`source-sentence.v1`), preserved across reanalysis, lazily created
+  for legacy articles, and never rewritten by paragraph publication.
+- Contract v3 removes provider-authored sentences; prepared chunks carry
+  stable sentence anchors; cache identities include anchors so older rows
+  never satisfy v3 work.
+- The runner publishes each validated/cache-hit paragraph through
+  `PersistAnalysisChunk` (lease- and job-guarded), advances run/job progress
+  only after each commit, then runs a non-gating whole-response audit.
+  Paragraph failures are durable per block; startup recovery marks interrupted
+  blocks failed.
+- Exact construction membership (`member_occurrence_ids`) with spans derived
+  from maximal adjacent member runs; effective subtitles fall back to the
+  sense translation; suppression reasons are `none`, `special_token`, or
+  `contiguous_group_member`.
+- Narration is queued at article creation before analysis; pronunciations are
+  queued per committed paragraph. The narration endpoint no longer waits for
+  analysis readiness.
+- Reader UI: in-flow interlinear subtitles (no absolute overlay), state-aware
+  polling (1s processing / 2s queued / 8s on failure), compact ARIA progress
+  surface, per-paragraph lifecycle notes, and exact-member construction runs.
+- Owner-wide pronounce-on-hover preference (server singleton + local mirror)
+  with optimistic save/rollback, Settings control, and activation-blocked
+  hint without disabling the preference.
+
+### Verification recorded during implementation (2026-09-02)
+
+- Focused Go suites (semantics, annotator, analysis, reader, speech, httpapi,
+  store, jobs, cmd/doublangu-server) pass with `-count=1`; race tests pass for
+  semantics, annotator, analysis, reader, speech, store.
+- Migration 007 schema/backfill tests and the deterministic segmenter suite
+  pass; reader early-narration, block-scoped publish, superseded-job, and
+  display-invariant tests pass; runner progressive publication acceptance
+  tests (gated provider, failed reanalysis preservation, cache reuse) pass.
+- OpenAPI validates; the generated client is reproducible (identical sha256
+  across two generations); svelte-check reports 0 errors / 0 warnings; 76 web
+  unit tests pass; 13 reader E2E tests pass (reader.spec, reader-progressive,
+  reader-preference), including paragraph-by-paragraph reveal without reload,
+  non-intersecting subtitle boxes, ARIA progress advancement, preference
+  default/persist/rollback, and the settings-page control.
+- `git diff --check` passes. Node v20.19.0 was fetched into /tmp for web
+  tooling (the sandbox node v18 cannot run rolldown/svelte-check).
+
+### Code review fixes (2026-09-02)
+
+- Automatic scheduler retries now reinitialize the same job's block lifecycle
+  (`ResetBlocksForJob` after the article transitions to processing) so a retry
+  republishes earlier published paragraphs from the exact chunk cache instead
+  of stopping on a `failed`/`ready` block; a new test claims the automatically
+  requeued job without calling `QueueAnalysis` and proves published material
+  stays readable and cache-hit paragraph one is not re-provided.
+- `PersistAnalysisChunk` materializes `chunk.PriorValidatedSenses` through the
+  idempotent `EnsureSenseTx` so a later paragraph referencing an earlier
+  paragraph's namespaced sense reuses the durable sense row; regression test
+  covers a two-paragraph run referencing `b0:bank-sofa`.
+- The runner's final consistency audit now receives the raw chunk responses
+  (`MergeChunks` performs its own namespacing); the earlier namespaced form
+  could double-prefix local refs (`b0:b0:...`) and fail the audit after
+  successful publication.
+- `PUT /api/v1/reader/settings` rejects an empty payload (`pronounce_on_hover`
+  decodes into a pointer; missing field returns 400 and the preference is
+  untouched) with a handler test.
+- In-flow subtitle units no longer use `min-width: max-content`, so long group
+  units wrap at source spaces within the paragraph; an E2E sweep at 320, 768,
+  and 1440 CSS pixels proves no intersecting subtitle boxes and no horizontal
+  overflow, including a deliberately long construction subtitle.
+
+Verification: nine focused Go packages pass; race suites pass; svelte-check
+0 errors/0 warnings; 76 web unit tests pass; 14 reader E2E tests pass.
+
+### Second code review pass (2026-09-02)
+
+- `MarkAnalysisProcessing` is now job-scoped: the processing transition
+  requires `article.analysis_job_id = <job id>`, so a stale job superseded by
+  a forced reanalysis can never mark the newer job's article processing and
+  wedge every subsequent attempt; regression test covers stale rejection with
+  the article left queued and active transition success.
+- Migration 007 cancels queued/leased/running v2 analysis jobs
+  (`v1.analysis_contract_upgraded`) and moves their articles from
+  queued/processing to the recoverable failed state without provider calls, so
+  an upgrade can never leave the reader polling a permanently queued article;
+  upgrade-fixture test covers both states.
+- `ArticleReader` invalidates an in-flight settings load once a save begins
+  (version counter), so a stale initial GET can never revert a newer
+  successful toggle; E2E test delays the initial GET past a completed PUT and
+  asserts the disabled value survives.
+
+Verification: nine focused Go packages pass, race suites pass, svelte-check
+0/0, 76 web unit tests pass, 15 reader E2E tests pass.

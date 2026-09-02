@@ -103,10 +103,8 @@ func (h *ArticleHandler) ServeGenerateNarration(w http.ResponseWriter, r *http.R
 		writeReaderError(w, err)
 		return
 	}
-	if article.AnalysisStatus != reader.AnalysisReady {
-		WriteError(w, http.StatusConflict, "article analysis is not ready; wait for English subtitles before generating narration", ErrCodeAnalysisNotReady)
-		return
-	}
+	// Narration depends on the stable source sentences, which exist from
+	// article creation; it never waits for subtitles or provider output.
 	if err := h.speech.QueueArticleAudio(r.Context(), id, true); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			WriteError(w, http.StatusNotFound, "article not found", ErrCodeNotFound)

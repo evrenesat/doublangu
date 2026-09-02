@@ -24,6 +24,12 @@ owner explicitly requests a commit.
 
 ## Verification
 
+Go 1.26.5 is installed at
+`/root/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.5.linux-amd64/bin`
+but that directory may not be on the default shell `PATH`. Prefix Go, `gofmt`,
+and Go-backed `make` commands with
+`PATH=/root/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.5.linux-amd64/bin:$PATH`.
+
 From the repository root, run the focused Go tests and race tests, API
 generation/checks, Svelte checks/unit and reader E2E tests, `make verify`, the
 opt-in authenticated Codex live test, and `git diff --check` as listed in the

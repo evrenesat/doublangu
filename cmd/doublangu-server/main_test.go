@@ -212,13 +212,13 @@ func TestAssembledArticleRoutesRequireOwnerAndCSRF(t *testing.T) {
 	ah, db := testAuth(t)
 	handler := newHandler(manifest.NewRegistry(), &manifest.ParsedSchema{}, ah, testHealth(t, db), testConfig(t), db, annotator.Disabled{})
 
-	for _, target := range []string{"/api/v1/articles", "/api/v1/analysis/models"} {
+	for _, target := range []string{"/api/v1/articles", "/api/v1/analysis/models", "/api/v1/reader/settings"} {
 		unauthorized := httptest.NewRecorder()
 		handler.ServeHTTP(unauthorized, serverRequest(http.MethodGet, target, "", "", ""))
 		if unauthorized.Code != http.StatusUnauthorized || decodeServerError(t, unauthorized).Code != httpapi.ErrCodeAuth {
 			t.Fatalf("unauthorized %s = %d", target, unauthorized.Code)
 		}
-		if strings.HasPrefix(target, "/api/v1/analysis") && unauthorized.Header().Get("Cache-Control") != "no-store" {
+		if (strings.HasPrefix(target, "/api/v1/analysis") || strings.HasPrefix(target, "/api/v1/reader")) && unauthorized.Header().Get("Cache-Control") != "no-store" {
 			t.Fatalf("unauthorized %s cache control = %q", target, unauthorized.Header().Get("Cache-Control"))
 		}
 	}
@@ -236,6 +236,11 @@ func TestAssembledArticleRoutesRequireOwnerAndCSRF(t *testing.T) {
 	handler.ServeHTTP(withoutCSRF, serverRequest(http.MethodPut, "/api/v1/analysis/settings", `{}`, session, ""))
 	if withoutCSRF.Code != http.StatusForbidden || decodeServerError(t, withoutCSRF).Code != httpapi.ErrCodeCSRF {
 		t.Fatalf("analysis settings CSRF response = %d", withoutCSRF.Code)
+	}
+	withoutCSRF = httptest.NewRecorder()
+	handler.ServeHTTP(withoutCSRF, serverRequest(http.MethodPut, "/api/v1/reader/settings", `{}`, session, ""))
+	if withoutCSRF.Code != http.StatusForbidden || decodeServerError(t, withoutCSRF).Code != httpapi.ErrCodeCSRF {
+		t.Fatalf("reader settings CSRF response = %d", withoutCSRF.Code)
 	}
 
 	csrf, err := ah.CSRF.GenerateToken()

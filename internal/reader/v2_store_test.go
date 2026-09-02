@@ -12,9 +12,8 @@ import (
 
 func validUnchangedResponse(input semantics.PreparedArticle) semantics.Response {
 	response := semantics.Response{
-		Version:   semantics.AnalysisContractVersion,
-		Sentences: []semantics.Sentence{{Source: semantics.SpanRef{BlockIndex: 0, SourceText: input.Blocks[0].SourceText, Occurrence: 0}}},
-		Tokens:    make([]semantics.TokenResult, 0, len(input.Tokens)), NewSenses: []semantics.NewSense{}, Constructions: []semantics.Construction{},
+		Version: semantics.AnalysisContractVersion,
+		Tokens:  make([]semantics.TokenResult, 0, len(input.Tokens)), NewSenses: []semantics.NewSense{}, Constructions: []semantics.Construction{},
 	}
 	for _, token := range input.Tokens {
 		response.Tokens = append(response.Tokens, semantics.TokenResult{TokenID: token.ID, Classification: "unchanged", Kind: semantics.KindWord, ConfidenceMilli: 1000})
@@ -42,8 +41,7 @@ func TestPersistAnalysisMaterializesLayeredRowsAndSpeechJobs(t *testing.T) {
 		t.Fatal(err)
 	}
 	response := semantics.Response{
-		Version:   semantics.AnalysisContractVersion,
-		Sentences: []semantics.Sentence{{Source: semantics.SpanRef{BlockIndex: 0, SourceText: "De bank staat.", Occurrence: 0}}},
+		Version: semantics.AnalysisContractVersion,
 		NewSenses: []semantics.NewSense{{
 			Ref: "bank-sofa", Kind: semantics.KindWord, CanonicalForm: "bank", NormalizedForm: "bank", Lemma: "bank",
 			SenseDiscriminator: "sofa", PrimaryTranslation: "sofa", Alternatives: []string{"couch"},

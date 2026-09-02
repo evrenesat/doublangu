@@ -12,8 +12,8 @@ import (
 )
 
 // PreparedChunk is the complete deterministic input for one isolated
-// paragraph turn. Block and token identities remain those of the complete
-// article; they are never retokenized or renumbered for a chunk.
+// paragraph turn. Block, token, and sentence identities remain those of the
+// complete article; they are never retokenized or renumbered for a chunk.
 type PreparedChunk struct {
 	Title                string
 	SourceLanguage       string
@@ -23,6 +23,7 @@ type PreparedChunk struct {
 	Tokens               []Token
 	Candidates           []SenseCandidate
 	PriorValidatedSenses []NewSense
+	Sentences            []ResolvedSentence
 	InputHash            string
 }
 
@@ -58,6 +59,9 @@ func PreparedInputHash(input PreparedArticle) string {
 		writeHashString(&b, token.SourceText)
 		writeHashString(&b, token.NormalizedForm)
 		writeHashString(&b, token.Lemma)
+	}
+	for _, sentence := range input.Sentences {
+		writeResolvedSentenceHash(&b, sentence)
 	}
 	for _, candidate := range input.Candidates {
 		writeHashString(&b, candidate.ID)
@@ -113,6 +117,11 @@ func PrepareChunk(input PreparedArticle, blockIndex int, prior []NewSense) (Prep
 			chunk.Tokens = append(chunk.Tokens, token)
 		}
 	}
+	for _, sentence := range input.Sentences {
+		if sentence.Span.BlockIndex == blockIndex {
+			chunk.Sentences = append(chunk.Sentences, sentence)
+		}
+	}
 	paragraphText := normalizedForRelevance(block.SourceText)
 	for _, candidate := range input.Candidates {
 		if relevantToTokens(candidate.NormalizedForm, candidate.Lemma, chunk.Tokens) || relevantCanonical(candidate.CanonicalForm, paragraphText) {
@@ -162,6 +171,9 @@ func chunkInputHash(chunk PreparedChunk) string {
 		writeHashString(&b, token.NormalizedForm)
 		writeHashString(&b, token.Lemma)
 	}
+	for _, sentence := range chunk.Sentences {
+		writeResolvedSentenceHash(&b, sentence)
+	}
 	for _, candidate := range chunk.Candidates {
 		writeCandidateHash(&b, candidate)
 	}
@@ -183,6 +195,17 @@ func writeCandidateHash(b *bytes.Buffer, candidate SenseCandidate) {
 	writeHashString(b, candidate.PartOfSpeech)
 	writeHashString(b, candidate.PrimaryTranslation)
 	writeHashString(b, candidate.SenseDiscriminator)
+}
+
+// writeResolvedSentenceHash contributes one stable sentence anchor to a hash.
+// The source-owned anchors are part of the deterministic input identity, so a
+// segmentation or sentence change invalidates prepared-input and chunk caches.
+func writeResolvedSentenceHash(b *bytes.Buffer, sentence ResolvedSentence) {
+	writeHashInt(b, sentence.Span.BlockIndex)
+	writeHashInt(b, sentence.Index)
+	writeHashInt(b, sentence.Span.StartUTF16)
+	writeHashInt(b, sentence.Span.EndUTF16)
+	writeHashString(b, sentence.Span.SourceText)
 }
 
 func writeSenseHash(b *bytes.Buffer, sense NewSense) {
@@ -268,6 +291,7 @@ func ValidateChunkResponse(chunk PreparedChunk, response Response) (ValidatedRes
 		Blocks:         blocks,
 		Tokens:         append([]Token(nil), chunk.Tokens...),
 		Candidates:     append([]SenseCandidate(nil), chunk.Candidates...),
+		Sentences:      append([]ResolvedSentence(nil), chunk.Sentences...),
 	}
 	validated, err := ValidateResponseWithPrior(input, response, chunk.PriorValidatedSenses)
 	if err != nil {
@@ -381,7 +405,6 @@ func MergeChunks(input PreparedArticle, chunks []ChunkResult) (Response, error) 
 		if err != nil {
 			return Response{}, fmt.Errorf("chunk %d: %w", index, err)
 		}
-		merged.Sentences = append(merged.Sentences, namespaced.Sentences...)
 		merged.Tokens = append(merged.Tokens, namespaced.Tokens...)
 		merged.NewSenses = append(merged.NewSenses, namespaced.NewSenses...)
 		merged.Constructions = append(merged.Constructions, namespaced.Constructions...)

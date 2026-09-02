@@ -6,6 +6,8 @@
 		DoublanguNetworkError,
 		generateNarration,
 		getNarration,
+		getReaderSettings,
+		saveReaderSettings,
 		reanalyzeArticle,
 		updateSemanticLearningState,
 		type Article,
@@ -24,6 +26,8 @@
 	import Paragraph from './Paragraph.svelte';
 	import ReaderToolbar from './ReaderToolbar.svelte';
 	import SemanticPopover from './SemanticPopover.svelte';
+	import AnalysisProgressBar from './AnalysisProgressBar.svelte';
+	import { waitStateProgress } from './progressText';
 
 	type Props = {
 		article: Article;
@@ -35,7 +39,23 @@
 	let currentState = $state<Article | null>(null);
 	const current = $derived(currentState ?? incomingArticle);
 	let theme = $state<ReaderTheme>('midnight');
-	let hoverEnabled = $state(false);
+	const hoverPrefCacheKey = 'doublangu:reader:pronounce-on-hover';
+	function readCachedHoverPreference(): boolean {
+		try {
+			const raw = localStorage.getItem(hoverPrefCacheKey);
+			if (!raw) return true; // Existing installations default to enabled.
+			const parsed = JSON.parse(raw) as { pronounce_on_hover?: boolean };
+			return parsed.pronounce_on_hover !== false;
+		} catch {
+			return true;
+		}
+	}
+	let hoverEnabled = $state(readCachedHoverPreference());
+	let hoverPrefSaving = $state(false);
+	let hoverActivationHint = $state(false);
+	// Bumps on every save so an in-flight initial load can never overwrite a
+	// newer successful toggle with its stale server snapshot.
+	let settingsSaveVersion = 0;
 	let selectedID = $state<string | null>(null);
 	let anchor = $state<HTMLElement | null>(null);
 	let pinned = $state(false);
@@ -56,7 +76,15 @@
 	let reanalyzing = $state(false);
 	let narrationRefreshKey = '';
 
-	const hoverAudio = new HoverAudioController();
+	const hoverAudio = new HoverAudioController({ onBlocked: () => (hoverActivationHint = true) });
+
+	function rememberHoverPreference(enabled: boolean): void {
+		try {
+			localStorage.setItem(hoverPrefCacheKey, JSON.stringify({ pronounce_on_hover: enabled }));
+		} catch {
+			// Local storage mirrors the last successful server value only.
+		}
+	}
 
 	$effect(() => {
 		currentState = incomingArticle;
@@ -144,6 +172,19 @@
 		}
 	});
 
+	const waitShape = $derived.by(() =>
+		waitStateProgress({
+			analysis_status: current.analysis_status,
+			narration_status: current.narration_status,
+			total: current.analysis_progress?.total_paragraphs,
+			completed: current.analysis_progress?.completed_paragraphs,
+			current_block_index: current.analysis_progress?.current_block_index,
+			failed_block_index: current.analysis_progress?.failed_block_index,
+			ready_sentences: current.narration?.ready_count,
+			total_sentences: current.narration?.sentence_count
+		})
+	);
+
 	$effect(() => {
 		if (!narration || narrationLoadedFor !== current.id || narrationLoading) return;
 		const status = current.narration_status ?? current.narration?.status ?? 'not_requested';
@@ -158,6 +199,7 @@
 	onMount(() => {
 		theme = readReaderTheme();
 		applyReaderTheme(theme);
+		hoverAudio.setEnabled(hoverEnabled);
 		const handleKeydown = (event: KeyboardEvent) => {
 			if (event.key !== 'Escape') return;
 			if (selectedID) {
@@ -167,8 +209,38 @@
 			clearFocus();
 		};
 		document.addEventListener('keydown', handleKeydown);
-		return () => document.removeEventListener('keydown', handleKeydown);
+		// While hover pronunciation is enabled, register one passive unlock
+		// attempt per user activation so browsers that block script-initiated
+		// audio still unlock on the first pointerdown/keydown.
+		const unlockOnActivation = (event: Event) => {
+			if (!hoverEnabled || hoverPrefSaving) return;
+			if (event.type === 'keydown' && (event as KeyboardEvent).key !== 'Enter' && (event as KeyboardEvent).key !== ' ') return;
+			hoverActivationHint = false;
+			void hoverAudio.unlock();
+		};
+		window.addEventListener('pointerdown', unlockOnActivation, { passive: true });
+		window.addEventListener('keydown', unlockOnActivation, { passive: true });
+		void refreshServerPreference();
+		return () => {
+			document.removeEventListener('keydown', handleKeydown);
+			window.removeEventListener('pointerdown', unlockOnActivation);
+			window.removeEventListener('keydown', unlockOnActivation);
+		};
 	});
+
+	async function refreshServerPreference(): Promise<void> {
+		const version = settingsSaveVersion;
+		try {
+			const server = await getReaderSettings();
+			if (version !== settingsSaveVersion) return; // a save superseded this load
+			hoverEnabled = server.pronounce_on_hover;
+			hoverAudio.setEnabled(server.pronounce_on_hover);
+			rememberHoverPreference(server.pronounce_on_hover);
+		} catch {
+			// The server remains authoritative on the next successful load;
+			// the cached mirror avoids first-render flicker meanwhile.
+		}
+	}
 
 	onDestroy(() => {
 		if (closeTimer) clearTimeout(closeTimer);
@@ -188,9 +260,32 @@
 	}
 
 	async function toggleHoverAudio(): Promise<void> {
-		hoverEnabled = !hoverEnabled;
-		hoverAudio.setEnabled(hoverEnabled);
-		if (hoverEnabled) await hoverAudio.unlock();
+		const next = !hoverEnabled;
+		const previous = hoverEnabled;
+		// Optimistic local change with an inline rollback when the server
+		// rejects the save. The version marker invalidates any settings load
+		// that was already in flight.
+		settingsSaveVersion += 1;
+		hoverEnabled = next;
+		hoverAudio.setEnabled(next);
+		rememberHoverPreference(next);
+		hoverPrefSaving = true;
+		feedback = '';
+		feedbackIsError = false;
+		try {
+			const saved = await saveReaderSettings({ pronounce_on_hover: next });
+			hoverEnabled = saved.pronounce_on_hover;
+			hoverAudio.setEnabled(saved.pronounce_on_hover);
+			rememberHoverPreference(saved.pronounce_on_hover);
+		} catch (cause) {
+			hoverEnabled = previous;
+			hoverAudio.setEnabled(previous);
+			rememberHoverPreference(previous);
+			feedbackIsError = true;
+			feedback = errorMessage(cause, 'Could not save the pronounce-on-hover preference.');
+		} finally {
+			hoverPrefSaving = false;
+		}
 	}
 
 	function clearCloseTimer(): void {
@@ -290,7 +385,8 @@
 			return {
 				...occurrence,
 				learning_state: state,
-				show_shadow: state.status !== 'learned' && occurrence.shadow_policy !== 'none'
+				show_shadow:
+					state.status !== 'learned' && occurrence.subtitle_suppression_reason === 'none'
 			};
 		};
 		const next: Article = {
@@ -537,12 +633,17 @@
 
 	<ReaderToolbar
 		hoverEnabled={hoverEnabled}
+		hoverSaving={hoverPrefSaving}
 		theme={theme}
 		onToggleHover={() => void toggleHoverAudio()}
 		onTheme={setTheme}
 	/>
+	{#if hoverActivationHint}
+		<p class="reader-error hover-hint" role="status">Click once to enable sound</p>
+	{/if}
 
 	<div class="reader-body" class:has-focus={activeSentenceID !== null}>
+		<AnalysisProgressBar shape={waitShape} />
 		{#each blocks as block (block.id)}
 			<Paragraph
 				{block}
@@ -593,6 +694,7 @@
 		onClear={clearArticleNarration}
 	/>
 	{#if narrationError}<p class="reader-error" role="alert">{narrationError}</p>{/if}
+	{#if feedback && feedbackIsError && !selectedOccurrence}<p class="reader-error" role="alert">{feedback}</p>{/if}
 </section>
 
 <style>
