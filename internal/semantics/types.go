@@ -28,7 +28,7 @@ const (
 	// AnalysisContractVersion is part of the article cache key. A contract
 	// change is intentionally an explicit cache invalidation event.
 	AnalysisContractVersion = "reader.analysis.v2"
-	PromptVersion           = "reader-analysis-prompt.v2"
+	PromptVersion           = "reader-analysis-prompt.v3"
 	ProviderID              = "codex-app-server"
 	MaxAlternatives         = 3
 	MaxShadowScalars        = 160

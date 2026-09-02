@@ -34,6 +34,8 @@ type AnalysisOptions struct {
 	Effort string
 }
 
+const maxChunkCorrectiveTurns = 2
+
 type TurnArtifact struct {
 	BlockIndex             int
 	TurnIndex              int
@@ -163,24 +165,24 @@ func (c *CodexAppServer) AnalyzeChunk(ctx context.Context, chunk semantics.Prepa
 		return attempt, c.classify(runContext, process, err, CodeProviderFailure)
 	}
 	response, validationErr := decodeChunkResponse(chunk, turn.Text)
-	if validationErr != nil {
+	previousResponse := turn.Text
+	for correctionIndex := 1; validationErr != nil && correctionIndex <= maxChunkCorrectiveTurns; correctionIndex++ {
 		attempt.Turns[len(attempt.Turns)-1].ValidationError = validationErr.Error()
 		nextID++
-		correction := BuildV2CorrectionPrompt(validationErr.Error(), turn.Text)
+		correction := BuildV2CorrectionPrompt(chunkValidationFeedback(chunk, response, validationErr), previousResponse)
 		corrected, correctionErr := protocol.runTurnDetailed(runContext, nextID, threadID, correction, effort, model, outputSchema)
 		if corrected.ReportedModel != "" {
 			attempt.ReportedModel = corrected.ReportedModel
 		}
-		attempt.Turns = append(attempt.Turns, turnArtifact(chunk.Block.BlockIndex, 1, "corrective", correction, outputSchema, corrected, correctionErr, process))
+		attempt.Turns = append(attempt.Turns, turnArtifact(chunk.Block.BlockIndex, correctionIndex, "corrective", correction, outputSchema, corrected, correctionErr, process))
 		if correctionErr != nil {
 			return attempt, c.classify(runContext, process, correctionErr, CodeInvalidOutput)
 		}
 		response, validationErr = decodeChunkResponse(chunk, corrected.Text)
-		if validationErr != nil {
-			attempt.Turns[len(attempt.Turns)-1].ValidationError = validationErr.Error()
-		}
+		previousResponse = corrected.Text
 	}
 	if validationErr != nil {
+		attempt.Turns[len(attempt.Turns)-1].ValidationError = validationErr.Error()
 		return attempt, c.classify(runContext, process, validationErr, CodeInvalidOutput)
 	}
 	attempt.Response = response
@@ -319,7 +321,7 @@ func BuildV2Prompt(input semantics.PreparedArticle) string {
 }
 
 func BuildV2CorrectionPrompt(validationError, originalResponse string) string {
-	return "The previous semantic response failed deterministic validation. Return corrected JSON only. Do not omit any token_id.\nVALIDATION_ERRORS_BEGIN\n" + validationError + "\nVALIDATION_ERRORS_END\nPREVIOUS_RESPONSE_BEGIN\n" + originalResponse + "\nPREVIOUS_RESPONSE_END"
+	return "The previous semantic response failed deterministic validation. Return corrected JSON only and repair every listed error, then recheck the whole response. Keep every supplied token_id exactly once. Every non-empty new_sense_ref must exactly match new_senses[].ref or an exact PRIOR_VALIDATED_SENSES ref, with the same kind, and each new_senses ref must be defined exactly once. For source spans, occurrence counts repeats of that exact source_text and is usually 0; it is never the sentence or span index. A construction with a new_sense_ref needs a matching new_senses definition of the same kind; otherwise remove that construction. Every construction token_id must be fully inside one of its spans; use one span for contiguous constructions and at least two ordered, non-overlapping spans for discontinuous constructions.\nVALIDATION_ERRORS_BEGIN\n" + validationError + "\nVALIDATION_ERRORS_END\nPREVIOUS_RESPONSE_BEGIN\n" + originalResponse + "\nPREVIOUS_RESPONSE_END"
 }
 
 func (Disabled) Analyze(context.Context, semantics.PreparedArticle) (semantics.Response, error) {
