@@ -30,6 +30,13 @@
 - Authenticated legacy and `gpt-5.6-luna / medium` chunk live tests — passed;
   the Luna response satisfied the stricter subtitle validator.
 - `go mod tidy -diff` and `git diff --check` — passed.
+- Deployed isolated beta release
+  `496062f2c617616401650f66698e055d497b119be936a5089d151c9663d87ae0`.
+  Fresh prompt-v5 job `01M1GNKHZ2M97NXCXMWQ80BCDC` completed all three
+  paragraphs on attempt 1. The formerly empty “Gelaten…” block now has
+  subtitles for all 13 translated tokens; only the proper name is passively
+  suppressed. Service and database readiness passed, and production remained
+  unchanged.
 
 ## 2026-09-02 — Luna relational correction repair
 
