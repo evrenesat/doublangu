@@ -27,6 +27,11 @@
   `safe.directory=/root/code/doublangu` environment override.
 - `DOUBLANGU_TEST_CODEX_LIVE=1 go test ./internal/annotator -run Live -count=1 -v -buildvcs=false` — passed against the authenticated Codex CLI.
 - `git diff --check` — passed.
+- Deployed isolated beta release
+  `6bcddfd4925254cacbb07b1cc5edace5889ff423f5079c56ec7b632653d01b7f`.
+  The beta service, database readiness, migration 006 analysis tables, Codex
+  service-account login, TLS, and unauthenticated Basic Auth challenge passed;
+  protected credentials and production remained unchanged.
 
 ## 2026-09-01 — Weaker-model analysis reliability and lexical speech repair
 
