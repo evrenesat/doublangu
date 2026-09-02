@@ -110,7 +110,30 @@ func TestValidateResponseRejectsCoverageOrderAndUnsafeOutput(t *testing.T) {
 	unsafe := base
 	unsafe.Tokens = append([]TokenResult(nil), base.Tokens...)
 	unsafe.Tokens[0].ShadowText = "<strong>unsafe</strong>"
-	assertInvalid("unsafe shadow", unsafe)
+	assertInvalid("unsafe subtitle", unsafe)
+
+	missingSubtitle := base
+	missingSubtitle.Tokens = append([]TokenResult(nil), base.Tokens...)
+	missingSubtitle.NewSenses = []NewSense{{
+		Ref: "translated", Kind: KindWord, CanonicalForm: "Een", NormalizedForm: "een",
+		SenseDiscriminator: "article", PrimaryTranslation: "a",
+	}}
+	missingSubtitle.Tokens[0] = TokenResult{
+		TokenID: input.Tokens[0].ID, Classification: "article", Kind: KindWord,
+		NewSenseRef: "translated", ConfidenceMilli: 900,
+	}
+	assertInvalid("missing translated token subtitle", missingSubtitle)
+
+	missingConstructionSubtitle := base
+	missingConstructionSubtitle.NewSenses = []NewSense{{
+		Ref: "bank-expression", Kind: KindExpression, CanonicalForm: "bank", NormalizedForm: "bank",
+		SenseDiscriminator: "test", PrimaryTranslation: "bench",
+	}}
+	missingConstructionSubtitle.Constructions = []Construction{{
+		Kind: KindExpression, Role: "contiguous_construction", NewSenseRef: "bank-expression",
+		TokenIDs: []string{"b0:t1"}, Spans: []SpanRef{{BlockIndex: 0, SourceText: "bank", Occurrence: 0}},
+	}}
+	assertInvalid("missing construction subtitle", missingConstructionSubtitle)
 
 	badNormalizedSense := base
 	badNormalizedSense.NewSenses = []NewSense{{

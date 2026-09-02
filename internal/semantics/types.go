@@ -28,7 +28,7 @@ const (
 	// AnalysisContractVersion is part of the article cache key. A contract
 	// change is intentionally an explicit cache invalidation event.
 	AnalysisContractVersion = "reader.analysis.v2"
-	PromptVersion           = "reader-analysis-prompt.v4"
+	PromptVersion           = "reader-analysis-prompt.v5"
 	ProviderID              = "codex-app-server"
 	MaxAlternatives         = 3
 	MaxShadowScalars        = 160
@@ -524,6 +524,9 @@ func validateResponse(input PreparedArticle, response Response, prior []NewSense
 		if err := safeProviderText("construction shadow_text", construction.ShadowText, MaxShadowScalars); err != nil {
 			return ValidatedResponse{}, fmt.Errorf("constructions[%d]: %w", index, err)
 		}
+		if strings.TrimSpace(construction.ShadowText) == "" {
+			return ValidatedResponse{}, fmt.Errorf("constructions[%d]: shadow_text is required", index)
+		}
 		if err := safeProviderText("construction canonical_pronunciation_text", construction.CanonicalPronunciationText, MaxPronunciationScalars); err != nil {
 			return ValidatedResponse{}, fmt.Errorf("constructions[%d]: %w", index, err)
 		}
@@ -643,6 +646,9 @@ func validateTokenResult(result TokenResult, sourceLanguage, targetLanguage stri
 	special := result.Classification == "proper_name" || result.Classification == "number" || result.Classification == "acronym" || result.Classification == "unchanged"
 	if result.SemanticSenseID == "" && result.NewSenseRef == "" && !special {
 		return errors.New("a semantic sense reference is required")
+	}
+	if !special && strings.TrimSpace(result.ShadowText) == "" {
+		return errors.New("shadow_text is required for a translated token")
 	}
 	return validateSenseReference(result.SemanticSenseID, result.NewSenseRef, result.Kind, sourceLanguage, targetLanguage, candidates, newSenses)
 }

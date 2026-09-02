@@ -41,6 +41,7 @@ func fixtureChunkResponse(chunk PreparedChunk, bankRef string) Response {
 		if strings.EqualFold(token.SourceText, "bank") {
 			result.Classification = "known"
 			result.NewSenseRef = bankRef
+			result.ShadowText = "bench"
 		}
 		response.Tokens = append(response.Tokens, result)
 	}

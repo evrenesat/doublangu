@@ -160,6 +160,7 @@ func TestChunkPromptExplainsCrossFieldReferencesAndSpanOccurrences(t *testing.T)
 		"must exactly match either a ref object included in this response's new_senses array",
 		"occurrence is the zero-based occurrence of that exact source_text substring",
 		"never the sentence or span ordinal",
+		"must have a concise, contextual English shadow_text subtitle",
 		"normalized_form must be the deterministic Unicode case-folded, whitespace-collapsed form of canonical_form",
 	} {
 		if !strings.Contains(prompt, expected) {
@@ -173,6 +174,7 @@ func TestChunkValidationFeedbackReportsIndependentRelationalErrors(t *testing.T)
 	response := testValidChunkResponse(chunk)
 	response.Sentences[0].Source.Occurrence = 1
 	response.Tokens[0].Classification = "article"
+	response.Tokens[0].ShadowText = ""
 	response.Constructions = []semantics.Construction{{
 		Kind: semantics.KindExpression, Role: "contiguous_construction",
 		NewSenseRef: "missing-expression", TokenIDs: []string{chunk.Tokens[0].ID, chunk.Tokens[1].ID},
@@ -185,6 +187,7 @@ func TestChunkValidationFeedbackReportsIndependentRelationalErrors(t *testing.T)
 	feedback := chunkValidationFeedback(chunk, response, primary)
 	for _, expected := range []string{
 		`classification "article" requires one semantic_sense_id or new_sense_ref`,
+		`requires a non-empty English shadow_text subtitle`,
 		`sentences[0].source is invalid: source occurrence 1 was not found in block 0`,
 		`constructions[0].new_sense_ref "missing-expression" has no matching new_senses ref or prior validated ref`,
 		`constructions[0].token_ids[1] "b0:t1" is outside every construction span`,
@@ -203,6 +206,7 @@ func TestBuildV2CorrectionPromptRestatesRelationalChecklist(t *testing.T) {
 		"occurrence counts repeats of that exact source_text",
 		"otherwise remove that construction",
 		"normalized_form must equal the Unicode case-folded, whitespace-collapsed normalization of canonical_form",
+		"never blank unrelated shadow_text fields",
 	} {
 		if !strings.Contains(prompt, expected) {
 			t.Errorf("correction prompt missing %q", expected)

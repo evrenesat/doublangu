@@ -29,7 +29,7 @@
 		onConstructionHover
 	}: Props = $props();
 
-	const shadow = $derived(occurrence.show_shadow && occurrence.shadow_policy !== 'none' ? occurrence.shadow_text || occurrence.sense?.primary_translation || '' : '');
+	const subtitle = $derived(occurrence.show_shadow && occurrence.shadow_policy !== 'none' ? occurrence.shadow_text || occurrence.sense?.primary_translation || '' : '');
 	const audioKey = $derived(occurrence.pronunciation?.render_id ?? occurrence.id);
 
 	function activate(event: MouseEvent | KeyboardEvent): void {
@@ -69,7 +69,7 @@
 	onpointerleave={() => { onLeaveAudio(audioKey); onHoverEnd(); onConstructionHover([]); }}
 >
 	<span class="source-text">{text}</span>
-	{#if shadow}<span class="translation-shadow" aria-hidden="true">{shadow}</span>{/if}
+	{#if subtitle}<span class="translation-subtitle" aria-hidden="true">{subtitle}</span>{/if}
 </span>
 
 <style>
@@ -89,21 +89,14 @@
 		outline-offset: 2px;
 	}
 
-	.source-text {
-		text-decoration-line: underline;
-		text-decoration-style: dotted;
-		text-decoration-color: color-mix(in srgb, var(--reader-accent) 72%, transparent);
-		text-underline-offset: 0.18em;
-	}
-
-	.translation-shadow {
+	.translation-subtitle {
 		position: absolute;
 		left: 50%;
 		top: calc(100% + 0.05em);
 		max-width: min(16rem, 36vw);
 		transform: translateX(-50%);
 		overflow: hidden;
-		color: var(--reader-shadow);
+		color: var(--reader-subtitle);
 		font-size: 0.57em;
 		font-weight: 550;
 		line-height: 1;
@@ -114,14 +107,11 @@
 		opacity: 0.82;
 	}
 
-	.text-occurrence.learned .source-text {
-		text-decoration-style: solid;
-		text-decoration-color: color-mix(in srgb, var(--reader-accent) 28%, transparent);
-	}
-
 	.text-occurrence.construction-member .source-text {
+		text-decoration-line: underline;
 		text-decoration-style: wavy;
 		text-decoration-color: var(--reader-construction);
+		text-underline-offset: 0.18em;
 	}
 
 	.text-occurrence.construction-active .source-text {

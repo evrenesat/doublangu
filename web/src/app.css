@@ -24,7 +24,7 @@
 	--reader-page-muted: #aeb5cc;
 	--reader-page-accent: #a897ff;
 	--reader-page-construction: #f0b36b;
-	--reader-page-shadow: #b9c2de;
+	--reader-page-subtitle: #b9c2de;
 	background: var(--color-bg);
 	color: var(--color-text);
 	font-synthesis: none;
@@ -41,7 +41,7 @@ html[data-reader-theme='paper'] {
 	--reader-page-muted: #756957;
 	--reader-page-accent: #815d27;
 	--reader-page-construction: #ad5e2a;
-	--reader-page-shadow: #756957;
+	--reader-page-subtitle: #756957;
 }
 
 html[data-reader-theme='high-contrast'] {
@@ -54,7 +54,7 @@ html[data-reader-theme='high-contrast'] {
 	--reader-page-muted: #f0f0f0;
 	--reader-page-accent: #00ffff;
 	--reader-page-construction: #ffea00;
-	--reader-page-shadow: #fff;
+	--reader-page-subtitle: #fff;
 }
 
 * {

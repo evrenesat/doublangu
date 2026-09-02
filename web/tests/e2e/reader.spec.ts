@@ -200,7 +200,7 @@ test('keeps implementation scaffolds out of learner navigation', async ({ page }
 	await expect(navigation.getByRole('link', { name: /Library|Plugins/ })).toHaveCount(0);
 });
 
-test('saves the pasted article first, enriches it, and renders restrained English shadows', async ({ page }) => {
+test('saves the pasted article first, enriches it, and renders contextual English subtitles', async ({ page }) => {
 	await setupArticleAPI(page, article('draft'));
 	await page.goto('/reader/new');
 	await page.getByLabel('Title').fill('Een rustige dag');
@@ -242,11 +242,11 @@ test('persists learned suppression, rolls back a failed save, and works at 320px
 	const trigger = page.getByRole('button', { name: 'tot rust komen: to calm down' });
 	await trigger.click();
 	await page.getByRole('button', { name: 'Mark learned' }).click();
-	await expect(page.getByText('Marked learned. Shadow hidden.')).toBeVisible();
-	await expect(page.locator(`[data-annotation-id="${annotationID}"] .translation-shadow`)).toHaveCount(0);
+	await expect(page.getByText('Marked learned. Subtitle hidden.')).toBeVisible();
+	await expect(page.locator(`[data-annotation-id="${annotationID}"] .translation-subtitle`)).toHaveCount(0);
 
 	await page.reload();
-	await expect(page.locator('.translation-shadow')).toHaveCount(0);
+	await expect(page.locator('.translation-subtitle')).toHaveCount(0);
 	await page.getByRole('button', { name: 'tot rust komen: to calm down' }).click();
 	await expect(page.getByRole('button', { name: 'Mark unlearned' })).toBeVisible();
 
@@ -256,7 +256,7 @@ test('persists learned suppression, rolls back a failed save, and works at 320px
 	await page.getByRole('button', { name: 'tot rust komen: to calm down' }).click();
 	await page.getByRole('button', { name: 'Mark unlearned' }).click();
 	await expect(page.getByRole('alert')).toContainText('Learning state unavailable');
-	await expect(page.locator('.translation-shadow')).toHaveCount(0);
+	await expect(page.locator('.translation-subtitle')).toHaveCount(0);
 	await page.getByRole('button', { name: 'Explore' }).click();
 	await page.getByRole('button', { name: 'Usage' }).click();
 	await expect(page.getByText('Use after activity, stress, or strong emotion.')).toBeVisible();
@@ -270,22 +270,25 @@ test('persists learned suppression, rolls back a failed save, and works at 320px
 	expect(box!.y + box!.height).toBeLessThanOrEqual(720);
 });
 
-test('renders the v2 source immediately, then layers shadows and shared construction markers', async ({ page }) => {
+test('renders the v2 source immediately, then layers subtitles and shared construction markers', async ({ page }) => {
 	await setupSemanticArticleAPI(page, semanticArticle('queued'));
 	await page.goto(`/reader/${articleID}`);
 	await expect(page.getByRole('heading', { name: 'Een hoorbare dag' })).toBeVisible();
 	await expect(page.locator('.reader-body')).toBeVisible();
 	const source = await page.locator('.reader-body').evaluate((element) => {
 		const clone = element.cloneNode(true) as HTMLElement;
-		clone.querySelectorAll('.translation-shadow').forEach((shadow) => shadow.remove());
+		clone.querySelectorAll('.translation-subtitle').forEach((subtitle) => subtitle.remove());
 		return clone.textContent?.replace(/\s+/g, ' ').trim();
 	});
 	expect(source).toContain('Ik geef het boek op.');
-	await expect(page.getByText('Preparing English shadows…')).toBeVisible();
-	await expect(page.locator('.translation-shadow').filter({ hasText: 'give' })).toBeVisible();
-	await expect(page.locator('.translation-shadow').filter({ hasText: 'the' })).toBeVisible();
+	await expect(page.getByText('Preparing English subtitles…')).toBeVisible();
+	await expect(page.locator('.translation-subtitle').filter({ hasText: 'give' })).toBeVisible();
+	await expect(page.locator('.translation-subtitle').filter({ hasText: 'the' })).toBeVisible();
+	const ordinaryWord = page.locator('[data-occurrence-id="token-boek"] .source-text');
+	await expect(ordinaryWord).toHaveCSS('text-decoration-line', 'none');
 	const members = page.locator('[data-construction-ids~="construction-give-up"]');
 	await expect(members).toHaveCount(2);
+	await expect(members.first().locator('.source-text')).toHaveCSS('text-decoration-style', 'wavy');
 	await members.first().hover();
 	await expect(members.first()).toHaveClass(/construction-active/);
 	await expect(members.nth(1)).toHaveClass(/construction-active/);
@@ -298,7 +301,7 @@ test('uses sense-keyed learning, explicit hover audio, and lazy narration playba
 	await page.getByRole('button', { name: /geef: give/ }).click();
 	await expect(page.getByRole('dialog')).toBeVisible();
 	await page.getByRole('button', { name: 'Mark learned' }).click();
-	await expect(page.getByText('Marked learned. Shadow hidden.')).toBeVisible();
+	await expect(page.getByText('Marked learned. Subtitle hidden.')).toBeVisible();
 	await expect(page.getByRole('button', { name: /geef: give/ })).toBeVisible();
 	await page.getByRole('button', { name: 'Play' }).click();
 	await expect(page.getByRole('button', { name: 'Pause' })).toBeVisible();
