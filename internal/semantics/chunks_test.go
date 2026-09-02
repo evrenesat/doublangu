@@ -18,7 +18,7 @@ func preparedChunkFixture(t *testing.T) PreparedArticle {
 	if err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
-	return input
+	return attachWholeBlockAnchors(t, input)
 }
 
 func fixtureNewSense(ref, translation string) NewSense {
@@ -32,7 +32,6 @@ func fixtureNewSense(ref, translation string) NewSense {
 func fixtureChunkResponse(chunk PreparedChunk, bankRef string) Response {
 	response := Response{
 		Version:   AnalysisContractVersion,
-		Sentences: []Sentence{{Source: SpanRef{BlockIndex: chunk.Block.BlockIndex, SourceText: chunk.Block.SourceText, Occurrence: 0}}},
 		Tokens:    make([]TokenResult, 0, len(chunk.Tokens)),
 		NewSenses: []NewSense{}, Constructions: []Construction{},
 	}
@@ -87,12 +86,6 @@ func TestChunkValidationRejectsForeignRelationsAndDuplicateRefs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	response := fixtureChunkResponse(chunk, "")
-	response.Sentences[0].Source = SpanRef{BlockIndex: 1, SourceText: input.Blocks[1].SourceText, Occurrence: 0}
-	if _, err := ValidateChunkResponse(chunk, response); err == nil {
-		t.Fatal("foreign-block sentence unexpectedly passed validation")
-	}
-
 	foreignToken := fixtureChunkResponse(chunk, "")
 	foreignToken.Tokens = append(foreignToken.Tokens, TokenResult{TokenID: "b1:t2", Classification: "unchanged", Kind: KindWord, ConfidenceMilli: 1000})
 	if _, err := ValidateChunkResponse(chunk, foreignToken); err == nil {
@@ -197,5 +190,95 @@ func TestPreparedInputHashIncludesCandidatesAndContent(t *testing.T) {
 	changedContent.ContentHash = "changed"
 	if PreparedInputHash(input) == PreparedInputHash(changedContent) {
 		t.Fatal("content hash change reused prepared input hash")
+	}
+}
+
+func resolvedAnchor(block Block, index int, text string) (ResolvedSentence, error) {
+	span, err := ResolveSpan(block, text, 0)
+	if err != nil {
+		return ResolvedSentence{}, err
+	}
+	return ResolvedSentence{Index: index, Span: span}, nil
+}
+
+func TestPreparedInputHashIncludesSentenceAnchors(t *testing.T) {
+	input, err := Prepare("Zinnen", "nl", "en", []Block{
+		{BlockIndex: 0, SourceText: "De bank staat. Hij is oud."},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block := input.Blocks[0]
+	// Segmentation A: two conventional sentences.
+	segmented := input
+	first, err := resolvedAnchor(block, 0, "De bank staat.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := resolvedAnchor(block, 1, "Hij is oud.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	segmented.Sentences = []ResolvedSentence{first, second}
+	// Segmentation B: the same source with one merged narration unit.
+	merged, err := resolvedAnchor(block, 0, "De bank staat. Hij is oud.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mergedInput := input
+	mergedInput.Sentences = []ResolvedSentence{merged}
+	// Identical inputs hash identically.
+	if PreparedInputHash(segmented) != PreparedInputHash(segmented) {
+		t.Fatal("identical prepared inputs produced different hashes")
+	}
+	// A changed sentence segmentation must invalidate the prepared-input
+	// identity even though the source bytes are identical.
+	if PreparedInputHash(segmented) == PreparedInputHash(mergedInput) {
+		t.Fatal("changed sentence anchors reused the prepared input hash")
+	}
+}
+
+func TestPrepareChunkFiltersSentencesPerBlock(t *testing.T) {
+	input, err := Prepare("Blokken", "nl", "en", []Block{
+		{BlockIndex: 0, SourceText: "De bank staat. Hij is oud."},
+		{BlockIndex: 1, SourceText: "Een huis. Het is groot."},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	perBlockTexts := map[int][]string{
+		0: {"De bank staat.", "Hij is oud."},
+		1: {"Een huis.", "Het is groot."},
+	}
+	for _, block := range input.Blocks {
+		for sentenceIndex, text := range perBlockTexts[block.BlockIndex] {
+			anchor, err := resolvedAnchor(block, sentenceIndex, text)
+			if err != nil {
+				t.Fatal(err)
+			}
+			input.Sentences = append(input.Sentences, anchor)
+		}
+	}
+	if len(input.Sentences) != 4 {
+		t.Fatalf("input sentences = %d, want 4", len(input.Sentences))
+	}
+	chunk, err := PrepareChunk(input, 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chunk.Sentences) != 2 {
+		t.Fatalf("chunk sentences = %+v, want the two block-1 anchors", chunk.Sentences)
+	}
+	for _, sentence := range chunk.Sentences {
+		if sentence.Span.BlockIndex != 1 {
+			t.Errorf("chunk sentence crosses block boundary: %+v", sentence)
+		}
+	}
+	if chunk.InputHash == "" || chunk.InputHash != chunkInputHash(chunk) {
+		t.Fatalf("chunk input hash does not match its fields")
+	}
+	wholeHash := PreparedInputHash(input)
+	if wholeHash == "" || wholeHash == chunk.InputHash {
+		t.Fatalf("chunk hash unexpectedly equals the whole prepared input hash")
 	}
 }

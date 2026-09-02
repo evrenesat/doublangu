@@ -3,11 +3,13 @@
 
 	let {
 		hoverEnabled,
+		hoverSaving,
 		theme,
 		onToggleHover,
 		onTheme
 	}: {
 		hoverEnabled: boolean;
+		hoverSaving: boolean;
 		theme: ReaderTheme;
 		onToggleHover: () => void;
 		onTheme: (theme: ReaderTheme) => void;
@@ -16,7 +18,7 @@
 
 <div class="reader-toolbar" aria-label="Reader controls">
 	<label class="hover-toggle">
-		<input type="checkbox" checked={hoverEnabled} onchange={onToggleHover} />
+		<input type="checkbox" checked={hoverEnabled} disabled={hoverSaving} onchange={onToggleHover} />
 		<span>Pronounce on hover</span>
 	</label>
 	<label class="theme-picker">

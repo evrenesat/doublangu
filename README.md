@@ -72,3 +72,20 @@ make verify
 The API contract is in [`contracts/openapi.yaml`](contracts/openapi.yaml).
 See [`ARCHITECTURE.md`](ARCHITECTURE.md) for system details and
 [`DEVLOG.md`](DEVLOG.md) for implementation history.
+
+## Progressive reader analysis (analysis contract v3)
+
+New articles store deterministic source sentences at creation, queue narration
+immediately, and analyze paragraph by paragraph: each validated paragraph is
+published in its own transaction, so subtitles and progress appear while later
+paragraphs are still running. Subtitle rendering participates in inline layout,
+which prevents overlapping labels. Construction membership is exact
+(`member_occurrence_ids`); inserted modifiers such as `bijna` keep their own
+subtitles. Analysis progress (`analysis_progress`) and per-paragraph state
+(`analysis_status`, `has_analysis`, `analysis_is_current`) are exposed on the
+article API, and a compact progress surface reports queued/processing/failed
+states with polite ARIA updates. Reanalysis keeps the last accepted semantics
+visible in each paragraph until the replacement is validated and committed.
+Pronounce-on-hover is an owner-wide preference (`GET`/`PUT
+/api/v1/reader/settings`) that defaults to enabled; local storage only mirrors
+the server value.

@@ -34,3 +34,37 @@ describe('HoverAudioController', () => {
 		vi.useRealTimers();
 	});
 });
+
+describe('HoverAudioController activation blocking', () => {
+	it('notifies once when autoplay is blocked and never disables the preference', async () => {
+		vi.useFakeTimers();
+		const blocked = vi.fn();
+		const audio = fakeAudio();
+		audio.play = vi.fn(async function (this: AudioLike & { plays: number; pauses: number }) {
+			this.plays += 1;
+			throw new DOMException('play() failed because the user didn\'t interact with the document first', 'NotAllowedError');
+		});
+		const controller = new HoverAudioController(() => audio, { onBlocked: blocked });
+		controller.setEnabled(true);
+		controller.enter(ref('one'), 'one');
+		await vi.advanceTimersByTimeAsync(200);
+		expect(blocked).toHaveBeenCalledTimes(1);
+		expect(controller.isEnabled).toBe(true);
+		// A second rejected hover does not spam the hint.
+		controller.enter(ref('two'), 'two');
+		await vi.advanceTimersByTimeAsync(200);
+		expect(blocked).toHaveBeenCalledTimes(1);
+		// Unlock success resets the notification state.
+		audio.play = vi.fn(async function (this: AudioLike & { plays: number; pauses: number }) { this.paused = false; this.plays += 1; });
+		await controller.unlock();
+		audio.play = vi.fn(async function (this: AudioLike & { plays: number; pauses: number }) {
+			this.plays += 1;
+			throw new DOMException('blocked', 'NotAllowedError');
+		});
+		controller.enter(ref('three'), 'three');
+		await vi.advanceTimersByTimeAsync(200);
+		expect(blocked).toHaveBeenCalledTimes(2);
+		controller.destroy();
+		vi.useRealTimers();
+	});
+});

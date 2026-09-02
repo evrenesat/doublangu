@@ -17,7 +17,20 @@ const (
 	MaxArticleTitleScalars    = 200
 	MaxAnnotationsPer150Words = 16
 	MaxShadowsPer150Words     = 8
-	AnalysisContractVersion   = "reader.analysis.v2"
+	// AnalysisContractVersion mirrors semantics.AnalysisContractVersion for
+	// reader callers that must not import the semantics package.
+	AnalysisContractVersion = "reader.analysis.v3"
+)
+
+// SentenceRevision records where an article's source sentence rows came from.
+const (
+	// SentenceRevisionLegacyAnalysis marks article_sentence rows preserved
+	// from pre-v3 provider output; they stay authoritative and are never
+	// silently re-segmented.
+	SentenceRevisionLegacyAnalysis = "legacy.analysis"
+	// SentenceRevisionSourceSentencesV1 marks deterministic rows created by
+	// the local segmenter at article creation or lazy preparation.
+	SentenceRevisionSourceSentencesV1 = "source-sentence.v1"
 )
 
 // AnnotationKind is the vocabulary used by the reader and annotator.
@@ -92,9 +105,16 @@ type Article struct {
 	AnalysisEffort      string              `json:"analysis_effort"`
 	NarrationStatus     NarrationStatus     `json:"narration_status"`
 	NarrationErrorCode  string              `json:"narration_error_code"`
+	AnalysisProgress    AnalysisProgress    `json:"analysis_progress"`
 	Sentences           []ArticleSentence   `json:"sentences"`
 	Occurrences         []ArticleOccurrence `json:"occurrences"`
 	Narration           NarrationSummary    `json:"narration"`
+	// SentenceRevision is the source-sentence provenance marker. It is
+	// internal state, not part of the owner-facing article payload.
+	SentenceRevision string `json:"-"`
+	// AnalysisJobID is the durable job that owns the current run. It is
+	// internal state; lease tokens and job payloads are never exposed.
+	AnalysisJobID string `json:"-"`
 }
 
 // ArticleSummary is the compact item returned by the article list endpoint.
@@ -114,7 +134,28 @@ type ArticleSummary struct {
 	AnalysisEffort      string           `json:"analysis_effort"`
 	NarrationStatus     NarrationStatus  `json:"narration_status"`
 	NarrationErrorCode  string           `json:"narration_error_code"`
+	AnalysisProgress    AnalysisProgress `json:"analysis_progress"`
 }
+
+// AnalysisProgress is the durable paragraph-level progress of the article's
+// active analysis job. completed_paragraphs counts only paragraphs that were
+// published by that job; stale materializations from older runs never count.
+type AnalysisProgress struct {
+	TotalParagraphs     int `json:"total_paragraphs"`
+	CompletedParagraphs int `json:"completed_paragraphs"`
+	CurrentBlockIndex   int `json:"current_block_index"`
+	FailedBlockIndex    int `json:"failed_block_index"`
+}
+
+// BlockAnalysisStatus is the per-paragraph lifecycle under an analysis job.
+type BlockAnalysisStatus string
+
+const (
+	BlockPending    BlockAnalysisStatus = "pending"
+	BlockProcessing BlockAnalysisStatus = "processing"
+	BlockReady      BlockAnalysisStatus = "ready"
+	BlockFailed     BlockAnalysisStatus = "failed"
+)
 
 // ArticleBlock is one preserved paragraph of the pasted source.
 type ArticleBlock struct {
@@ -126,6 +167,18 @@ type ArticleBlock struct {
 	Annotations []Annotation        `json:"annotations"`
 	Sentences   []ArticleSentence   `json:"sentences"`
 	Occurrences []ArticleOccurrence `json:"occurrences"`
+	// AnalysisStatus is the block's own lifecycle state. A block can remain
+	// readable with older accepted semantics while a newer run is pending.
+	AnalysisStatus    BlockAnalysisStatus `json:"analysis_status"`
+	AnalysisErrorCode string              `json:"analysis_error_code"`
+	HasAnalysis       bool                `json:"has_analysis"`
+	AnalysisIsCurrent bool                `json:"analysis_is_current"`
+	PublishedRevision string              `json:"published_analysis_revision,omitempty"`
+	PublishedModel    string              `json:"published_analysis_model,omitempty"`
+	PublishedEffort   string              `json:"published_analysis_effort,omitempty"`
+	PublishedAt       string              `json:"published_at,omitempty"`
+	analysisJobID     string
+	publishedJobID    string
 }
 
 // ArticleSentence is a source-ordered sentence with an optional server audio
@@ -188,23 +241,42 @@ type SemanticLearningState struct {
 	UpdatedAt       string         `json:"updated_at"`
 }
 
+// SubtitleSuppressionReason explains why an unlearned occurrence with an
+// effective English subtitle does not display it.
+type SubtitleSuppressionReason string
+
+const (
+	// SubtitleNone means the occurrence's effective subtitle is visible when
+	// the occurrence is unlearned.
+	SubtitleNone SubtitleSuppressionReason = "none"
+	// SubtitleSpecialToken marks tokens that have no effective subtitle
+	// (proper names, numbers, acronyms, and deliberately unchanged tokens
+	// without a translation). Only special classifications produce it.
+	SubtitleSpecialToken SubtitleSuppressionReason = "special_token"
+	// SubtitleContiguousGroupMember marks exact lexical members of a
+	// contiguous construction; the construction subtitle replaces theirs.
+	SubtitleContiguousGroupMember SubtitleSuppressionReason = "contiguous_group_member"
+)
+
 type ArticleOccurrence struct {
-	ID                         library.ULID            `json:"id"`
-	ArticleBlockID             library.ULID            `json:"article_block_id"`
-	ArticleSentenceID          *library.ULID           `json:"article_sentence_id"`
-	SemanticSenseID            *library.ULID           `json:"semantic_sense_id"`
-	Kind                       AnnotationKind          `json:"kind"`
-	Role                       OccurrenceRole          `json:"role"`
-	ShadowPolicy               ShadowPolicy            `json:"shadow_policy"`
-	ShadowText                 string                  `json:"shadow_text"`
-	CanonicalPronunciationText string                  `json:"canonical_pronunciation_text"`
-	ContextPronunciationKey    string                  `json:"context_pronunciation_key"`
-	ConfidenceMilli            int                     `json:"confidence_milli"`
-	Sense                      *SemanticSense          `json:"sense"`
-	LearningState              *SemanticLearningState  `json:"learning_state"`
-	ShowShadow                 bool                    `json:"show_shadow"`
-	Pronunciation              *AudioRef               `json:"pronunciation"`
-	Spans                      []ArticleOccurrenceSpan `json:"spans"`
+	ID                         library.ULID              `json:"id"`
+	ArticleBlockID             library.ULID              `json:"article_block_id"`
+	ArticleSentenceID          *library.ULID             `json:"article_sentence_id"`
+	SemanticSenseID            *library.ULID             `json:"semantic_sense_id"`
+	Kind                       AnnotationKind            `json:"kind"`
+	Role                       OccurrenceRole            `json:"role"`
+	ShadowPolicy               ShadowPolicy              `json:"shadow_policy"`
+	ShadowText                 string                    `json:"shadow_text"`
+	SubtitleSuppressionReason  SubtitleSuppressionReason `json:"subtitle_suppression_reason"`
+	CanonicalPronunciationText string                    `json:"canonical_pronunciation_text"`
+	ContextPronunciationKey    string                    `json:"context_pronunciation_key"`
+	ConfidenceMilli            int                       `json:"confidence_milli"`
+	Sense                      *SemanticSense            `json:"sense"`
+	LearningState              *SemanticLearningState    `json:"learning_state"`
+	ShowShadow                 bool                      `json:"show_shadow"`
+	MemberOccurrenceIDs        []string                  `json:"member_occurrence_ids"`
+	Pronunciation              *AudioRef                 `json:"pronunciation"`
+	Spans                      []ArticleOccurrenceSpan   `json:"spans"`
 }
 
 // AudioRef is a compact authenticated server URL, never inline audio bytes.

@@ -271,6 +271,13 @@ func newHandlerWithMedia(
 	mux.Handle("/api/v1/analysis", analysisRoutes)
 	mux.Handle("/api/v1/analysis/", analysisRoutes)
 
+	readerSettingsHandler := httpapi.NewReaderSettingsHandler(db, authHandler.CSRF)
+	readerSettingsRoutes := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		authHandler.RequireAuth(readerSettingsMux(readerSettingsHandler)).ServeHTTP(w, r)
+	})
+	mux.Handle("/api/v1/reader/settings", readerSettingsRoutes)
+
 	workerService := workers.NewService(db, mediaStore)
 	workerHandler := httpapi.NewSpeechWorkerHandler(workerService, authHandler.CSRF)
 	ownerWorkerMux := http.NewServeMux()
@@ -350,6 +357,13 @@ func articleMux(h *httpapi.ArticleHandler) http.Handler {
 	mux.HandleFunc("GET /api/v1/articles/{id}/narration", h.ServeNarration)
 	mux.HandleFunc("DELETE /api/v1/articles/{id}/narration", h.ServeClearNarration)
 	mux.HandleFunc("/api/v1/learning-state", h.ServeLearningState)
+	return mux
+}
+
+func readerSettingsMux(h *httpapi.ReaderSettingsHandler) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/reader/settings", h.ServeSettings)
+	mux.HandleFunc("PUT /api/v1/reader/settings", h.ServeSettings)
 	return mux
 }
 

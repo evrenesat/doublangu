@@ -13,18 +13,32 @@ export interface AudioLike {
 
 export type AudioFactory = () => AudioLike;
 
+export type HoverAudioOptions = {
+	/** Called once after a hover play is rejected by the browser's
+	 * autoplay policy. The preference itself is never disabled. */
+	onBlocked?: () => void;
+};
+
 /** One-cue pronunciation playback: new hover cancels the pending/active cue. */
 export class HoverAudioController {
 	private readonly createAudio: AudioFactory;
+	private readonly onBlocked?: () => void;
 	private audio: AudioLike | undefined;
 	private timer: ReturnType<typeof setTimeout> | undefined;
 	private pendingKey = '';
 	private activeKey = '';
 	private enabled = false;
 	private unlocked = false;
+	private blockedNotified = false;
 
-	constructor(createAudio: AudioFactory = () => new Audio()) {
-		this.createAudio = createAudio;
+	constructor(createAudioOrOptions: AudioFactory | HoverAudioOptions = () => new Audio(), maybeOptions?: HoverAudioOptions) {
+		if (typeof createAudioOrOptions === 'function') {
+			this.createAudio = createAudioOrOptions;
+			this.onBlocked = maybeOptions?.onBlocked;
+		} else {
+			this.createAudio = () => new Audio();
+			this.onBlocked = createAudioOrOptions.onBlocked;
+		}
 	}
 
 	setEnabled(enabled: boolean): void {
@@ -71,8 +85,9 @@ export class HoverAudioController {
 			audio.pause();
 			audio.currentTime = 0;
 			this.unlocked = true;
+			this.blockedNotified = false;
 		} catch {
-			// A rejected unlock is harmless; a later explicit Hear action retries.
+			// A rejected unlock is harmless; a later activation retries.
 		}
 	}
 
@@ -117,8 +132,15 @@ export class HoverAudioController {
 		audio.currentTime = 0;
 		try {
 			await audio.play();
-		} catch {
+			this.blockedNotified = false;
+		} catch (cause) {
 			if (this.activeKey === key) this.activeKey = '';
+			const name = cause instanceof DOMException ? cause.name : cause instanceof Error ? cause.name : '';
+			if (name === 'NotAllowedError' && !this.blockedNotified) {
+				// The saved preference stays enabled; only the hint is new.
+				this.blockedNotified = true;
+				this.onBlocked?.();
+			}
 		}
 	}
 

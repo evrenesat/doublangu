@@ -15,6 +15,8 @@ const occurrence = (overrides: Partial<ArticleOccurrence>): ArticleOccurrence =>
 	sense: null,
 	learning_state: null,
 	show_shadow: true,
+	subtitle_suppression_reason: 'none',
+	member_occurrence_ids: [],
 	pronunciation: null,
 	canonical_pronunciation_text: '',
 	context_pronunciation_key: '',

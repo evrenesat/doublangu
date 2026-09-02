@@ -62,7 +62,11 @@ func analysisSelectionTx(ctx context.Context, tx *sql.Tx) (AnalysisSelection, er
 }
 
 // PrepareAnalysis creates deterministic source anchors and the scoped local
-// lexicon candidate list for an article.
+// lexicon candidate list for an article. The persisted sentence rows are the
+// authoritative narration anchors: they were either preserved from an earlier
+// contract ('legacy.analysis') or created deterministically with the article.
+// An article that has no sentence rows yet receives deterministic rows lazily
+// so every prepared analysis input carries stable source sentences.
 func (s *Store) PrepareAnalysis(ctx context.Context, id library.ULID) (semantics.PreparedArticle, error) {
 	if s == nil || s.db == nil {
 		return semantics.PreparedArticle{}, errors.New("reader: nil database")
@@ -80,7 +84,40 @@ func (s *Store) PrepareAnalysis(ctx context.Context, id library.ULID) (semantics
 			return err
 		}
 		prepared, err = semantics.Prepare(title, sourceLanguage, targetLanguage, blocks, nil)
-		return err
+		if err != nil {
+			return err
+		}
+		anchors, err := storedSentenceAnchorsTx(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if len(anchors) == 0 {
+			// Lazy deterministic creation: only articles that have no
+			// sentence rows at all are re-segmented; preserved rows are
+			// never silently re-segmented.
+			anchors, err = SegmentArticleSentences(blocks)
+			if err != nil {
+				return &Error{Op: "prepare analysis", Kind: KindValidation, Err: err}
+			}
+			blockIDs, err := blockIDsByIndexTx(ctx, tx, id)
+			if err != nil {
+				return err
+			}
+			for _, block := range blocks {
+				blockID, ok := blockIDs[block.BlockIndex]
+				if !ok {
+					return &Error{Op: "prepare analysis", Kind: KindValidation, Err: fmt.Errorf("block %d not found", block.BlockIndex)}
+				}
+				if err := insertBlockSentencesTx(ctx, tx, blockID, block.SourceText); err != nil {
+					return err
+				}
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE article SET sentence_revision = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`, SentenceRevisionSourceSentencesV1, id.String()); err != nil {
+				return err
+			}
+		}
+		prepared.Sentences = anchors
+		return nil
 	})
 	if err != nil {
 		return semantics.PreparedArticle{}, err
@@ -91,6 +128,55 @@ func (s *Store) PrepareAnalysis(ctx context.Context, id library.ULID) (semantics
 	}
 	prepared.Candidates = candidates
 	return prepared, nil
+}
+
+// storedSentenceAnchorsTx returns the persisted source sentence anchors of an
+// article in block order and then sentence order.
+func storedSentenceAnchorsTx(ctx context.Context, tx *sql.Tx, id library.ULID) ([]semantics.ResolvedSentence, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT b.block_index, s.sentence_index, s.start_utf16, s.end_utf16, s.source_text
+		FROM article_sentence AS s
+		JOIN article_block AS b ON b.id = s.article_block_id
+		WHERE b.article_id = ?
+		ORDER BY b.block_index, s.sentence_index
+	`, id.String())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	anchors := make([]semantics.ResolvedSentence, 0)
+	for rows.Next() {
+		var anchor semantics.ResolvedSentence
+		if err := rows.Scan(&anchor.Span.BlockIndex, &anchor.Index, &anchor.Span.StartUTF16, &anchor.Span.EndUTF16, &anchor.Span.SourceText); err != nil {
+			return nil, err
+		}
+		anchors = append(anchors, anchor)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return anchors, nil
+}
+
+func blockIDsByIndexTx(ctx context.Context, tx *sql.Tx, id library.ULID) (map[int]library.ULID, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT block_index, id FROM article_block WHERE article_id = ?`, id.String())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make(map[int]library.ULID)
+	for rows.Next() {
+		var index int
+		var rawID string
+		if err := rows.Scan(&index, &rawID); err != nil {
+			return nil, err
+		}
+		result[index] = library.ULID(rawID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 // CachedAnalysis returns a validated-contract response only for the exact
@@ -216,6 +302,14 @@ func (s *Store) CreateArticleQueued(ctx context.Context, article *Article) error
 	if err != nil {
 		return &Error{Op: "create article", Kind: KindValidation, Err: err}
 	}
+	// Source sentences are deterministic and stable: they are created with
+	// the article, before any job is queued, so narration never depends on
+	// model output.
+	anchors, err := SegmentArticleSentences(blocks)
+	if err != nil {
+		return &Error{Op: "create article", Kind: KindValidation, Err: err}
+	}
+	prepared.Sentences = anchors
 	article.ContentHash = prepared.ContentHash
 	article.AnalysisStatus = AnalysisQueued
 	article.AnalysisRevision = ""
@@ -224,6 +318,7 @@ func (s *Store) CreateArticleQueued(ctx context.Context, article *Article) error
 	article.AnalysisEffort = ""
 	article.NarrationStatus = NarrationNotRequested
 	article.NarrationErrorCode = ""
+	article.SentenceRevision = SentenceRevisionSourceSentencesV1
 	return s.db.WithTransaction(ctx, func(tx *sql.Tx) error {
 		selection, err := analysisSelectionTx(ctx, tx)
 		if err != nil {
@@ -239,13 +334,22 @@ func (s *Store) CreateArticleQueued(ctx context.Context, article *Article) error
 			Contract: semantics.AnalysisContractVersion, PromptVersion: semantics.PromptVersion,
 			Model: selection.Model, Effort: selection.Effort, Fresh: false,
 		})
-		_, err = jobs.EnqueueTx(ctx, tx, jobs.Spec{
+		job, err := jobs.EnqueueTx(ctx, tx, jobs.Spec{
 			JobType: jobs.AnalysisJobType, ExecutionTarget: jobs.TargetServer,
 			OwnerType: "article", OwnerID: article.ID.String(),
 			IdempotencyKey: analysisIdempotencyKey(article.ID, prepared.ContentHash, selection.Model, selection.Effort, false, false),
 			InputHash:      prepared.ContentHash, PayloadJSON: string(payload), Priority: 100,
 		})
-		return err
+		if err != nil {
+			return err
+		}
+		article.AnalysisJobID = job.ID.String()
+		if err := activateJobTx(ctx, tx, article.ID, job.ID); err != nil {
+			return err
+		}
+		// Source sentences exist now, so narration can be queued before any
+		// analysis: it never depends on subtitles or provider output.
+		return speech.QueueArticleNarrationTx(ctx, tx, article.ID, false)
 	})
 }
 
@@ -254,13 +358,13 @@ func insertArticleTx(ctx context.Context, tx *sql.Tx, article *Article) error {
 		INSERT INTO article (id, title, source_language, target_language, enrichment_status,
 			enrichment_error_code, content_hash, analysis_status, analysis_revision,
 			analysis_error_code, analysis_model, analysis_effort, narration_status,
-			narration_error_code)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			narration_error_code, sentence_revision)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, article.ID.String(), article.Title, article.SourceLanguage, article.TargetLanguage,
 		article.EnrichmentStatus, article.EnrichmentErrorCode, article.ContentHash,
 		article.AnalysisStatus, article.AnalysisRevision, article.AnalysisErrorCode,
 		article.AnalysisModel, article.AnalysisEffort, article.NarrationStatus,
-		article.NarrationErrorCode); err != nil {
+		article.NarrationErrorCode, article.SentenceRevision); err != nil {
 		return writeError("create article", err)
 	}
 	for index := range article.Blocks {
@@ -272,7 +376,52 @@ func insertArticleTx(ctx context.Context, tx *sql.Tx, article *Article) error {
 			return writeError("create article block", err)
 		}
 	}
+	for _, block := range article.Blocks {
+		if err := insertBlockSentencesTx(ctx, tx, block.ID, block.SourceText); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// insertBlockSentencesTx persists the deterministic sentence rows for one
+// source block. Rows are source-owned: they are created once and semantic
+// analysis never deletes, renumbers, or replaces them.
+func insertBlockSentencesTx(ctx context.Context, tx *sql.Tx, blockID library.ULID, sourceText string) error {
+	sentences, err := SegmentSentences(sourceText)
+	if err != nil {
+		return &Error{Op: "create article sentences", Kind: KindValidation, Err: err}
+	}
+	for sentenceIndex, sentence := range sentences {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO article_sentence (id, article_block_id, sentence_index, start_utf16, end_utf16, source_text, source_hash) VALUES (?, ?, ?, ?, ?, ?, ?)`, library.NewULID().String(), blockID.String(), sentenceIndex, sentence.StartUTF16, sentence.EndUTF16, sentence.SourceText, sha256Hex([]byte(sentence.SourceText))); err != nil {
+			return writeError("create article sentence", err)
+		}
+	}
+	return nil
+}
+
+// SegmentArticleSentences returns the deterministic ordered sentence anchors
+// for every source block of an article.
+func SegmentArticleSentences(blocks []semantics.Block) ([]semantics.ResolvedSentence, error) {
+	anchors := make([]semantics.ResolvedSentence, 0)
+	for _, block := range blocks {
+		sentences, err := SegmentSentences(block.SourceText)
+		if err != nil {
+			return nil, err
+		}
+		for index, sentence := range sentences {
+			anchors = append(anchors, semantics.ResolvedSentence{
+				Index: index,
+				Span: semantics.ResolvedSpan{
+					BlockIndex: block.BlockIndex,
+					StartUTF16: sentence.StartUTF16,
+					EndUTF16:   sentence.EndUTF16,
+					SourceText: sentence.SourceText,
+				},
+			})
+		}
+	}
+	return anchors, nil
 }
 
 func sourceBlocksTx(ctx context.Context, tx *sql.Tx, id library.ULID) ([]semantics.Block, error) {
@@ -315,7 +464,21 @@ func (s *Store) QueueAnalysis(ctx context.Context, id library.ULID, force bool, 
 			// Returning the active idempotent work item is preferable to creating
 			// a second queue entry after a browser retry.
 			job, err = jobs.GetActiveOwnerJobTx(ctx, tx, "article", id.String(), jobs.AnalysisJobType)
-			return err
+			if err != nil {
+				return err
+			}
+			// Legacy queued articles (queued before job ids were tracked) carry
+			// an empty article job id. Adopt the active job and reset blocks
+			// only then; a job that already owns the article is left untouched
+			// so an in-flight run is never disturbed.
+			var activeJobID string
+			if err := tx.QueryRowContext(ctx, `SELECT analysis_job_id FROM article WHERE id = ?`, id.String()).Scan(&activeJobID); err != nil {
+				return err
+			}
+			if activeJobID != job.ID.String() {
+				return activateJobTx(ctx, tx, id, job.ID)
+			}
+			return nil
 		}
 		key := analysisIdempotencyKey(id, prepared.ContentHash, selection.Model, selection.Effort, freshRequested, force)
 		payload, _ := json.Marshal(AnalysisJobPayload{
@@ -340,7 +503,10 @@ func (s *Store) QueueAnalysis(ctx context.Context, id library.ULID, force bool, 
 						return err
 					}
 					job, err = jobs.GetByIdempotencyKeyTx(ctx, tx, key)
-					return err
+					if err != nil {
+						return err
+					}
+					return activateJobTx(ctx, tx, id, job.ID)
 				}
 			} else if !errors.Is(getErr, sql.ErrNoRows) {
 				return getErr
@@ -354,11 +520,17 @@ func (s *Store) QueueAnalysis(ctx context.Context, id library.ULID, force bool, 
 			OwnerType: "article", OwnerID: id.String(), IdempotencyKey: key,
 			InputHash: prepared.ContentHash, PayloadJSON: string(payload), Priority: 100,
 		})
-		return err
+		if err != nil {
+			return err
+		}
+		return activateJobTx(ctx, tx, id, job.ID)
 	})
 	return job, err
 }
 
+// analysisIdempotencyKey builds the durable job identity for one queue
+// request. The prefix is historical job-type naming; the payload contract and
+// prompt versions inside the key keep v3 work distinct from older attempts.
 func analysisIdempotencyKey(id library.ULID, contentHash, model, effort string, fresh, force bool) string {
 	mode := "normal"
 	if fresh {
@@ -380,20 +552,115 @@ func articleAnalysisStatusTx(ctx context.Context, tx *sql.Tx, id library.ULID) (
 	return status, nil
 }
 
-func (s *Store) MarkAnalysisProcessing(ctx context.Context, id library.ULID) error {
-	result, err := s.db.Exec(ctx, `UPDATE article SET analysis_status = 'processing', analysis_error_code = '', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ? AND analysis_status IN ('queued', 'needs_analysis', 'failed')`, id.String())
+// MarkAnalysisProcessing transitions the article to processing only while it
+// still belongs to the given durable job. A stale job that was superseded by
+// an owner-requested reanalysis (article.analysis_job_id now names a newer
+// job) is rejected, so a late runner can never mark the newer job's article
+// processing and wedge it for every subsequent attempt.
+func (s *Store) MarkAnalysisProcessing(ctx context.Context, id library.ULID, jobID library.ULID) error {
+	result, err := s.db.Exec(ctx, `UPDATE article SET analysis_status = 'processing', analysis_error_code = '', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ? AND analysis_job_id = ? AND analysis_status IN ('queued', 'needs_analysis', 'failed')`, id.String(), jobID.String())
 	if err != nil {
 		return err
 	}
 	count, _ := result.RowsAffected()
 	if count == 0 {
-		var status string
-		if err := s.db.QueryRow(ctx, `SELECT analysis_status FROM article WHERE id = ?`, id.String()).Scan(&status); errors.Is(err, sql.ErrNoRows) {
+		var status, activeJob string
+		if err := s.db.QueryRow(ctx, `SELECT analysis_status, analysis_job_id FROM article WHERE id = ?`, id.String()).Scan(&status, &activeJob); errors.Is(err, sql.ErrNoRows) {
 			return &Error{Op: "mark analysis processing", Kind: KindNotFound, Err: sql.ErrNoRows}
-		} else if err == nil && status == string(AnalysisProcessing) {
+		} else if err != nil {
+			return err
+		}
+		if status == string(AnalysisProcessing) && activeJob == jobID.String() {
 			return &Error{Op: "mark analysis processing", Kind: KindInProgress, Err: errors.New("analysis is already processing")}
 		}
+		if activeJob != "" && activeJob != jobID.String() {
+			return &Error{Op: "mark analysis processing", Kind: KindConflict, Err: errors.New("analysis job was superseded")}
+		}
 		return &Error{Op: "mark analysis processing", Kind: KindConflict, Err: fmt.Errorf("analysis status is %q", status)}
+	}
+	return nil
+}
+
+// ResetBlocksForJob reinitializes the per-block lifecycle of one job before
+// a scheduler retry: earlier published paragraphs are reset to pending under
+// the same job so the retry can republish them through the normal paragraph
+// transaction, while published_* provenance and the accepted semantic rows
+// stay intact and readable. Blocks owned by other jobs are never touched.
+func (s *Store) ResetBlocksForJob(ctx context.Context, id library.ULID, jobID library.ULID) error {
+	if s == nil || s.db == nil {
+		return errors.New("reader: nil database")
+	}
+	result, err := s.db.Exec(ctx, `
+		UPDATE article_block SET analysis_status = 'pending', analysis_error_code = ''
+		WHERE article_id = ? AND analysis_job_id = ? AND analysis_status IN ('pending', 'processing', 'ready', 'failed')
+	`, id.String(), jobID.String())
+	if err != nil {
+		return err
+	}
+	_, err = result.RowsAffected()
+	return err
+}
+
+// MarkBlockProcessing claims one paragraph for the active analysis job after
+// the runner verified its lease. A block owned by a different (superseded)
+// job can never be marked or published.
+func (s *Store) MarkBlockProcessing(ctx context.Context, id library.ULID, blockIndex int, jobID library.ULID) error {
+	if s == nil || s.db == nil {
+		return errors.New("reader: nil database")
+	}
+	return s.db.WithTransaction(ctx, func(tx *sql.Tx) error {
+		var exists int
+		var jobIDValue string
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(MAX(analysis_job_id), '') FROM article WHERE id = ?`, id.String()).Scan(&exists, &jobIDValue); err != nil {
+			return err
+		}
+		if exists == 0 {
+			return &Error{Op: "mark block processing", Kind: KindNotFound, Err: sql.ErrNoRows}
+		}
+		if jobIDValue != jobID.String() {
+			return &Error{Op: "mark block processing", Kind: KindConflict, Err: errors.New("analysis job was superseded")}
+		}
+		result, err := tx.ExecContext(ctx, `
+			UPDATE article_block SET analysis_status = 'processing', analysis_error_code = ''
+			WHERE article_id = ? AND block_index = ? AND analysis_job_id = ? AND analysis_status = 'pending'
+		`, id.String(), blockIndex, jobID.String())
+		if err != nil {
+			return err
+		}
+		count, _ := result.RowsAffected()
+		if count == 0 {
+			var blockExists int
+			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM article_block WHERE article_id = ? AND block_index = ?`, id.String(), blockIndex).Scan(&blockExists); err != nil {
+				return err
+			}
+			if blockExists == 0 {
+				return &Error{Op: "mark block processing", Kind: KindNotFound, Err: fmt.Errorf("article block %d not found", blockIndex)}
+			}
+			return &Error{Op: "mark block processing", Kind: KindConflict, Err: fmt.Errorf("article block %d is not pending for the active job", blockIndex)}
+		}
+		return nil
+	})
+}
+
+// FailBlockForJob marks one paragraph failed under its owning job without
+// touching published materializations or other blocks.
+func (s *Store) FailBlockForJob(ctx context.Context, id library.ULID, blockIndex int, jobID library.ULID, code string) error {
+	if !validErrorCode(code) {
+		return &Error{Op: "fail analysis block", Kind: KindValidation, Err: errors.New("invalid analysis error code")}
+	}
+	if s == nil || s.db == nil {
+		return errors.New("reader: nil database")
+	}
+	result, err := s.db.Exec(ctx, `
+		UPDATE article_block SET analysis_status = 'failed', analysis_error_code = ?
+		WHERE article_id = ? AND block_index = ? AND analysis_job_id = ?
+	`, code, id.String(), blockIndex, jobID.String())
+	if err != nil {
+		return err
+	}
+	count, _ := result.RowsAffected()
+	if count == 0 {
+		return &Error{Op: "fail analysis block", Kind: KindNotFound, Err: fmt.Errorf("article block %d is not owned by the active job", blockIndex)}
 	}
 	return nil
 }
@@ -409,6 +676,30 @@ func (s *Store) MarkAnalysisFailed(ctx context.Context, id library.ULID, code st
 	count, _ := result.RowsAffected()
 	if count == 0 {
 		return &Error{Op: "mark analysis failed", Kind: KindNotFound, Err: sql.ErrNoRows}
+	}
+	return nil
+}
+
+// MarkAnalysisReady marks the article ready after the final whole-response
+// consistency audit succeeded. Only the active job may perform the transition.
+func (s *Store) MarkAnalysisReady(ctx context.Context, id library.ULID, jobID library.ULID, model, effort string) error {
+	if s == nil || s.db == nil {
+		return errors.New("reader: nil database")
+	}
+	result, err := s.db.Exec(ctx, `UPDATE article SET analysis_status = 'ready', analysis_revision = ?, analysis_error_code = '', analysis_model = ?, analysis_effort = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ? AND analysis_job_id = ?`, semantics.AnalysisContractVersion, model, effort, id.String(), jobID.String())
+	if err != nil {
+		return err
+	}
+	count, _ := result.RowsAffected()
+	if count == 0 {
+		var exists int
+		if err := s.db.QueryRow(ctx, `SELECT COUNT(*) FROM article WHERE id = ?`, id.String()).Scan(&exists); err != nil {
+			return err
+		}
+		if exists == 0 {
+			return &Error{Op: "mark analysis ready", Kind: KindNotFound, Err: sql.ErrNoRows}
+		}
+		return &Error{Op: "mark analysis ready", Kind: KindConflict, Err: errors.New("analysis job was superseded")}
 	}
 	return nil
 }
@@ -612,7 +903,7 @@ func (s *Store) PersistAnalysis(ctx context.Context, id library.ULID, prepared s
 			semantics.PromptVersion, semantics.PreparedInputHash(prepared), string(responseJSON), responseHash); err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(ctx, `UPDATE article SET analysis_status = 'ready', analysis_revision = ?, analysis_error_code = '', analysis_model = ?, analysis_effort = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`, semantics.AnalysisContractVersion, requestedModel, providerEffort, id.String()); err != nil {
+		if _, err = tx.ExecContext(ctx, `UPDATE article SET analysis_status = 'ready', analysis_revision = ?, analysis_error_code = '', analysis_model = ?, analysis_effort = ?, sentence_revision = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`, semantics.AnalysisContractVersion, requestedModel, providerEffort, SentenceRevisionLegacyAnalysis, id.String()); err != nil {
 			return err
 		}
 		if err := speech.QueueArticleAudioTx(ctx, tx, id, true); err != nil {
@@ -731,7 +1022,7 @@ func sha256Hex(data []byte) string { sum := sha256.Sum256(data); return hex.Enco
 // loadV2Tx fills additive semantic-reader fields while leaving legacy
 // annotations untouched. It is called by the existing GetArticle transaction.
 func (s *Store) loadV2Tx(ctx context.Context, tx *sql.Tx, id library.ULID, article *Article, blockByID map[string]int) error {
-	if err := tx.QueryRowContext(ctx, `SELECT content_hash, analysis_status, analysis_revision, analysis_error_code, analysis_model, analysis_effort, narration_status, narration_error_code FROM article WHERE id = ?`, id.String()).Scan(&article.ContentHash, &article.AnalysisStatus, &article.AnalysisRevision, &article.AnalysisErrorCode, &article.AnalysisModel, &article.AnalysisEffort, &article.NarrationStatus, &article.NarrationErrorCode); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT content_hash, analysis_status, analysis_revision, analysis_error_code, analysis_model, analysis_effort, analysis_job_id, narration_status, narration_error_code FROM article WHERE id = ?`, id.String()).Scan(&article.ContentHash, &article.AnalysisStatus, &article.AnalysisRevision, &article.AnalysisErrorCode, &article.AnalysisModel, &article.AnalysisEffort, &article.AnalysisJobID, &article.NarrationStatus, &article.NarrationErrorCode); err != nil {
 		return fmt.Errorf("reader load article lifecycle: %w", err)
 	}
 	article.Sentences = make([]ArticleSentence, 0)
@@ -739,6 +1030,28 @@ func (s *Store) loadV2Tx(ctx context.Context, tx *sql.Tx, id library.ULID, artic
 	for index := range article.Blocks {
 		article.Blocks[index].Sentences = make([]ArticleSentence, 0)
 		article.Blocks[index].Occurrences = make([]ArticleOccurrence, 0)
+	}
+	// Per-block current/progress state depends on the article's active job,
+	// which is only known after the lifecycle query above.
+	article.AnalysisProgress = AnalysisProgress{TotalParagraphs: len(article.Blocks), CurrentBlockIndex: -1, FailedBlockIndex: -1}
+	for index := range article.Blocks {
+		block := &article.Blocks[index]
+		block.AnalysisIsCurrent = block.publishedJobID == article.AnalysisJobID
+		switch {
+		case block.AnalysisStatus == BlockReady && block.analysisJobID == article.AnalysisJobID:
+			article.AnalysisProgress.CompletedParagraphs++
+		case block.AnalysisStatus == BlockFailed && block.analysisJobID == article.AnalysisJobID && article.AnalysisProgress.FailedBlockIndex < 0:
+			article.AnalysisProgress.FailedBlockIndex = index
+		}
+		if block.analysisJobID != article.AnalysisJobID {
+			continue
+		}
+		if block.AnalysisStatus == BlockProcessing && article.AnalysisProgress.CurrentBlockIndex < 0 {
+			article.AnalysisProgress.CurrentBlockIndex = index
+		}
+		if block.AnalysisStatus == BlockPending && article.AnalysisProgress.CurrentBlockIndex < 0 && (article.AnalysisStatus == AnalysisProcessing || article.AnalysisStatus == AnalysisQueued) {
+			article.AnalysisProgress.CurrentBlockIndex = index
+		}
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT s.id, s.article_block_id, s.sentence_index, s.start_utf16, s.end_utf16, s.source_text, s.source_hash FROM article_sentence s JOIN article_block b ON b.id = s.article_block_id WHERE b.article_id = ? ORDER BY b.block_index, s.sentence_index`, id.String())
 	if err != nil {
@@ -791,7 +1104,8 @@ func (s *Store) loadV2Tx(ctx context.Context, tx *sql.Tx, id library.ULID, artic
 			occurrence.SemanticSenseID = &value
 		}
 		occurrence.Spans = make([]ArticleOccurrenceSpan, 0)
-		occurrence.ShowShadow = occurrence.ShadowPolicy != ShadowNone
+		occurrence.SubtitleSuppressionReason = SubtitleNone
+		occurrence.MemberOccurrenceIDs = []string{}
 		occurrenceRows = append(occurrenceRows, occurrenceRow{occurrence: occurrence, blockID: blockID})
 	}
 	if err := rows.Err(); err != nil {
@@ -799,6 +1113,59 @@ func (s *Store) loadV2Tx(ctx context.Context, tx *sql.Tx, id library.ULID, artic
 		return err
 	}
 	rows.Close()
+	// Exact contiguous-construction members never display their own subtitle;
+	// membership rows are v3-only and are never inferred from legacy spans.
+	contiguousMembers := make(map[string]struct{})
+	memberRows, err := tx.QueryContext(ctx, `
+		SELECT m.token_occurrence_id
+		FROM article_construction_member m
+		JOIN article_occurrence c ON c.id = m.construction_occurrence_id
+		JOIN article_block b ON b.id = c.article_block_id
+		WHERE b.article_id = ? AND c.role = 'contiguous_construction'
+	`, id.String())
+	if err != nil {
+		return err
+	}
+	for memberRows.Next() {
+		var tokenOccurrenceID string
+		if err := memberRows.Scan(&tokenOccurrenceID); err != nil {
+			memberRows.Close()
+			return err
+		}
+		contiguousMembers[tokenOccurrenceID] = struct{}{}
+	}
+	if err := memberRows.Err(); err != nil {
+		memberRows.Close()
+		return err
+	}
+	memberRows.Close()
+	// Exact ordered membership for construction occurrences: tokens list the
+	// construction that owns them above; constructions list their members.
+	memberOfConstruction := make(map[string][]string)
+	memberRows, err = tx.QueryContext(ctx, `
+		SELECT m.construction_occurrence_id, m.token_occurrence_id
+		FROM article_construction_member m
+		JOIN article_occurrence c ON c.id = m.construction_occurrence_id
+		JOIN article_block b ON b.id = c.article_block_id
+		WHERE b.article_id = ?
+		ORDER BY m.construction_occurrence_id, m.member_index
+	`, id.String())
+	if err != nil {
+		return err
+	}
+	for memberRows.Next() {
+		var constructionID, tokenID string
+		if err := memberRows.Scan(&constructionID, &tokenID); err != nil {
+			memberRows.Close()
+			return err
+		}
+		memberOfConstruction[constructionID] = append(memberOfConstruction[constructionID], tokenID)
+	}
+	if err := memberRows.Err(); err != nil {
+		memberRows.Close()
+		return err
+	}
+	memberRows.Close()
 	occurrencesByID := make(map[string]int, len(occurrenceRows))
 	for _, row := range occurrenceRows {
 		occurrence := row.occurrence
@@ -813,7 +1180,6 @@ func (s *Store) loadV2Tx(ctx context.Context, tx *sql.Tx, id library.ULID, artic
 			err = tx.QueryRowContext(ctx, `SELECT status, updated_at FROM semantic_learning_state WHERE semantic_sense_id = ?`, occurrence.SemanticSenseID.String()).Scan(&status, &updated)
 			if err == nil {
 				occurrence.LearningState = &SemanticLearningState{SemanticSenseID: *occurrence.SemanticSenseID, Status: LearningStatus(status), UpdatedAt: updated}
-				occurrence.ShowShadow = status != string(LearningStatusLearned) && occurrence.ShowShadow
 			} else if !errors.Is(err, sql.ErrNoRows) {
 				return err
 			}
@@ -850,6 +1216,20 @@ func (s *Store) loadV2Tx(ctx context.Context, tx *sql.Tx, id library.ULID, artic
 		return err
 	}
 	spanRows.Close()
+	// Effective subtitles and suppression reasons depend on spans, senses,
+	// learning state, and exact membership, so they are computed once all
+	// related rows are attached. Both copies (article-level and block-level)
+	// receive the same derived values.
+	for index := range article.Occurrences {
+		finishOccurrenceDisplay(&article.Occurrences[index], contiguousMembers)
+		article.Occurrences[index].MemberOccurrenceIDs = memberOfConstruction[article.Occurrences[index].ID.String()]
+	}
+	for blockIndex := range article.Blocks {
+		for occurrenceIndex := range article.Blocks[blockIndex].Occurrences {
+			finishOccurrenceDisplay(&article.Blocks[blockIndex].Occurrences[occurrenceIndex], contiguousMembers)
+			article.Blocks[blockIndex].Occurrences[occurrenceIndex].MemberOccurrenceIDs = memberOfConstruction[article.Blocks[blockIndex].Occurrences[occurrenceIndex].ID.String()]
+		}
+	}
 	attachAudio := func(renderID, state, errorCode string, duration, size int64) *AudioRef {
 		return &AudioRef{RenderID: library.ULID(renderID), URL: "/api/v1/audio/" + renderID, Ready: state == speech.RenderReady, DurationMS: duration, SizeBytes: size, ErrorCode: errorCode}
 	}
@@ -944,6 +1324,38 @@ func (s *Store) loadV2Tx(ctx context.Context, tx *sql.Tx, id library.ULID, artic
 	}
 	article.Narration = NarrationSummary{Status: article.NarrationStatus, ErrorCode: article.NarrationErrorCode, SentenceCount: sentenceCount, ReadyCount: readyCount, DurationMS: duration, SizeBytes: size, ReclaimableBytes: reclaimable}
 	return nil
+}
+
+// finishOccurrenceDisplay derives the effective subtitle, the explicit
+// suppression reason, and show_shadow for one occurrence. The effective
+// subtitle is shadow_text with a fallback to the referenced sense's primary
+// translation. A token without a sense whose subtitle normalizes exactly to
+// its own source text carries no effective subtitle at all: a source copy is
+// never a translation.
+func finishOccurrenceDisplay(occurrence *ArticleOccurrence, contiguousMembers map[string]struct{}) {
+	effective := occurrence.ShadowText
+	if effective == "" && occurrence.Sense != nil {
+		effective = occurrence.Sense.PrimaryTranslation
+	}
+	if occurrence.Role == OccurrenceToken && occurrence.Sense == nil && effective != "" && len(occurrence.Spans) > 0 {
+		subtitleNormalized, subtitleErr := semantics.NormalizeForm(effective)
+		sourceNormalized, sourceErr := semantics.NormalizeForm(occurrence.Spans[0].SourceText)
+		if subtitleErr == nil && sourceErr == nil && subtitleNormalized == sourceNormalized {
+			effective = ""
+		}
+	}
+	occurrence.ShadowText = effective
+	reason := SubtitleNone
+	switch {
+	case occurrence.Role == OccurrenceToken && effective == "":
+		reason = SubtitleSpecialToken
+	}
+	if _, member := contiguousMembers[occurrence.ID.String()]; member {
+		reason = SubtitleContiguousGroupMember
+	}
+	occurrence.SubtitleSuppressionReason = reason
+	unlearned := occurrence.LearningState == nil || occurrence.LearningState.Status != LearningStatusLearned
+	occurrence.ShowShadow = unlearned && reason == SubtitleNone && effective != ""
 }
 
 func loadSemanticSenseTx(ctx context.Context, tx *sql.Tx, id string) (*SemanticSense, error) {

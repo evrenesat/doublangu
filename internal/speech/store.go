@@ -254,6 +254,133 @@ func getRenderTx(ctx context.Context, tx *sql.Tx, id string) (*Render, error) {
 	return &render, nil
 }
 
+// QueueBlockPronunciationsTx ensures lexical AVSpeech units, renders, jobs,
+// and the preferred occurrence binding for exactly one accepted block. It is
+// called inside the paragraph publication transaction so lexical audio appears
+// as soon as a paragraph is validated and committed, before later paragraphs
+// finish.
+func QueueBlockPronunciationsTx(ctx context.Context, tx *sql.Tx, articleID library.ULID, blockID library.ULID) error {
+	if tx == nil {
+		return errors.New("speech: nil transaction")
+	}
+	var language string
+	if err := tx.QueryRowContext(ctx, `SELECT source_language FROM article WHERE id = ?`, articleID.String()).Scan(&language); err != nil {
+		return err
+	}
+	canonicalLanguage, err := canonicalSpeechLanguage(language)
+	if err != nil {
+		return err
+	}
+	language = canonicalLanguage
+	if _, _, err := DefaultProfilesTx(ctx, tx, language); err != nil {
+		return err
+	}
+	return queuePronunciationsTx(ctx, tx, articleID.String(), blockID.String())
+}
+
+// queuePronunciationsTx ensures word and short contiguous-phrase
+// pronunciations for the given scope: every published occurrence of the whole
+// article (blockScope empty) or exactly one block. Utterances always use the
+// visible Dutch source spelling.
+func queuePronunciationsTx(ctx context.Context, tx *sql.Tx, articleID, blockScope string) error {
+	if tx == nil {
+		return errors.New("speech: nil transaction")
+	}
+	var language string
+	if err := tx.QueryRowContext(ctx, `SELECT source_language FROM article WHERE id = ?`, articleID).Scan(&language); err != nil {
+		return err
+	}
+	canonicalLanguage, err := canonicalSpeechLanguage(language)
+	if err != nil {
+		return err
+	}
+	language = canonicalLanguage
+	avProfile, _, err := DefaultProfilesTx(ctx, tx, language)
+	if err != nil {
+		return err
+	}
+	scope := ""
+	if blockScope != "" {
+		scope = " AND o.article_block_id = ?"
+	}
+	args := []any{articleID}
+	if blockScope != "" {
+		args = append(args, blockScope)
+	}
+	occurrenceRows, err := tx.QueryContext(ctx, `
+		SELECT o.id, o.kind, o.role, o.semantic_sense_id,
+		       (SELECT GROUP_CONCAT(sp.source_text, ' ') FROM article_occurrence_span sp WHERE sp.article_occurrence_id = o.id ORDER BY sp.span_index),
+		       o.context_pronunciation_key
+		FROM article_occurrence o
+		JOIN article_block b ON b.id = o.article_block_id
+		WHERE b.article_id = ? AND o.role IN ('token', 'contiguous_construction')`+scope+`
+		ORDER BY b.block_index, o.id
+	`, args...)
+	if err != nil {
+		return err
+	}
+	type occurrence struct {
+		id, kind, role, text, contextKey string
+		senseID                          sql.NullString
+	}
+	var occurrences []occurrence
+	for occurrenceRows.Next() {
+		var value occurrence
+		if err := occurrenceRows.Scan(&value.id, &value.kind, &value.role, &value.senseID, &value.text, &value.contextKey); err != nil {
+			occurrenceRows.Close()
+			return err
+		}
+		occurrences = append(occurrences, value)
+	}
+	if err := occurrenceRows.Err(); err != nil {
+		occurrenceRows.Close()
+		return err
+	}
+	occurrenceRows.Close()
+	for _, occurrence := range occurrences {
+		unitKind := UnitWord
+		priority := 100
+		jobType := jobs.AVSpeechJobType
+		if occurrence.role == "contiguous_construction" {
+			unitKind = UnitPhrase
+			priority = 90
+		}
+		if unitKind == UnitPhrase && (utf8.RuneCountInString(occurrence.text) > 80 || len(strings.Fields(occurrence.text)) > 8) {
+			continue
+		}
+		var senseID *library.ULID
+		if occurrence.senseID.Valid {
+			value := library.ULID(occurrence.senseID.String)
+			senseID = &value
+		}
+		// Lexical AVSpeech must receive the visible source spelling. The
+		// canonical pronunciation is semantic metadata and cache context,
+		// not a plain AVSpeech utterance string (IPA would be spoken
+		// literally by AVSpeech).
+		unit, err := EnsureUnitTx(ctx, tx, UnitInput{Language: language, UnitKind: unitKind, SpokenText: occurrence.text, ContextPronunciationKey: occurrence.contextKey, SemanticSenseID: senseID})
+		if err != nil {
+			return err
+		}
+		render, err := EnsureRenderTx(ctx, tx, *unit, *avProfile, RetentionLexical, false)
+		if err != nil {
+			return err
+		}
+		if err := ensureSpeechJobTx(ctx, tx, *render, *unit, *avProfile, jobType, priority); err != nil {
+			return err
+		}
+		// A new immutable profile creates a new render for the same
+		// occurrence. Keep old bindings for history, but expose exactly one
+		// preferred pronunciation to the reader.
+		if _, err := tx.ExecContext(ctx, `UPDATE article_occurrence_audio SET preferred = 0 WHERE article_occurrence_id = ? AND purpose = 'pronunciation'`, occurrence.id); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO article_occurrence_audio (article_occurrence_id, audio_render_id, purpose, preferred) VALUES (?, ?, 'pronunciation', 1) ON CONFLICT(article_occurrence_id, audio_render_id, purpose) DO UPDATE SET preferred = excluded.preferred`, occurrence.id, render.ID.String()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // QueueArticleAudio is idempotent. It binds lexical pronunciation renders and
 // ordered sentence renders without waiting for a worker to be online.
 func (s *Store) QueueArticleAudio(ctx context.Context, articleID library.ULID, reactivatePurged bool) error {
@@ -265,153 +392,92 @@ func (s *Store) QueueArticleAudio(ctx context.Context, articleID library.ULID, r
 	})
 }
 
-// QueueArticleAudioTx is the transaction-boundary variant used by semantic
-// persistence so accepted analysis and its durable speech work become visible
-// together.
+// QueueArticleAudioTx is the compatibility/manual regeneration wrapper: it
+// queues narration from the stable source sentences plus pronunciations for
+// every currently published block, in one transaction.
 func QueueArticleAudioTx(ctx context.Context, tx *sql.Tx, articleID library.ULID, reactivatePurged bool) error {
+	if err := QueueArticleNarrationTx(ctx, tx, articleID, reactivatePurged); err != nil {
+		return err
+	}
+	return queuePronunciationsTx(ctx, tx, articleID.String(), "")
+}
+
+// QueueArticleNarrationTx ensures sentence units, renders, jobs, and ordered
+// article bindings from the stable source sentence rows only. It is called
+// when a new article is created, before analysis starts, so narration never
+// depends on subtitles or provider output. Reanalysis never clears, cancels,
+// retires, or rebinds narration: the same source rows and request identities
+// keep the immutable renders reusable.
+func QueueArticleNarrationTx(ctx context.Context, tx *sql.Tx, articleID library.ULID, reactivatePurged bool) error {
 	if tx == nil {
 		return errors.New("speech: nil transaction")
 	}
-	{
-		var language string
-		if err := tx.QueryRowContext(ctx, `SELECT source_language FROM article WHERE id = ?`, articleID.String()).Scan(&language); err != nil {
-			return err
-		}
-		canonicalLanguage, err := canonicalSpeechLanguage(language)
-		if err != nil {
-			return err
-		}
-		language = canonicalLanguage
-		avProfile, narrationProfile, err := DefaultProfilesTx(ctx, tx, language)
-		if err != nil {
-			return err
-		}
-		occurrenceRows, err := tx.QueryContext(ctx, `
-			SELECT o.id, o.kind, o.role, o.semantic_sense_id,
-			       (SELECT GROUP_CONCAT(sp.source_text, ' ') FROM article_occurrence_span sp WHERE sp.article_occurrence_id = o.id ORDER BY sp.span_index),
-			       o.context_pronunciation_key
-			FROM article_occurrence o
-			JOIN article_block b ON b.id = o.article_block_id
-			WHERE b.article_id = ? AND o.role IN ('token', 'contiguous_construction')
-			ORDER BY b.block_index, o.id
-		`, articleID.String())
-		if err != nil {
-			return err
-		}
-		type occurrence struct {
-			id, kind, role, text, contextKey string
-			senseID                          sql.NullString
-		}
-		var occurrences []occurrence
-		for occurrenceRows.Next() {
-			var value occurrence
-			if err := occurrenceRows.Scan(&value.id, &value.kind, &value.role, &value.senseID, &value.text, &value.contextKey); err != nil {
-				occurrenceRows.Close()
-				return err
-			}
-			occurrences = append(occurrences, value)
-		}
-		if err := occurrenceRows.Err(); err != nil {
-			occurrenceRows.Close()
-			return err
-		}
-		occurrenceRows.Close()
-		for _, occurrence := range occurrences {
-			unitKind := UnitWord
-			priority := 100
-			jobType := jobs.AVSpeechJobType
-			if occurrence.role == "contiguous_construction" {
-				unitKind = UnitPhrase
-				priority = 90
-			}
-			if unitKind == UnitPhrase && (utf8.RuneCountInString(occurrence.text) > 80 || len(strings.Fields(occurrence.text)) > 8) {
-				continue
-			}
-			var senseID *library.ULID
-			if occurrence.senseID.Valid {
-				value := library.ULID(occurrence.senseID.String)
-				senseID = &value
-			}
-			// Lexical AVSpeech must receive the visible source spelling. The
-			// canonical pronunciation is semantic metadata and cache context,
-			// not a plain AVSpeech utterance string (IPA would be spoken
-			// literally by AVSpeech).
-			unit, err := EnsureUnitTx(ctx, tx, UnitInput{Language: language, UnitKind: unitKind, SpokenText: occurrence.text, ContextPronunciationKey: occurrence.contextKey, SemanticSenseID: senseID})
-			if err != nil {
-				return err
-			}
-			render, err := EnsureRenderTx(ctx, tx, *unit, *avProfile, RetentionLexical, false)
-			if err != nil {
-				return err
-			}
-			if err := ensureSpeechJobTx(ctx, tx, *render, *unit, *avProfile, jobType, priority); err != nil {
-				return err
-			}
-			// A new immutable profile creates a new render for the same
-			// occurrence. Keep old bindings for history, but expose exactly one
-			// preferred pronunciation to the reader.
-			if _, err := tx.ExecContext(ctx, `UPDATE article_occurrence_audio SET preferred = 0 WHERE article_occurrence_id = ? AND purpose = 'pronunciation'`, occurrence.id); err != nil {
-				return err
-			}
-			if _, err := tx.ExecContext(ctx, `INSERT INTO article_occurrence_audio (article_occurrence_id, audio_render_id, purpose, preferred) VALUES (?, ?, 'pronunciation', 1) ON CONFLICT(article_occurrence_id, audio_render_id, purpose) DO UPDATE SET preferred = excluded.preferred`, occurrence.id, render.ID.String()); err != nil {
-				return err
-			}
-		}
-
-		sentenceRows, err := tx.QueryContext(ctx, `SELECT s.id, s.sentence_index, s.source_text FROM article_sentence s JOIN article_block b ON b.id = s.article_block_id WHERE b.article_id = ? ORDER BY b.block_index, s.sentence_index`, articleID.String())
-		if err != nil {
-			return err
-		}
-		type sentence struct {
-			id, text string
-			index    int
-		}
-		var sentences []sentence
-		sequence := 0
-		for sentenceRows.Next() {
-			var value sentence
-			if err := sentenceRows.Scan(&value.id, &value.index, &value.text); err != nil {
-				sentenceRows.Close()
-				return err
-			}
-			value.index = sequence
-			sequence++
-			sentences = append(sentences, value)
-		}
-		if err := sentenceRows.Err(); err != nil {
+	var language string
+	if err := tx.QueryRowContext(ctx, `SELECT source_language FROM article WHERE id = ?`, articleID.String()).Scan(&language); err != nil {
+		return err
+	}
+	canonicalLanguage, err := canonicalSpeechLanguage(language)
+	if err != nil {
+		return err
+	}
+	language = canonicalLanguage
+	_, narrationProfile, err := DefaultProfilesTx(ctx, tx, language)
+	if err != nil {
+		return err
+	}
+	sentenceRows, err := tx.QueryContext(ctx, `SELECT s.id, s.sentence_index, s.source_text FROM article_sentence s JOIN article_block b ON b.id = s.article_block_id WHERE b.article_id = ? ORDER BY b.block_index, s.sentence_index`, articleID.String())
+	if err != nil {
+		return err
+	}
+	type sentence struct {
+		id, text string
+		index    int
+	}
+	var sentences []sentence
+	sequence := 0
+	for sentenceRows.Next() {
+		var value sentence
+		if err := sentenceRows.Scan(&value.id, &value.index, &value.text); err != nil {
 			sentenceRows.Close()
 			return err
 		}
+		value.index = sequence
+		sequence++
+		sentences = append(sentences, value)
+	}
+	if err := sentenceRows.Err(); err != nil {
 		sentenceRows.Close()
-		for sequence, sentence := range sentences {
-			unit, err := EnsureUnitTx(ctx, tx, UnitInput{Language: language, UnitKind: UnitSentence, SpokenText: sentence.text})
-			if err != nil {
-				return err
-			}
-			render, err := EnsureRenderTx(ctx, tx, *unit, *narrationProfile, RetentionNarration, reactivatePurged)
-			if err != nil {
-				return err
-			}
-			priority := 50
-			if sequence == 0 {
-				priority = 70
-			}
-			if err := ensureSpeechJobTx(ctx, tx, *render, *unit, *narrationProfile, jobs.ChatterboxJobType, priority); err != nil {
-				return err
-			}
-			if _, err := tx.ExecContext(ctx, `
-				INSERT INTO article_sentence_audio (article_id, article_sentence_id, audio_render_id, sequence_index, purpose)
-				VALUES (?, ?, ?, ?, 'narration')
-				ON CONFLICT(article_sentence_id, purpose) DO UPDATE SET article_id = excluded.article_id, audio_render_id = excluded.audio_render_id, sequence_index = excluded.sequence_index
-			`, articleID.String(), sentence.id, render.ID.String(), sequence); err != nil {
-				return err
-			}
-		}
-		if _, err = tx.ExecContext(ctx, `UPDATE article SET narration_error_code = '', updated_at = ? WHERE id = ?`, store.NowUTC(), articleID.String()); err != nil {
+		return err
+	}
+	sentenceRows.Close()
+	for sequence, sentence := range sentences {
+		unit, err := EnsureUnitTx(ctx, tx, UnitInput{Language: language, UnitKind: UnitSentence, SpokenText: sentence.text})
+		if err != nil {
 			return err
 		}
-		return recomputeNarrationStatusTx(ctx, tx, articleID.String())
+		render, err := EnsureRenderTx(ctx, tx, *unit, *narrationProfile, RetentionNarration, reactivatePurged)
+		if err != nil {
+			return err
+		}
+		priority := 50
+		if sequence == 0 {
+			priority = 70
+		}
+		if err := ensureSpeechJobTx(ctx, tx, *render, *unit, *narrationProfile, jobs.ChatterboxJobType, priority); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO article_sentence_audio (article_id, article_sentence_id, audio_render_id, sequence_index, purpose)
+			VALUES (?, ?, ?, ?, 'narration')
+			ON CONFLICT(article_sentence_id, purpose) DO UPDATE SET article_id = excluded.article_id, audio_render_id = excluded.audio_render_id, sequence_index = excluded.sequence_index
+		`, articleID.String(), sentence.id, render.ID.String(), sequence); err != nil {
+			return err
+		}
 	}
+	if _, err := tx.ExecContext(ctx, `UPDATE article SET narration_error_code = '', updated_at = ? WHERE id = ?`, store.NowUTC(), articleID.String()); err != nil {
+		return err
+	}
+	return recomputeNarrationStatusTx(ctx, tx, articleID.String())
 }
 
 func ensureSpeechJobTx(ctx context.Context, tx *sql.Tx, render Render, unit Unit, profile Profile, jobType string, priority int) error {

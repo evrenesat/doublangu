@@ -615,6 +615,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/reader/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get the owner-wide reader preference */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Current owner reader preference. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ReaderSettings"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                405: components["responses"]["MethodNotAllowed"];
+                500: components["responses"]["Internal"];
+            };
+        };
+        /** Save the owner-wide reader preference */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ReaderSettingsInput"];
+                };
+            };
+            responses: {
+                /** @description Saved owner reader preference. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ReaderSettings"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                405: components["responses"]["MethodNotAllowed"];
+                500: components["responses"]["Internal"];
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/analysis/runs": {
         parameters: {
             query?: never;
@@ -2996,12 +3064,16 @@ export interface components {
             role: components["schemas"]["OccurrenceRole"];
             shadow_policy: components["schemas"]["ShadowPolicy"];
             shadow_text: string;
+            /** @enum {string} */
+            subtitle_suppression_reason: "none" | "special_token" | "contiguous_group_member";
             canonical_pronunciation_text: string;
             context_pronunciation_key: string;
             confidence_milli: number;
             sense: components["schemas"]["SemanticSense"] | null;
             learning_state: components["schemas"]["SemanticLearningState"] | null;
             show_shadow: boolean;
+            /** @description Exact ordered lexical member occurrence ids for construction occurrences; empty for token occurrences and legacy v2 rows. */
+            member_occurrence_ids: components["schemas"]["ULID"][];
             pronunciation: components["schemas"]["AudioRef"] | null;
             spans: components["schemas"]["ArticleOccurrenceSpan"][];
         };
@@ -3012,6 +3084,15 @@ export interface components {
             /** @enum {string} */
             kind: "paragraph";
             source_text: string;
+            /** @enum {string} */
+            analysis_status?: "pending" | "processing" | "ready" | "failed";
+            analysis_error_code?: string;
+            has_analysis?: boolean;
+            analysis_is_current?: boolean;
+            published_analysis_revision?: string;
+            published_analysis_model?: string;
+            published_analysis_effort?: string;
+            published_at?: string;
             annotations: components["schemas"]["ArticleAnnotation"][];
             sentences: components["schemas"]["ArticleSentence"][];
             occurrences: components["schemas"]["ArticleOccurrence"][];
@@ -3032,6 +3113,7 @@ export interface components {
             analysis_effort: string;
             narration_status: components["schemas"]["NarrationStatus"];
             narration_error_code: string;
+            analysis_progress: components["schemas"]["AnalysisProgress"];
         };
         Narration: {
             article_id: components["schemas"]["ULID"];
@@ -3080,9 +3162,23 @@ export interface components {
             analysis_effort: string;
             narration_status: components["schemas"]["NarrationStatus"];
             narration_error_code: string;
+            analysis_progress: components["schemas"]["AnalysisProgress"];
             sentences: components["schemas"]["ArticleSentence"][];
             occurrences: components["schemas"]["ArticleOccurrence"][];
             narration: components["schemas"]["NarrationSummary"];
+        };
+        AnalysisProgress: {
+            total_paragraphs: number;
+            completed_paragraphs: number;
+            current_block_index: number;
+            failed_block_index: number;
+        };
+        ReaderSettings: {
+            pronounce_on_hover: boolean;
+            updated_at: string;
+        };
+        ReaderSettingsInput: {
+            pronounce_on_hover: boolean;
         };
         NarrationSummary: {
             status: components["schemas"]["NarrationStatus"];

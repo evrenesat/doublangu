@@ -130,6 +130,11 @@ func testPreparedChunk(t *testing.T) semantics.PreparedChunk {
 	if err != nil {
 		t.Fatal(err)
 	}
+	span, err := semantics.ResolveSpan(input.Blocks[0], input.Blocks[0].SourceText, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.Sentences = []semantics.ResolvedSentence{{Index: 0, Span: span}}
 	chunk, err := semantics.PrepareChunk(input, 0, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -139,9 +144,8 @@ func testPreparedChunk(t *testing.T) semantics.PreparedChunk {
 
 func testValidChunkResponse(chunk semantics.PreparedChunk) semantics.Response {
 	response := semantics.Response{
-		Version:   semantics.AnalysisContractVersion,
-		Sentences: []semantics.Sentence{{Source: semantics.SpanRef{BlockIndex: 0, SourceText: chunk.Block.SourceText, Occurrence: 0}}},
-		Tokens:    make([]semantics.TokenResult, 0, len(chunk.Tokens)), NewSenses: []semantics.NewSense{}, Constructions: []semantics.Construction{},
+		Version: semantics.AnalysisContractVersion,
+		Tokens:  make([]semantics.TokenResult, 0, len(chunk.Tokens)), NewSenses: []semantics.NewSense{}, Constructions: []semantics.Construction{},
 	}
 	for _, token := range chunk.Tokens {
 		response.Tokens = append(response.Tokens, semantics.TokenResult{TokenID: token.ID, Classification: "unchanged", Kind: semantics.KindWord, ConfidenceMilli: 1000})
@@ -185,7 +189,7 @@ func TestAnalyzeChunkUsesOneSchemaForInitialAndCorrectionAndReturnsArtifacts(t *
 	}
 	firstSchema, _ := json.Marshal(params[0]["outputSchema"])
 	secondSchema, _ := json.Marshal(params[1]["outputSchema"])
-	if string(firstSchema) != string(secondSchema) || !strings.Contains(string(firstSchema), `"const":"reader.analysis.v2"`) {
+	if string(firstSchema) != string(secondSchema) || !strings.Contains(string(firstSchema), `"const":"reader.analysis.v3"`) {
 		t.Fatalf("schema reuse = %s / %s", firstSchema, secondSchema)
 	}
 }

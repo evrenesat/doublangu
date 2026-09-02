@@ -46,8 +46,8 @@ func TestOutputSchemaIsStrictAndMatchesCandidateContract(t *testing.T) {
 	}
 }
 
-func TestOutputSchemaV2VersionIsTypedStringConst(t *testing.T) {
-	properties, ok := OutputSchemaV2()["properties"].(map[string]any)
+func TestAnalysisOutputSchemaVersionIsTypedStringConst(t *testing.T) {
+	properties, ok := AnalysisOutputSchema()["properties"].(map[string]any)
 	if !ok {
 		t.Fatal("v2 schema properties have unexpected shape")
 	}
@@ -76,10 +76,6 @@ func TestOutputSchemaForChunkNarrowsAllRelationsAndZeroTokenArrays(t *testing.T)
 	}
 	schema := OutputSchemaForChunk(chunk)
 	properties := schema["properties"].(map[string]any)
-	span := properties["sentences"].(map[string]any)["items"].(map[string]any)["properties"].(map[string]any)["source"].(map[string]any)["properties"].(map[string]any)
-	if span["block_index"].(map[string]any)["const"] != 0 {
-		t.Fatalf("span block constraint = %#v", span["block_index"])
-	}
 	tokens := properties["tokens"].(map[string]any)
 	if tokens["minItems"] != 2 || tokens["maxItems"] != 2 {
 		t.Fatalf("token cardinality = %#v", tokens)
@@ -100,6 +96,14 @@ func TestOutputSchemaForChunkNarrowsAllRelationsAndZeroTokenArrays(t *testing.T)
 	constructionProperties := properties["constructions"].(map[string]any)["items"].(map[string]any)["properties"].(map[string]any)
 	if got := constructionProperties["semantic_sense_id"].(map[string]any)["enum"].([]string); len(got) != 2 || got[1] != "sense-bank" {
 		t.Fatalf("construction sense IDs = %#v", got)
+	}
+	constructionSpan := constructionProperties["spans"].(map[string]any)["items"].(map[string]any)
+	constructionSpanProperties := constructionSpan["properties"].(map[string]any)
+	if constructionSpanProperties["block_index"].(map[string]any)["const"] != 0 {
+		t.Fatalf("construction span block constraint = %#v", constructionSpanProperties["block_index"])
+	}
+	if _, ok := constructionSpanProperties["source"]; ok {
+		t.Fatal("v3 spans must be flat source refs without a nested source wrapper")
 	}
 	if got := constructionProperties["new_sense_ref"].(map[string]any)["maxLength"]; got != 96 {
 		t.Fatalf("construction local ref max length = %#v", got)
@@ -162,6 +166,13 @@ func TestChunkPromptExplainsCrossFieldReferencesAndSpanOccurrences(t *testing.T)
 		"never the sentence or span ordinal",
 		"must have a concise, contextual English shadow_text subtitle",
 		"normalized_form must be the deterministic Unicode case-folded, whitespace-collapsed form of canonical_form",
+		"Translations are English: never copy Dutch source text into shadow_text",
+		"Hij gooide bijna het bijltje erbij neer",
+		"Zij grijpt het je jaren later met beide handen aan",
+		"never output sentences",
+		"at least two separate runs",
+		"unchanged tokens never reference a sense",
+		"SENTENCES_BEGIN",
 	} {
 		if !strings.Contains(prompt, expected) {
 			t.Errorf("chunk prompt missing %q", expected)
@@ -172,7 +183,6 @@ func TestChunkPromptExplainsCrossFieldReferencesAndSpanOccurrences(t *testing.T)
 func TestChunkValidationFeedbackReportsIndependentRelationalErrors(t *testing.T) {
 	chunk := testPreparedChunk(t)
 	response := testValidChunkResponse(chunk)
-	response.Sentences[0].Source.Occurrence = 1
 	response.Tokens[0].Classification = "article"
 	response.Tokens[0].ShadowText = ""
 	response.Constructions = []semantics.Construction{{
@@ -188,7 +198,6 @@ func TestChunkValidationFeedbackReportsIndependentRelationalErrors(t *testing.T)
 	for _, expected := range []string{
 		`classification "article" requires one semantic_sense_id or new_sense_ref`,
 		`requires a non-empty English shadow_text subtitle`,
-		`sentences[0].source is invalid: source occurrence 1 was not found in block 0`,
 		`constructions[0].new_sense_ref "missing-expression" has no matching new_senses ref or prior validated ref`,
 		`constructions[0].token_ids[1] "b0:t1" is outside every construction span`,
 	} {
@@ -199,7 +208,7 @@ func TestChunkValidationFeedbackReportsIndependentRelationalErrors(t *testing.T)
 }
 
 func TestBuildV2CorrectionPromptRestatesRelationalChecklist(t *testing.T) {
-	prompt := BuildV2CorrectionPrompt("sentences[1] invalid", `{"version":"reader.analysis.v2"}`)
+	prompt := BuildV2CorrectionPrompt("sentences[1] invalid", `{"version":"reader.analysis.v3"}`)
 	for _, expected := range []string{
 		"repair every listed error",
 		"new_senses[].ref",
@@ -207,6 +216,9 @@ func TestBuildV2CorrectionPromptRestatesRelationalChecklist(t *testing.T) {
 		"otherwise remove that construction",
 		"normalized_form must equal the Unicode case-folded, whitespace-collapsed normalization of canonical_form",
 		"never blank unrelated shadow_text fields",
+		"never copy Dutch source text",
+		"such as 'bijna' or 'je jaren later'",
+		"Unchanged tokens never reference a sense",
 	} {
 		if !strings.Contains(prompt, expected) {
 			t.Errorf("correction prompt missing %q", expected)

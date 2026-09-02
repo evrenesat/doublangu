@@ -5,8 +5,10 @@
 		DoublanguNetworkError,
 		getAnalysisModels,
 		getAnalysisSettings,
+		getReaderSettings,
 		listAnalysisRuns,
 		saveAnalysisSettings,
+		saveReaderSettings,
 		type AnalysisModel,
 		type AnalysisRunSummary
 	} from '$lib/api/client';
@@ -31,6 +33,10 @@
 	let runs = $state<AnalysisRunSummary[]>([]);
 	let saving = $state(false);
 	let refreshing = $state(false);
+	let pronounceOnHover = $state(true);
+	let pronounceOnHoverLoading = $state(true);
+	let readerError = $state('');
+	let readerSaving = $state(false);
 	let analysisLoading = $state(true);
 	let diagnosticsLoading = $state(true);
 	let diagnosticsError = $state('');
@@ -45,7 +51,47 @@
 	onMount(() => {
 		void loadDiagnostics();
 		void loadAnalysisSettings();
+		void loadReaderSettings();
 	});
+
+	async function loadReaderSettings() {
+		pronounceOnHoverLoading = true;
+		readerError = '';
+		try {
+			const settings = await getReaderSettings();
+			pronounceOnHover = settings.pronounce_on_hover;
+			try {
+				localStorage.setItem('doublangu:reader:pronounce-on-hover', JSON.stringify({ pronounce_on_hover: settings.pronounce_on_hover }));
+			} catch {
+				// Local mirror only; the server remains authoritative.
+			}
+		} catch (cause) {
+			readerError = errorMessage(cause, 'Could not load reader preferences.');
+		} finally {
+			pronounceOnHoverLoading = false;
+		}
+	}
+
+	async function togglePronounceOnHover() {
+		const previous = pronounceOnHover;
+		pronounceOnHover = !pronounceOnHover;
+		readerSaving = true;
+		readerError = '';
+		try {
+			const saved = await saveReaderSettings({ pronounce_on_hover: pronounceOnHover });
+			pronounceOnHover = saved.pronounce_on_hover;
+			try {
+				localStorage.setItem('doublangu:reader:pronounce-on-hover', JSON.stringify({ pronounce_on_hover: saved.pronounce_on_hover }));
+			} catch {
+				// Ignore local storage failures; the server value stands.
+			}
+		} catch (cause) {
+			pronounceOnHover = previous;
+			readerError = errorMessage(cause, 'Could not save reader preferences.');
+		} finally {
+			readerSaving = false;
+		}
+	}
 
 	async function loadDiagnostics() {
 		diagnosticsLoading = true;
@@ -259,6 +305,27 @@
 			{/if}
 		</section>
 
+	<section class="panel reader-settings" aria-labelledby="reader-heading">
+		<div class="section-heading">
+			<div>
+				<h2 id="reader-heading">Reader</h2>
+				<p>Settings that follow you across browsers as the owner.</p>
+			</div>
+		</div>
+		{#if pronounceOnHoverLoading}
+			<p class="status" role="status">Loading reader preferences…</p>
+		{:else}
+			<label class="preference-row">
+				<input type="checkbox" checked={pronounceOnHover} disabled={readerSaving} onchange={() => void togglePronounceOnHover()} />
+				<span>
+					<strong>Pronounce on hover</strong>
+					<small>Play a word's pronunciation when the pointer hovers it in the reader.</small>
+				</span>
+			</label>
+		{/if}
+		{#if readerError}<p class="status error" role="alert">{readerError}</p>{/if}
+	</section>
+
 	<section class="panel diagnostics" aria-labelledby="diagnostics-heading">
 		<h2 id="diagnostics-heading">Server diagnostics</h2>
 		{#if diagnosticsLoading}
@@ -331,4 +398,8 @@
 	.plugin-id-list { padding-left: 1.25rem; font-size: 0.9rem; }
 	.navigation nav { display: flex; gap: 1rem; }
 	@media (max-width: 600px) { .page-heading, .section-heading { flex-direction: column; } .settings-grid { grid-template-columns: 1fr; } .setting-actions { align-items: start; flex-direction: column; } }
+
+	.preference-row { display: flex; align-items: flex-start; gap: 0.6rem; }
+	.preference-row small { display: block; color: var(--color-muted, #64748b); }
+	.status.error { color: var(--color-danger, #dc2626); }
 </style>

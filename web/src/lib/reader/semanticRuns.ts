@@ -49,10 +49,35 @@ export function buildSemanticRuns(block: ArticleBlock): SemanticRun[] {
 	}
 
 	const groupedTokenIDs = new Set<string>();
+	const byID = new Map<string, ArticleOccurrence>(occurrences.map((occurrence) => [occurrence.id, occurrence]));
 	for (const group of grouped) {
-		for (const token of tokens) {
-			const tokenSpan = spanOf(token);
-			if (inside(tokenSpan, group.span)) groupedTokenIDs.add(token.id);
+		// v3 rows carry exact lexical membership; legacy v2 rows have no
+		// member rows and keep the historical span-containment fallback.
+		const members = group.occurrence.member_occurrence_ids ?? [];
+		if (members.length > 0) {
+			for (const memberID of members) {
+				const member = byID.get(memberID);
+				if (member && member.role === 'token') groupedTokenIDs.add(member.id);
+			}
+		} else {
+			for (const token of tokens) {
+				const tokenSpan = spanOf(token);
+				if (inside(tokenSpan, group.span)) groupedTokenIDs.add(token.id);
+			}
+		}
+	}
+
+	// Discontinuous membership (v3) or span containment (legacy v2): which
+	// constructions own each token unit.
+	const tokenConstructionIDs = new Map<string, string[]>();
+	for (const construction of discontinuous) {
+		const members = construction.member_occurrence_ids ?? [];
+		if (members.length > 0) {
+			for (const memberID of members) {
+				const owner = tokenConstructionIDs.get(memberID) ?? [];
+				owner.push(construction.id);
+				tokenConstructionIDs.set(memberID, owner);
+			}
 		}
 	}
 
@@ -78,10 +103,12 @@ export function buildSemanticRuns(block: ArticleBlock): SemanticRun[] {
 	let cursor = 0;
 	for (const unit of units) {
 		if (unit.start > cursor) runs.push({ kind: 'plain', text: sliceUTF16(source, cursor, unit.start) });
-		const constructionIDs = new Set<string>();
-		for (const construction of discontinuous) {
-			if (construction.spans.some((span) => inside({ start: unit.start, end: unit.end }, { start: span.start_utf16, end: span.end_utf16 }))) {
-				constructionIDs.add(construction.id);
+		const constructionIDs = new Set<string>(tokenConstructionIDs.get(unit.occurrence.id) ?? []);
+		if (constructionIDs.size === 0) {
+			for (const construction of discontinuous) {
+				if (construction.spans.some((span) => inside({ start: unit.start, end: unit.end }, { start: span.start_utf16, end: span.end_utf16 }))) {
+					constructionIDs.add(construction.id);
+				}
 			}
 		}
 		const popoverOccurrence =

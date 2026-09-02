@@ -26,9 +26,11 @@ import (
 
 const (
 	// AnalysisContractVersion is part of the article cache key. A contract
-	// change is intentionally an explicit cache invalidation event.
-	AnalysisContractVersion = "reader.analysis.v2"
-	PromptVersion           = "reader-analysis-prompt.v5"
+	// change is intentionally an explicit cache invalidation event. Contract
+	// v3 supplies stable server-owned source sentence anchors in every
+	// prepared chunk; caches from earlier contracts never satisfy v3 work.
+	AnalysisContractVersion = "reader.analysis.v3"
+	PromptVersion           = "reader-analysis-prompt.v6"
 	ProviderID              = "codex-app-server"
 	MaxAlternatives         = 3
 	MaxShadowScalars        = 160
@@ -87,6 +89,9 @@ type SenseCandidate struct {
 }
 
 // PreparedArticle is the complete deterministic input to a provider turn.
+// Sentences are the stable, source-owned narration anchors: the server
+// supplies them (created deterministically with the article and preserved
+// across reanalysis), never the provider.
 type PreparedArticle struct {
 	Title          string
 	SourceLanguage string
@@ -95,6 +100,7 @@ type PreparedArticle struct {
 	Blocks         []Block
 	Tokens         []Token
 	Candidates     []SenseCandidate
+	Sentences      []ResolvedSentence
 }
 
 // TokenResult is one lexical classification. Exactly one result is required
@@ -138,11 +144,6 @@ type SpanRef struct {
 	Occurrence int    `json:"occurrence"`
 }
 
-// Sentence is an exact source sentence occurrence.
-type Sentence struct {
-	Source SpanRef `json:"source"`
-}
-
 // Construction describes either one contiguous phrase or a discontinuous
 // construction whose members must remain in source order.
 type Construction struct {
@@ -158,10 +159,11 @@ type Construction struct {
 	Spans                      []SpanRef `json:"spans"`
 }
 
-// Response is the only accepted v2 provider payload.
+// Response is the only accepted provider payload. Contract v3 contains no
+// provider-authored sentences: the server supplies stable source sentence
+// anchors and the provider annotates tokens and constructions only.
 type Response struct {
 	Version       string         `json:"version"`
-	Sentences     []Sentence     `json:"sentences"`
 	Tokens        []TokenResult  `json:"tokens"`
 	NewSenses     []NewSense     `json:"new_senses"`
 	Constructions []Construction `json:"constructions"`
@@ -176,6 +178,8 @@ type ResolvedSpan struct {
 }
 
 type ResolvedSentence struct {
+	// Index is the sentence's position within its own block, starting at
+	// zero for the block's first sentence.
 	Index int
 	Span  ResolvedSpan
 }
@@ -460,7 +464,7 @@ func validateResponse(input PreparedArticle, response Response, prior []NewSense
 			return ValidatedResponse{}, fmt.Errorf("token %q appears more than once", result.TokenID)
 		}
 		seenTokens[result.TokenID] = struct{}{}
-		if err := validateTokenResult(result, input.SourceLanguage, input.TargetLanguage, candidateByID, newByRef); err != nil {
+		if err := validateTokenResult(result, token, input.SourceLanguage, input.TargetLanguage, candidateByID, newByRef); err != nil {
 			return ValidatedResponse{}, fmt.Errorf("token %q: %w", result.TokenID, err)
 		}
 		validated.Tokens = append(validated.Tokens, ResolvedToken{Token: token, Result: result})
@@ -471,40 +475,24 @@ func validateResponse(input PreparedArticle, response Response, prior []NewSense
 		}
 	}
 
-	var previousSentence *ResolvedSpan
-	for index, sentence := range response.Sentences {
-		if sentence.Source.BlockIndex < 0 || sentence.Source.BlockIndex >= len(input.Blocks) {
-			return ValidatedResponse{}, fmt.Errorf("sentences[%d] has invalid block index", index)
-		}
-		span, err := ResolveSpan(input.Blocks[sentence.Source.BlockIndex], sentence.Source.SourceText, sentence.Source.Occurrence)
-		if err != nil {
-			return ValidatedResponse{}, fmt.Errorf("sentences[%d]: %w", index, err)
-		}
-		if previousSentence != nil {
-			if span.BlockIndex < previousSentence.BlockIndex || (span.BlockIndex == previousSentence.BlockIndex && span.StartUTF16 < previousSentence.StartUTF16) {
-				return ValidatedResponse{}, fmt.Errorf("sentences[%d] is out of source order", index)
-			}
-			if spanOverlap(*previousSentence, span) {
-				return ValidatedResponse{}, fmt.Errorf("sentences[%d] overlaps a prior sentence", index)
-			}
-		}
-		copySpan := span
-		previousSentence = &copySpan
-		validated.Sentences = append(validated.Sentences, ResolvedSentence{Index: index, Span: span})
+	// Source sentence anchors are server-owned and never provider-authored.
+	// They must be internally consistent and cover every supplied token.
+	anchors, err := validateSourceSentenceAnchors(input)
+	if err != nil {
+		return ValidatedResponse{}, err
 	}
-	if len(validated.Sentences) == 0 {
-		return ValidatedResponse{}, errors.New("at least one sentence is required")
+	validated.Sentences = anchors
+	sentenceForToken := func(token Token) int {
+		for _, anchor := range anchors {
+			if anchor.Span.BlockIndex == token.BlockIndex && token.StartUTF16 >= anchor.Span.StartUTF16 && token.EndUTF16 <= anchor.Span.EndUTF16 {
+				return anchor.Index
+			}
+		}
+		return -1
 	}
 	for _, token := range input.Tokens {
-		covered := false
-		for _, sentence := range validated.Sentences {
-			if sentence.Span.BlockIndex == token.BlockIndex && token.StartUTF16 >= sentence.Span.StartUTF16 && token.EndUTF16 <= sentence.Span.EndUTF16 {
-				covered = true
-				break
-			}
-		}
-		if !covered {
-			return ValidatedResponse{}, fmt.Errorf("token %q is outside the sentence coverage", token.ID)
+		if sentenceForToken(token) < 0 {
+			return ValidatedResponse{}, fmt.Errorf("token %q is outside the supplied source sentence anchors", token.ID)
 		}
 	}
 
@@ -567,7 +555,15 @@ func validateResponse(input PreparedArticle, response Response, prior []NewSense
 			}
 			resolved = append(resolved, span)
 		}
+		// Members are exact fixed lexical items: they are unique, ordered in
+		// source order, inside the construction's spans, and all inside one
+		// supplied source sentence.
 		seenConstructionTokens := make(map[string]struct{}, len(construction.TokenIDs))
+		memberTokens := make([]Token, 0, len(construction.TokenIDs))
+		sentenceIndex := -1
+		lastStart := -1
+		lastBlock := -1
+		var memberParts []string
 		for _, tokenID := range construction.TokenIDs {
 			token, ok := tokenByID[tokenID]
 			if !ok {
@@ -578,6 +574,10 @@ func validateResponse(input PreparedArticle, response Response, prior []NewSense
 			}
 			seenConstructionTokens[tokenID] = struct{}{}
 			constructionTokenIDs[tokenID] = struct{}{}
+			if lastBlock >= 0 && (token.BlockIndex != lastBlock || token.StartUTF16 <= lastStart) {
+				return ValidatedResponse{}, fmt.Errorf("constructions[%d] member tokens are not in source order", index)
+			}
+			lastBlock, lastStart = token.BlockIndex, token.StartUTF16
 			covered := false
 			for _, span := range resolved {
 				if span.BlockIndex == token.BlockIndex && token.StartUTF16 >= span.StartUTF16 && token.EndUTF16 <= span.EndUTF16 {
@@ -588,6 +588,26 @@ func validateResponse(input PreparedArticle, response Response, prior []NewSense
 			if !covered {
 				return ValidatedResponse{}, fmt.Errorf("constructions[%d] token %q is outside its spans", index, tokenID)
 			}
+			owner := sentenceForToken(token)
+			if owner < 0 {
+				return ValidatedResponse{}, fmt.Errorf("constructions[%d] token %q is outside the sentence coverage", index, tokenID)
+			}
+			if sentenceIndex < 0 {
+				sentenceIndex = owner
+			} else if owner != sentenceIndex {
+				return ValidatedResponse{}, fmt.Errorf("constructions[%d] crosses a source sentence boundary", index)
+			}
+			memberTokens = append(memberTokens, token)
+			memberParts = append(memberParts, token.SourceText)
+		}
+		// The role must match the membership shape: a contiguous construction
+		// is exactly one adjacent run of members; a discontinuous construction
+		// has at least two runs (inserted modifiers and context words are not
+		// members and never merge runs).
+		if runs := memberRunCount(memberTokens); runs != 1 && construction.Role == "contiguous_construction" {
+			return ValidatedResponse{}, fmt.Errorf("constructions[%d] contiguous members do not form exactly one run", index)
+		} else if runs < 2 && construction.Role == "discontinuous_construction" {
+			return ValidatedResponse{}, fmt.Errorf("constructions[%d] discontinuous members form fewer than two runs", index)
 		}
 		if construction.Role == "contiguous_construction" {
 			container := resolved[0]
@@ -598,6 +618,9 @@ func validateResponse(input PreparedArticle, response Response, prior []NewSense
 					}
 				}
 			}
+		}
+		if err := validateConstructionSubtitle(construction.ShadowText, constructionSubtitleForbids(input, construction, memberParts, resolved, candidateByID, newByRef)); err != nil {
+			return ValidatedResponse{}, fmt.Errorf("constructions[%d]: %w", index, err)
 		}
 		validated.Constructions = append(validated.Constructions, ResolvedConstruction{Construction: construction, Spans: resolved})
 	}
@@ -618,7 +641,7 @@ func validateResponse(input PreparedArticle, response Response, prior []NewSense
 	return validated, nil
 }
 
-func validateTokenResult(result TokenResult, sourceLanguage, targetLanguage string, candidates map[string]SenseCandidate, newSenses map[string]NewSense) error {
+func validateTokenResult(result TokenResult, token Token, sourceLanguage, targetLanguage string, candidates map[string]SenseCandidate, newSenses map[string]NewSense) error {
 	if result.Classification == "" {
 		return errors.New("classification is required")
 	}
@@ -649,6 +672,48 @@ func validateTokenResult(result TokenResult, sourceLanguage, targetLanguage stri
 	}
 	if !special && strings.TrimSpace(result.ShadowText) == "" {
 		return errors.New("shadow_text is required for a translated token")
+	}
+	normalizedSource, sourceErr := NormalizeForm(token.SourceText)
+	normalizedShadow := ""
+	shadowErr := error(nil)
+	if strings.TrimSpace(result.ShadowText) != "" {
+		normalizedShadow, shadowErr = NormalizeForm(result.ShadowText)
+	}
+	switch result.Classification {
+	case "unchanged":
+		// Deliberately untranslated: a real English translation is invalid,
+		// and so is a sense reference (a sense would imply a translation).
+		if result.SemanticSenseID != "" || result.NewSenseRef != "" {
+			return errors.New("an unchanged token must not reference a semantic sense")
+		}
+		if shadowErr != nil {
+			return shadowErr
+		}
+		if sourceErr == nil && normalizedShadow != "" && normalizedShadow != normalizedSource {
+			return errors.New("an unchanged token shadow_text must be empty or match the source text")
+		}
+	case "proper_name", "number", "acronym":
+		// These may omit a subtitle. When they carry one it must be a real
+		// translation, never a copy of the Dutch source spelling.
+		if shadowErr != nil {
+			return shadowErr
+		}
+		if sourceErr == nil && normalizedShadow != "" && normalizedShadow == normalizedSource {
+			return errors.New("source-copy shadow_text is not a translation")
+		}
+	default:
+		// Ordinary translated token: subtitle required (checked above); a
+		// normalized copy of the Dutch source spelling is never an English
+		// subtitle and must enter correction.
+		if normalizedShadow == "" {
+			return errors.New("shadow_text is required for a translated token")
+		}
+		if shadowErr != nil {
+			return shadowErr
+		}
+		if sourceErr == nil && normalizedShadow == normalizedSource {
+			return errors.New("shadow_text copies the Dutch source text; the subtitle must be an English translation")
+		}
 	}
 	return validateSenseReference(result.SemanticSenseID, result.NewSenseRef, result.Kind, sourceLanguage, targetLanguage, candidates, newSenses)
 }
@@ -756,6 +821,147 @@ func DecodeResponse(data []byte) (Response, error) {
 		return Response{}, fmt.Errorf("response contains malformed trailing JSON: %w", err)
 	}
 	return response, nil
+}
+
+// validateSourceSentenceAnchors checks the server-supplied source sentence
+// anchors: exact source slices at their UTF-16 offsets, sequential per-block
+// indexes, and non-overlapping in-block order. The returned list is sorted by
+// block and then by index.
+func validateSourceSentenceAnchors(input PreparedArticle) ([]ResolvedSentence, error) {
+	byBlock := make(map[int][]ResolvedSentence)
+	for _, sentence := range input.Sentences {
+		blockIndex := sentence.Span.BlockIndex
+		if blockIndex < 0 || blockIndex >= len(input.Blocks) {
+			return nil, fmt.Errorf("sentence anchor %q references invalid block %d", sentence.Span.SourceText, blockIndex)
+		}
+		blockText := input.Blocks[blockIndex].SourceText
+		if sentence.Span.StartUTF16 < 0 || sentence.Span.EndUTF16 <= sentence.Span.StartUTF16 {
+			return nil, fmt.Errorf("sentence anchor in block %d has an invalid UTF-16 span", blockIndex)
+		}
+		text, err := sliceForUTF16(blockText, sentence.Span.StartUTF16, sentence.Span.EndUTF16)
+		if err != nil {
+			return nil, fmt.Errorf("sentence anchor in block %d: %w", blockIndex, err)
+		}
+		if text != sentence.Span.SourceText {
+			return nil, fmt.Errorf("sentence anchor %q does not match block %d source text", sentence.Span.SourceText, blockIndex)
+		}
+		block := byBlock[blockIndex]
+		previous := ResolvedSentence{Index: -1}
+		if len(block) > 0 {
+			previous = block[len(block)-1]
+		}
+		if sentence.Index != len(block) {
+			return nil, fmt.Errorf("sentence anchor indexes in block %d are not sequential", blockIndex)
+		}
+		if sentence.Span.StartUTF16 < previous.Span.EndUTF16 {
+			return nil, fmt.Errorf("sentence anchors in block %d overlap or are out of order", blockIndex)
+		}
+		byBlock[blockIndex] = append(block, sentence)
+	}
+	ordered := make([]ResolvedSentence, 0, len(input.Sentences))
+	for blockIndex := range input.Blocks {
+		ordered = append(ordered, byBlock[blockIndex]...)
+	}
+	return ordered, nil
+}
+
+// sliceForUTF16 returns the exact source slice for a browser UTF-16 span.
+func sliceForUTF16(value string, start, end int) (string, error) {
+	startByte, err := byteOffsetForUTF16(value, start)
+	if err != nil {
+		return "", err
+	}
+	endByte, err := byteOffsetForUTF16(value, end)
+	if err != nil {
+		return "", err
+	}
+	if endByte <= startByte {
+		return "", errors.New("UTF-16 span must have positive length")
+	}
+	return value[startByte:endByte], nil
+}
+
+func byteOffsetForUTF16(value string, offset int) (int, error) {
+	if offset < 0 {
+		return 0, fmt.Errorf("UTF-16 offset %d is negative", offset)
+	}
+	units := 0
+	for byteOffset, r := range value {
+		runeUnits := 1
+		if r > 0xffff {
+			runeUnits = 2
+		}
+		if units == offset {
+			return byteOffset, nil
+		}
+		if units+runeUnits > offset {
+			return 0, fmt.Errorf("UTF-16 offset %d splits a surrogate pair", offset)
+		}
+		units += runeUnits
+	}
+	if units == offset {
+		return len(value), nil
+	}
+	return 0, fmt.Errorf("UTF-16 offset %d exceeds text length %d", offset, units)
+}
+
+// memberRunCount counts maximal adjacent runs of member tokens (consecutive
+// TokenIndex values within one block).
+func memberRunCount(members []Token) int {
+	runs := 0
+	var previous *Token
+	for index := range members {
+		member := &members[index]
+		if previous == nil || member.BlockIndex != previous.BlockIndex || member.TokenIndex != previous.TokenIndex+1 {
+			runs++
+		}
+		previous = member
+	}
+	return runs
+}
+
+// constructionSubtitleForbids returns the Dutch source forms a construction
+// subtitle must never copy: the joined member text, every complete provider
+// span, and the referenced sense's canonical form.
+func constructionSubtitleForbids(input PreparedArticle, construction Construction, memberParts []string, spans []ResolvedSpan, candidates map[string]SenseCandidate, newSenses map[string]NewSense) []string {
+	forbids := make([]string, 0, 1+len(spans)+1)
+	if len(memberParts) > 0 {
+		forbids = append(forbids, strings.Join(memberParts, " "))
+	}
+	for _, span := range spans {
+		forbids = append(forbids, span.SourceText)
+	}
+	if construction.SemanticSenseID != "" {
+		if candidate, ok := candidates[construction.SemanticSenseID]; ok {
+			forbids = append(forbids, candidate.CanonicalForm)
+		}
+	}
+	if construction.NewSenseRef != "" {
+		if sense, ok := newSenses[construction.NewSenseRef]; ok {
+			forbids = append(forbids, sense.CanonicalForm)
+		}
+	}
+	return forbids
+}
+
+// validateConstructionSubtitle rejects a construction subtitle that copies any
+// Dutch source form: translations must be English, and a source copy is
+// invalid even when the provider believes it explains the phrase.
+func validateConstructionSubtitle(shadow string, forbids []string) error {
+	normalizedShadow, err := NormalizeForm(shadow)
+	if err != nil {
+		return err
+	}
+	for _, forbidden := range forbids {
+		normalizedForbidden, err := NormalizeForm(forbidden)
+		if err != nil || normalizedForbidden == "" {
+			continue
+		}
+		if normalizedForbidden == normalizedShadow {
+			return errors.New("shadow_text copies Dutch source text; the subtitle must be an English translation")
+		}
+	}
+	return nil
 }
 
 // SortSpans returns a stable source-order copy for deterministic persistence.

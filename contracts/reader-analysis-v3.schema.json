@@ -1,13 +1,13 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "doublangu://contracts/reader-analysis-v2.schema.json",
-  "title": "Doublangu reader semantic analysis v2",
+  "$id": "doublangu://contracts/reader-analysis-v3.schema.json",
+  "title": "Doublangu reader semantic analysis v3",
+  "description": "Provider response contract for reader semantic analysis. Contract v3 removes provider-authored sentences: the server supplies stable source sentence anchors in every prepared chunk, and the provider annotates tokens and constructions only. Provider output is untrusted until the local validator succeeds.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["version", "sentences", "tokens", "new_senses", "constructions"],
+  "required": ["version", "tokens", "new_senses", "constructions"],
   "properties": {
-    "version": { "const": "reader.analysis.v2" },
-    "sentences": { "type": "array", "minItems": 1, "items": { "$ref": "#/definitions/sentence" } },
+    "version": { "const": "reader.analysis.v3" },
     "tokens": { "type": "array", "items": { "$ref": "#/definitions/token" } },
     "new_senses": { "type": "array", "items": { "$ref": "#/definitions/newSense" } },
     "constructions": { "type": "array", "items": { "$ref": "#/definitions/construction" } }
@@ -22,12 +22,6 @@
         "source_text": { "type": "string", "minLength": 1 },
         "occurrence": { "type": "integer", "minimum": 0 }
       }
-    },
-    "sentence": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["source"],
-      "properties": { "source": { "$ref": "#/definitions/span" } }
     },
     "token": {
       "type": "object",
