@@ -37,6 +37,12 @@
 - Authenticated legacy and `gpt-5.6-luna / medium` chunk live tests — passed;
   the live chunk satisfied the unchanged deterministic validator.
 - `git diff --check` — passed.
+- Deployed isolated beta release
+  `290ea09bf11e2a1b78aa1016bdffe6fa76dde1a9b9f9ab68b8e58834674ad20b`.
+  A normal prompt-v4 retry of live article `01M1F8FTRA9B20Q27X4J6550V1`
+  succeeded on job attempt 1 with all 3 paragraphs, 7 sentences, 98 semantic
+  occurrences, and 5 retained turns; service/database readiness remained
+  healthy and production was unchanged.
 
 ## 2026-09-02 — Analysis reliability recovery follow-up
 
