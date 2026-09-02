@@ -126,7 +126,7 @@
 	}
 
 	async function saveSelection() {
-		if (!selectionSupported || saving) return;
+		if (!selectionSupported || catalogStale || saving) return;
 		saving = true;
 		analysisError = '';
 		try {
@@ -227,11 +227,11 @@
 				</label>
 			</div>
 			<div class="setting-actions">
-				<button class="primary" type="button" disabled={!selectionSupported || !selectionChanged || saving} onclick={() => void saveSelection()}>
+				<button class="primary" type="button" disabled={!selectionSupported || !selectionChanged || catalogStale || saving} onclick={() => void saveSelection()}>
 					{saving ? 'Saving…' : 'Save selection'}
 				</button>
 				{#if selectionChanged}
-					<span class="muted" role="status">Unsaved selection</span>
+					<span class="muted" role="status">{catalogStale ? 'Refresh the model catalog before saving a changed selection.' : 'Unsaved selection'}</span>
 				{:else if savedModel}
 					<span class="muted" role="status">Saved: {savedModel} · {savedEffort}</span>
 				{/if}

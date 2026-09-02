@@ -1,5 +1,33 @@
 # Development Log
 
+## 2026-09-02 — Analysis reliability recovery follow-up
+
+- Changed owner settings writes to reject a changed model/effort pair while
+  the runtime model catalog is stale after a failed refresh. Re-sending the
+  already persisted pair remains idempotent, while the Svelte Save action is
+  disabled and explains that a successful refresh is required for changes.
+- Extended startup recovery to finalize orphaned `analysis_run` rows as
+  failed with `v1.analysis_interrupted`, completion time, and elapsed duration.
+  Completed paragraph counts, failed indexes, provenance, stderr, and turn
+  artifacts remain available for retry diagnostics; the article stays queued.
+- Added backend, UI, and SQLite regression coverage for both failure modes.
+
+### Verification
+
+- Focused normal and race Go tests for `internal/httpapi`, `internal/reader`,
+  and `internal/analysis` — passed.
+- `/root/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.5.linux-amd64/bin/go test ./... -count=1 -buildvcs=false` — passed.
+- `npm --prefix web run check` — 0 errors and 0 warnings.
+- `npm --prefix web run test:unit` — 70 tests passed.
+- `npm --prefix web run test:e2e -- reader.spec.ts` — 8 tests passed.
+- `npm --prefix web run validate:openapi` — passed.
+- `npm --prefix web run generate:api` followed by a generated-file diff check —
+  passed with no generated changes.
+- `make verify` — passed with the checkout's temporary Git
+  `safe.directory=/root/code/doublangu` environment override.
+- `DOUBLANGU_TEST_CODEX_LIVE=1 go test ./internal/annotator -run Live -count=1 -v -buildvcs=false` — passed against the authenticated Codex CLI.
+- `git diff --check` — passed.
+
 ## 2026-09-01 — Weaker-model analysis reliability and lexical speech repair
 
 - Added paragraph-isolated Codex app-server analysis with compact validated
@@ -37,7 +65,7 @@ All Go commands below used
 - `make verify` — passed with the checkout's temporary Git
   `safe.directory=/root/code/doublangu` environment override.
 - `git diff --check` — passed.
-- `DOUBLANGU_TEST_CODEX_LIVE=1 go test ./internal/annotator -run Live -count=1 -v` — intentionally not run; it is the quota-consuming owner-authorized live test.
+- `DOUBLANGU_TEST_CODEX_LIVE=1 go test ./internal/annotator -run Live -count=1 -v` — passed during the 2026-09-02 follow-up review.
 
 ## 2026-09-01 — macOS speech lease timestamp compatibility
 

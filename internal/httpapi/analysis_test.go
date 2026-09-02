@@ -92,6 +92,17 @@ func TestAnalysisHTTPModelsSettingsAndHistory(t *testing.T) {
 	if invalidSelection.Code != http.StatusBadRequest || decodeAPIError(t, invalidSelection.Body.String()).Code != httpapi.ErrCodeAnalysisInvalidSelection {
 		t.Fatalf("invalid selection = %d %s", invalidSelection.Code, invalidSelection.Body.String())
 	}
+	staleChangedSelection := httptest.NewRecorder()
+	h.ServeSettings(staleChangedSelection, authedRequest(http.MethodPut, "/api/v1/analysis/settings", `{"model":"gpt-visible","effort":"low"}`))
+	if staleChangedSelection.Code != http.StatusBadRequest || decodeAPIError(t, staleChangedSelection.Body.String()).Code != httpapi.ErrCodeAnalysisInvalidSelection {
+		t.Fatalf("stale changed selection = %d %s", staleChangedSelection.Code, staleChangedSelection.Body.String())
+	}
+	provider.setError(nil)
+	refreshedCatalog := httptest.NewRecorder()
+	h.ServeModels(refreshedCatalog, authedRequest(http.MethodGet, "/api/v1/analysis/models?refresh=true", ""))
+	if refreshedCatalog.Code != http.StatusOK {
+		t.Fatalf("refreshed catalog response = %d", refreshedCatalog.Code)
+	}
 	validSelection := httptest.NewRecorder()
 	h.ServeSettings(validSelection, authedRequest(http.MethodPut, "/api/v1/analysis/settings", `{"model":"gpt-visible","effort":"low"}`))
 	if validSelection.Code != http.StatusOK || validSelection.Header().Get("Cache-Control") != "no-store" {
@@ -100,6 +111,17 @@ func TestAnalysisHTTPModelsSettingsAndHistory(t *testing.T) {
 	settings := decodeJSON[analysis.Settings](t, validSelection.Body.String())
 	if settings.Model != "gpt-visible" || settings.Effort != "low" {
 		t.Fatalf("saved settings = %+v", settings)
+	}
+	provider.setError(errors.New("catalog transport failed again"))
+	staleAgain := httptest.NewRecorder()
+	h.ServeModels(staleAgain, authedRequest(http.MethodGet, "/api/v1/analysis/models?refresh=true", ""))
+	if staleAgain.Code != http.StatusOK {
+		t.Fatalf("second stale catalog response = %d", staleAgain.Code)
+	}
+	unchangedSelection := httptest.NewRecorder()
+	h.ServeSettings(unchangedSelection, authedRequest(http.MethodPut, "/api/v1/analysis/settings", `{"model":"gpt-visible","effort":"low"}`))
+	if unchangedSelection.Code != http.StatusOK {
+		t.Fatalf("unchanged stale selection = %d %s", unchangedSelection.Code, unchangedSelection.Body.String())
 	}
 
 	article, err := reader.NewArticle("History", "Een zin.\n\nNog een.", "nl", "en")

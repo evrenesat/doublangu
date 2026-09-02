@@ -363,7 +363,10 @@ func (s *Store) UpsertLearningState(ctx context.Context, state *LearningState) (
 }
 
 // RecoverInterrupted converts processing rows left by an exited server into a
-// retryable failure before request handling begins.
+// retryable failure before request handling begins. It also closes any
+// analysis_run still marked running: the terminal failed status carries the
+// stable interruption code, while paragraph progress and retained turn data
+// remain unchanged for diagnostics and retry.
 func (s *Store) RecoverInterrupted(ctx context.Context) error {
 	return s.withDB(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `
@@ -379,6 +382,22 @@ func (s *Store) RecoverInterrupted(ctx context.Context) error {
 		`)
 		if err != nil {
 			return fmt.Errorf("reader recover interrupted analysis: %w", err)
+		}
+		recoveredAt := store.NowUTC()
+		_, err = tx.ExecContext(ctx, `
+			UPDATE analysis_run SET status = 'failed', completed_at = ?,
+				duration_ms = CASE
+					WHEN julianday(started_at) IS NULL THEN duration_ms
+					WHEN julianday(?) > julianday(started_at)
+						THEN CAST((julianday(?) - julianday(started_at)) * 86400000 AS INTEGER)
+					ELSE 0
+				END,
+				error_code = 'v1.analysis_interrupted',
+				error_detail = 'analysis run interrupted during server restart'
+			WHERE status = 'running'
+		`, recoveredAt, recoveredAt, recoveredAt)
+		if err != nil {
+			return fmt.Errorf("reader recover interrupted analysis runs: %w", err)
 		}
 		return nil
 	})

@@ -38,7 +38,9 @@ The request and processing flow is:
 
 The owner settings page obtains a hidden-inclusive model catalog from the
 provider, retains the last good catalog briefly when refresh fails, validates
-model/effort selections, and shows recent runs. Run detail is owner-only and
+model/effort selections, and shows recent runs. Changed selections are rejected
+while that retained catalog is stale, and the UI keeps the save action disabled
+until discovery succeeds again. Run detail is owner-only and
 contains bounded prompt, schema, completion, metadata, validation, and stderr
 excerpts for troubleshooting. Raw analysis content is not written to normal
 server logs. If no model is selected, analysis fails closed with
@@ -48,6 +50,12 @@ Environment model/effort values seed the singleton only; owner changes take
 precedence on later restarts. This is a manual comparison surface rather than
 an automatic quality scorer, and the private database grows with retained
 prompts and responses until an owner removes the database.
+
+At startup, article recovery also finalizes every `analysis_run` left in the
+`running` state by an exited process as a failed run with
+`v1.analysis_interrupted`, completion metadata, and preserved paragraph/turn
+diagnostics. The related article is requeued so the durable worker can retry
+the unfinished analysis.
 
 Semantic identity is `semantic_sense.id`, not spelling. An occurrence points to
    one sense and carries its effective shadow and pronunciation identity. Every

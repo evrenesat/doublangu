@@ -130,6 +130,58 @@ func TestStoreFailurePreservesPreviousAnnotationSetAndRecovery(t *testing.T) {
 	}
 }
 
+func TestStoreRecoveryFinalizesInterruptedAnalysisRunAndPreservesProgress(t *testing.T) {
+	db, err := store.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	articles := NewStore(db)
+	article := testArticle(t, "Een analyse.")
+	if err := articles.CreateArticle(ctx, &article); err != nil {
+		t.Fatal(err)
+	}
+	if err := articles.MarkAnalysisProcessing(ctx, article.ID); err != nil {
+		t.Fatal(err)
+	}
+	runID := library.NewULID()
+	startedAt := time.Now().UTC().Add(-time.Minute).Format("2006-01-02T15:04:05.000Z")
+	if _, err := db.Exec(ctx, `
+		INSERT INTO analysis_run (
+			id, article_id, job_id, attempt_count, content_hash, contract_version,
+			prompt_version, requested_model, requested_effort, provider_id,
+			started_at, status, total_paragraphs, completed_paragraphs,
+			failed_block_index, reported_model, stderr_excerpt
+		) VALUES (?, ?, ?, 1, 'hash', 'contract', 'prompt', 'model', 'low', 'provider', ?, 'running', 3, 2, 1, 'reported', 'stderr')
+	`, runID.String(), article.ID.String(), library.NewULID().String(), startedAt); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := articles.RecoverInterrupted(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var status, completedAt, errorCode, errorDetail, reportedModel, stderrExcerpt string
+	var durationMS, completedParagraphs, failedBlockIndex int
+	if err := db.QueryRow(ctx, `
+		SELECT status, completed_at, duration_ms, completed_paragraphs,
+			failed_block_index, error_code, error_detail, reported_model, stderr_excerpt
+		FROM analysis_run WHERE id = ?
+	`, runID.String()).Scan(&status, &completedAt, &durationMS, &completedParagraphs, &failedBlockIndex, &errorCode, &errorDetail, &reportedModel, &stderrExcerpt); err != nil {
+		t.Fatal(err)
+	}
+	if status != "failed" || completedAt == "" || durationMS <= 0 || completedParagraphs != 2 || failedBlockIndex != 1 || errorCode != "v1.analysis_interrupted" || errorDetail == "" || reportedModel != "reported" || stderrExcerpt != "stderr" {
+		t.Fatalf("recovered analysis run = status=%q completed_at=%q duration=%d completed=%d failed_block=%d code=%q detail=%q model=%q stderr=%q", status, completedAt, durationMS, completedParagraphs, failedBlockIndex, errorCode, errorDetail, reportedModel, stderrExcerpt)
+	}
+	got, err := articles.GetArticle(ctx, article.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.AnalysisStatus != AnalysisQueued || got.AnalysisErrorCode != "v1.analysis_interrupted" {
+		t.Fatalf("recovered article analysis = %q/%q", got.AnalysisStatus, got.AnalysisErrorCode)
+	}
+}
+
 func TestStoreReplaceRejectsMismatchedSpanWithoutDeletingGoodSet(t *testing.T) {
 	db, err := store.OpenTest()
 	if err != nil {

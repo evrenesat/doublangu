@@ -92,6 +92,13 @@ func (h *AnalysisHandler) ServeSettings(w http.ResponseWriter, r *http.Request) 
 			WriteError(w, http.StatusBadRequest, "invalid analysis settings", ErrCodeValidation)
 			return
 		}
+		current, err := h.settings.Get(r.Context())
+		if err != nil {
+			WriteError(w, http.StatusInternalServerError, "analysis settings unavailable", ErrCodeInternal)
+			return
+		}
+		model := strings.TrimSpace(input.Model)
+		effort := strings.TrimSpace(input.Effort)
 		snapshot, catalogErr := h.loadCatalog(r.Context(), false)
 		if len(snapshot.Models) == 0 {
 			if catalogErr != nil {
@@ -101,11 +108,15 @@ func (h *AnalysisHandler) ServeSettings(w http.ResponseWriter, r *http.Request) 
 			WriteError(w, http.StatusServiceUnavailable, "analysis model catalog is empty", ErrCodeAnalysisModelUnavailable)
 			return
 		}
-		if !annotator.SupportsSelection(snapshot.Models, strings.TrimSpace(input.Model), strings.TrimSpace(input.Effort)) {
+		if snapshot.Stale && (model != current.Model || effort != current.Effort) {
+			WriteError(w, http.StatusBadRequest, "refresh the analysis model catalog before changing the selection", ErrCodeAnalysisInvalidSelection)
+			return
+		}
+		if !annotator.SupportsSelection(snapshot.Models, model, effort) {
 			WriteError(w, http.StatusBadRequest, "model and reasoning effort are not supported", ErrCodeAnalysisInvalidSelection)
 			return
 		}
-		settings, err := h.settings.Save(r.Context(), input.Model, input.Effort)
+		settings, err := h.settings.Save(r.Context(), model, effort)
 		if err != nil {
 			WriteError(w, http.StatusInternalServerError, "analysis settings unavailable", ErrCodeInternal)
 			return

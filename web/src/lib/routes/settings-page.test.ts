@@ -61,4 +61,8 @@ it('loads runtime models, filters efforts, saves explicitly, and reports stale r
 
 	await fireEvent.click(screen.getByRole('button', { name: 'Refresh models' }));
 	await waitFor(() => expect(screen.getByText('Using the last known model catalog. refresh failed')).toBeTruthy());
+	await fireEvent.change(screen.getByRole('combobox', { name: 'Model' }), { target: { value: 'visible-model' } });
+	await fireEvent.change(screen.getByRole('combobox', { name: 'Reasoning effort' }), { target: { value: 'medium' } });
+	await waitFor(() => expect((screen.getByRole('button', { name: 'Save selection' }) as HTMLButtonElement).disabled).toBe(true));
+	expect(screen.getByText('Refresh the model catalog before saving a changed selection.')).toBeTruthy();
 });
