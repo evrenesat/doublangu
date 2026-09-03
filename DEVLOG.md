@@ -52,18 +52,20 @@ Verification (all from `web/` unless noted):
   diff scoped.
 - Repo `make verify` — vet, check-no-network, manifest, auth-foundation,
   login-ui pass; web unit tests pass; `test-fingerprint-integration`
-  (`TestIntegration_FullMatrix`) fails in this working tree. Diagnosis: with
-  `-buildvcs=true` the plugin artifact's main module is stamped
-  `v0.0.0-<time>-<rev>+dirty` here, while the test binary reports `(devel)`,
-  so `ComputeModuleGraphHash` differs between the two sides. `go.mod`/`go.sum`
-  are untouched and `go list -m all` is identical before/after this task; the
-  same test passes in a pristine `git worktree` at `df1a16e` (3/3 runs) and
-  fails in this checkout (3/3 runs). Dirtiness probes inside the clean
-  worktree (untracked file, unstaged and staged tracked edits) did not
-  reproduce the stamping, so the trigger appears to be a VCS-state property
-  of the main checkout rather than any content change; treated as a
-  pre-existing, environment-sensitive test, not a code regression. To be
-  re-checked on a clean tree after commit.
+  (`TestIntegration_FullMatrix`) fails on this machine for reasons unrelated
+  to this task. Diagnosis, verified empirically: on this Go toolchain the
+  main checkout always VCS-stamps `-buildvcs=true` artifacts with a main
+  module pseudo-version (`v0.0.0-<time>-<rev>`, `+dirty` whenever untracked
+  files exist — the two files in the repo root are enough), while the `go
+  test` binary always reports `(devel)`, so `ComputeModuleGraphHash` can
+  never match between host and plugin sides in the main checkout. The test
+  passes in a linked `git worktree` (stamping is skipped there, both sides
+  `(devel)`) — confirmed 3/3 at pristine `df1a16e`. Hiding untracked files
+  (`status.showUntrackedFiles=no`) yields a no-dirty stamp and the test
+  still fails, which decouples it from the owner's untracked files and from
+  this task's content entirely (`go.mod`/`go.sum` untouched, `go list -m all`
+  identical). Treated as a pre-existing environment-sensitive test; not a
+  code regression.
 - `git diff --check` — clean at commit time.
 
 ## 2026-09-03 — Mac LLM relay backend checkpoint 4: blocked (no beta deploy path, no v0.2 Mac app)
