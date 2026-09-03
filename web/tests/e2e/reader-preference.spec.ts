@@ -92,16 +92,13 @@ test('a saved off value survives a reload through the server setting', async ({ 
 
 test('the settings page mirrors the same owner preference', async ({ page }) => {
 	let serverEnabled = true;
+	// No analysis or diagnostics mocks: /settings now loads reader settings only.
 	await page.route('**/api/v1/reader/settings', async (route) => {
 		if (route.request().method() === 'PUT') {
 			serverEnabled = !serverEnabled;
 		}
 		return route.fulfill(response({ pronounce_on_hover: serverEnabled, updated_at: '2026-01-01T00:00:00Z' }));
 	});
-	await page.route('**/api/v1/analysis/models', (route) => route.fulfill(response({ models: [], retrieved_at: '', stale: false, last_error: '' })));
-	await page.route('**/api/v1/analysis/settings', (route) => route.fulfill(response({ model: '', effort: 'medium', updated_at: '2026-01-01T00:00:00Z' })));
-	await page.route('**/api/v1/analysis/runs*', (route) => route.fulfill(response({ runs: [], next_cursor: '' })));
-	await page.route('**/health', (route) => route.fulfill(response({ core_ready: true, loader_ready: true, schema_available: true, registry_state: 'ok', plugin_count: 0, plugin_ids: [] })));
 	await page.goto('/settings');
 	const checkbox = page.locator('.reader-settings .preference-row input');
 	await expect(checkbox).toBeChecked();

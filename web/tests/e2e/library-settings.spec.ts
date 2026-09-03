@@ -172,9 +172,10 @@ test('shows a retryable chapters error instead of an empty state', async ({ page
 test('keeps developer diagnostics out of the learner navigation', async ({ page }) => {
 	await mockLibraryAPI(page);
 	await page.route('**/health', (route) => route.fulfill(response({ ...diagnostics, plugin_count: 0, plugin_ids: [] })));
-	await page.goto('/settings');
+	await page.goto('/settings/system');
 	await expect(page.getByText('No plugins are loaded.')).toBeVisible();
-	await expect(page.getByRole('link', { name: 'Doublangu reader' })).toHaveAttribute('href', '/reader');
+	await page.goto('/settings');
+	await expect(page.getByText('No plugins are loaded.')).toHaveCount(0);
 	await expect(page.getByRole('banner').getByRole('link', { name: 'Plugins' })).toHaveCount(0);
 	await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible();
 });

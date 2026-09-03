@@ -1,5 +1,71 @@
 # Development Log
 
+## 2026-09-03 — Settings restructure, analysis-runs pages, speech workers UI
+
+Implemented `plans/in-progress/redesign.md` on `main`: Settings is now a
+four-section shell (`/settings` reader preferences only, `/settings/analysis`,
+`/settings/workers`, `/settings/system`), analysis-run history moved to
+top-level `/analysis-runs` + `/analysis-runs/[id]` (old
+`/settings/analysis-runs/[id]` route removed), and the global nav gained
+`Analysis runs`. Details:
+
+- `web/src/routes/settings/+layout.svelte` owns the Settings heading and
+  local section nav (active section via `$page.route.id`, `aria-current`);
+  the `More` block (Library/Plugins links) is gone; `/plugins` itself is
+  untouched and simply has no ordinary link.
+- `AnalysisPipelinePanel.svelte` reordered: active profile card → profiles →
+  providers; per-stage conformance/test fixtures now live inside a native
+  `<details class="provider-test">` (collapsed by default) per provider, with
+  `Refresh catalog` beside it. Test semantics, validation, and CRUD unchanged.
+- New `/settings/workers` page: one-time enrollment token generation
+  (token kept in component memory only, copied via
+  `navigator.clipboard.writeText`, regenerate replaces the shown token),
+  worker list with capabilities/relay/last-seen, and revoke via inline
+  confirmation naming the worker (no `window.confirm`).
+- Client additions (`web/src/lib/api/client.ts`): `SpeechWorker`,
+  `WorkerEnrollment` types and `listSpeechWorkers()`,
+  `createSpeechWorkerEnrollment()`, `revokeSpeechWorker()` over the existing
+  owner endpoints; no OpenAPI change (`npm run generate:api` diff verified
+  empty).
+- Reader links inside `ArticleReader.svelte` that point at profile/model
+  configuration now target `/settings/analysis` instead of `/settings`.
+- Tests: `settings-page.test.ts` rewritten for the reader-only page (incl.
+  asserting no analysis/health requests), new tests for the settings layout
+  nav, analysis-runs list (limit 25, Load more appends, provenance), run
+  detail (new route, back link, 404 retry), speech workers (7 cases), system
+  diagnostics (3 cases), and two `AnalysisPipelinePanel` cases (information
+  order + collapsed provider tests, refresh + conformance run). E2E updated:
+  diagnostics assertion moved to `/settings/system`, settings preference test
+  no longer mocks analysis/health endpoints.
+
+Verification (all from `web/` unless noted):
+
+- `npm run check` — 0 errors, 0 warnings.
+- `npm run test:unit` — 124/124 pass (21 files).
+- `npm run build` — succeeds (adapter-static output written).
+- `npm run generate:api` then `git diff src/lib/api/generated.ts` — empty.
+- `npm run test:e2e` — 34/35 pass. One pre-existing failure on `main`
+  unrelated to this work:
+  `reader-preference.spec.ts › a saved off value survives a reload through
+  the server setting` also fails with every change from this task stashed
+  (verified against pristine `df1a16e` content). Not fixed here to keep the
+  diff scoped.
+- Repo `make verify` — vet, check-no-network, manifest, auth-foundation,
+  login-ui pass; web unit tests pass; `test-fingerprint-integration`
+  (`TestIntegration_FullMatrix`) fails in this working tree. Diagnosis: with
+  `-buildvcs=true` the plugin artifact's main module is stamped
+  `v0.0.0-<time>-<rev>+dirty` here, while the test binary reports `(devel)`,
+  so `ComputeModuleGraphHash` differs between the two sides. `go.mod`/`go.sum`
+  are untouched and `go list -m all` is identical before/after this task; the
+  same test passes in a pristine `git worktree` at `df1a16e` (3/3 runs) and
+  fails in this checkout (3/3 runs). Dirtiness probes inside the clean
+  worktree (untracked file, unstaged and staged tracked edits) did not
+  reproduce the stamping, so the trigger appears to be a VCS-state property
+  of the main checkout rather than any content change; treated as a
+  pre-existing, environment-sensitive test, not a code regression. To be
+  re-checked on a clean tree after commit.
+- `git diff --check` — clean at commit time.
+
 ## 2026-09-03 — Mac LLM relay backend checkpoint 4: blocked (no beta deploy path, no v0.2 Mac app)
 
 Checkpoint 4 (beta proof with the sibling app) was inventoried step by

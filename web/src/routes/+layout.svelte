@@ -70,6 +70,7 @@
 				<a class="brand" href={appPath('/reader')} aria-label="Doublangu reader">Doublangu</a>
 				<a href={appPath('/reader')}>Articles</a>
 				<a class="new-article" href={appPath('/reader/new')}>Paste article</a>
+				<a href={appPath('/analysis-runs')}>Analysis runs</a>
 				<a href={appPath('/settings')}>Settings</a>
 				<button class="sign-out" type="button" onclick={() => void signOut()}>Sign out</button>
 			</nav>

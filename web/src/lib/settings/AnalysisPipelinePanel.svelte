@@ -67,6 +67,9 @@
 
 	const providersByID = $derived(new Map(providers.map((provider) => [provider.id, provider])));
 	const enabledProviders = $derived(providers.filter((provider) => provider.enabled));
+	// A single source of active-profile state: the saved setting, with the
+	// list's own is_active flag as the display fallback.
+	const activeProfile = $derived(profiles.find((profile) => profile.id === activeProfileID || profile.is_active) ?? null);
 	// A binding whose effort its model does not advertise can never be saved:
 	// surface the first mismatch instead of offering a doomed Save.
 	const draftBlocked = $derived(
@@ -293,7 +296,7 @@
 	}
 
 	async function removeProfile(profile: AnalysisProfile): Promise<void> {
-		if (profile.is_active || activationBusy) return;
+		if (profile.is_active || profile.id === activeProfileID || activationBusy) return;
 		saveError = '';
 		try {
 			await deleteAnalysisProfile(profile.id);
@@ -308,176 +311,211 @@
 	}
 </script>
 
-<section class="panel pipeline-panel" aria-labelledby="pipeline-heading">
-	<div class="section-heading">
-		<div>
-			<h2 id="pipeline-heading">Analysis providers &amp; profiles</h2>
-			<p class="muted">Create, activate, and test provider profiles. Endpoints and secrets stay on the server.</p>
-		</div>
-		{#if !loading}
-			<button type="button" class="secondary" onclick={() => void loadAll()}>Refresh</button>
-		{/if}
-	</div>
-
+<section class="pipeline-panel" aria-label="Analysis pipeline configuration">
 	{#if loading}
 		<p class="status" role="status">Loading providers and profiles…</p>
 	{:else if loadError}
 		<p class="error-text" role="alert">{loadError}</p>
-	{:else if providers.length === 0}
-		<p class="muted" role="status">No pipeline providers are configured on this server; new articles cannot be analyzed until a provider is configured.</p>
 	{:else}
+		<section class="active-profile-section" aria-labelledby="active-profile-heading">
+			<h2 id="active-profile-heading">Active profile</h2>
+			{#if activeProfile}
+				<div class="profile-card active-card">
+					<div class="active-profile-top">
+						<strong>{activeProfile.name}</strong>
+						<button type="button" class="secondary" onclick={() => openProfileEditor(activeProfile)}>Edit</button>
+					</div>
+					{#each activeProfile.bindings as binding (binding.stage_id)}
+						<div class="binding-row">
+							<span class="binding-stage">{stageLabel(binding.stage_id)}</span>
+							<span class="binding-value">
+								{providersByID.get(binding.provider_id)?.label ?? binding.provider_id} · {binding.model_id}
+								{#if binding.valid === false}
+									<span class="error-text" role="status">({binding.validity_reason ?? 'not usable'})</span>
+								{/if}
+							</span>
+						</div>
+					{/each}
+				</div>
+			{:else}
+				<p class="muted">No active profile. New analysis runs need an active profile.</p>
+			{/if}
+		</section>
+
 		{#if saveError}<p class="error-text" role="alert">{saveError}</p>{/if}
 
-		<h3 class="sub-heading">Providers</h3>
-		<ul class="provider-list" role="list">
-			{#each providers as provider (provider.id)}
-				<li class="provider-card" class:disabled={!provider.enabled}>
-					<div class="provider-main">
-						<strong>{provider.label ?? provider.id}</strong>
-						<span class="muted">{provider.type} · {provider.health}{provider.stale ? ' · stale catalog' : ''}</span>
-						{#if provider.endpoint_label}<span class="muted">Endpoint: {provider.endpoint_label}</span>{/if}
-						{#if provider.retrieved_at}<span class="muted">Catalog retrieved: {provider.retrieved_at}</span>{/if}
-						{#if provider.last_error}<span class="muted">{provider.last_error}</span>{/if}
-					</div>
-					{#if provider.enabled}
-						<button
-							type="button"
-							class="secondary test-button"
-							disabled={refreshingProvider === provider.id}
-							onclick={() => void refreshProviderCatalog(provider)}
-						>
-							{refreshingProvider === provider.id ? 'Refreshing…' : 'Refresh catalog'}
-						</button>
-					{/if}
-				</li>
-				{#if refreshErrors[provider.id]}
-					<li class="test-result" role="alert">{refreshErrors[provider.id]}</li>
-				{/if}
-				{#if provider.enabled}
-					{#each STAGES as stage (stage)}
-						{@const form = tupleForm(provider, stage)}
-						{@const tupleKey = testFormKey(provider.id, stage)}
-						{@const testEfforts = provider.type === 'openai_compatible' ? [] : supportedEfforts(provider, form.model_id)}
-						{@const retained = stageConformance(provider, stage)}
-						{@const justRun = tupleResults[tupleKey]}
-						{@const optionsError = stageOptionsError(provider.type, form.options)}
-						<li class="stage-test">
-							<span class="stage-name">{STAGE_LABELS[stage]}</span>
-							<div class="tuple-fields">
-								<label class="field">
-									<span>Model</span>
-									{#if modelChoices(provider).length > 0}
-										<select value={form.model_id} onchange={(event) => chooseTestModel(provider, stage, event.currentTarget.value)}>
-											{#each modelChoices(provider) as modelId (modelId)}
-												<option value={modelId}>{modelId}</option>
-											{/each}
-										</select>
-									{:else}
-										<input type="text" bind:value={form.model_id} placeholder="Type a model id…" />
-									{/if}
-								</label>
-								{#if provider.type === 'openai_compatible'}
-									<label class="field">
-										<span>Temperature (milli)</span>
-										<input type="number" min="0" max="2000" bind:value={form.options.temperature_milli} />
-									</label>
-									<label class="field">
-										<span>Max output tokens</span>
-										<input type="number" min="1024" max="65536" bind:value={form.options.max_output_tokens} />
-									</label>
-								{:else}
-									<label class="field">
-										<span>Reasoning effort</span>
-										{#if testEfforts.length > 0}
-											<select value={String(form.options.reasoning_effort ?? testEfforts[0])} onchange={(event) => (form.options.reasoning_effort = event.currentTarget.value)}>
-												{#each testEfforts as effort (effort)}
-													<option value={effort}>{effort}</option>
-												{/each}
-											</select>
-										{:else}
-											<input type="text" value={String(form.options.reasoning_effort ?? '')} disabled />
-										{/if}
-									</label>
+		<section class="profiles-section" aria-labelledby="profiles-heading">
+			<div class="profiles-heading">
+				<h2 id="profiles-heading">Profiles</h2>
+				<button type="button" class="secondary" onclick={openNewProfile}>New profile</button>
+			</div>
+			{#if profiles.length === 0}
+				<p class="muted">No profiles yet. Create one to start analyzing through the pipeline.</p>
+			{:else}
+				<ul class="profile-list" role="list">
+					{#each profiles as profile (profile.id)}
+						{@const unusable = invalidBindings(profile)}
+						<li class="profile-row" class:active={profile.is_active || profile.id === activeProfileID}>
+							<label class="profile-activate">
+								<input
+									type="radio"
+									name="active-profile"
+									checked={profile.is_active || profile.id === activeProfileID}
+									disabled={activationBusy !== '' || !profileUsable(profile)}
+									onchange={() => void chooseActive(profile.id)}
+								/>
+								<span class="profile-copy">
+									<strong>{profile.name}</strong>
+									<small class="muted">{bindingSummary(profile)}</small>
+									{#each unusable as binding (binding.stage_id)}
+										<small class="error-text" role="status">{stageLabel(binding.stage_id)}: {binding.validity_reason ?? 'not usable'}</small>
+									{/each}
+								</span>
+							</label>
+							<div class="profile-actions">
+								{#if activationBusy === profile.id}
+									<span class="muted" role="status">Activating…</span>
 								{/if}
-							</div>
-							<div class="tuple-actions">
+								<button type="button" class="secondary" onclick={() => openProfileEditor(profile)}>Edit</button>
 								<button
 									type="button"
-									class="secondary test-button"
-									disabled={testingTuple === tupleKey || !form.model_id || optionsError !== ''}
-									onclick={() => void runTupleTest(provider, stage)}
+									class="secondary danger"
+									disabled={profile.is_active || profile.id === activeProfileID}
+									onclick={() => void removeProfile(profile)}
 								>
-									{testingTuple === tupleKey ? 'Testing…' : `Test ${STAGE_LABELS[stage]}`}
+									Delete
 								</button>
-								{#if justRun && justRun.tuple === testTupleFingerprint(provider, stage, form)}
-									<span class="muted" role="status">{tupleResultText(justRun)}</span>
-								{/if}
-								{#if optionsError}
-									<span class="error-text" role="alert">{optionsError}</span>
-								{/if}
-								{#if testErrors[tupleKey]}
-									<span class="error-text" role="alert">{testErrors[tupleKey]}</span>
-								{/if}
 							</div>
-							{#if retained.length > 0}
-								<ul class="retained-list" role="list" aria-label={`Retained ${STAGE_LABELS[stage]} results`}>
-									{#each retained as summary (summary.model_id + JSON.stringify(summary.options ?? null))}
-										<li class="muted">
-											{conformanceTupleLabel(summary)} — {summary.status === 'healthy' ? 'Conformance fixture passed' : providerTestErrorText(summary.error_code)}{summary.duration_ms > 0 ? ` in ${summary.duration_ms} ms` : ''}{summary.checked_at ? ` · checked ${summary.checked_at}` : ''}
-										</li>
-									{/each}
-								</ul>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+		</section>
+
+		{#if providers.length === 0}
+			<p class="muted" role="status">No pipeline providers are configured on this server; new articles cannot be analyzed until a provider is configured.</p>
+		{:else}
+			<section class="providers-section" aria-labelledby="providers-heading">
+				<h2 id="providers-heading">Providers</h2>
+				<p class="muted providers-intro">
+					Providers are configured on the server. Use this section to inspect available models, refresh model catalogs, and test
+					provider compatibility.
+				</p>
+				<ul class="provider-list" role="list">
+					{#each providers as provider (provider.id)}
+						<li class="provider-card" class:disabled={!provider.enabled}>
+							<div class="provider-main">
+								<div class="provider-title">
+									<strong>{provider.label ?? provider.id}</strong>
+									<span class="provider-health" class:health-ok={provider.health === 'healthy'} class:health-bad={provider.health !== 'healthy'}>
+										{provider.health}
+									</span>
+								</div>
+								<span class="muted">{provider.type}{provider.stale ? ' · stale catalog' : ''}</span>
+								{#if provider.endpoint_label}<span class="muted">Endpoint: {provider.endpoint_label}</span>{/if}
+								{#if provider.retrieved_at}<span class="muted">Catalog retrieved: {provider.retrieved_at}</span>{/if}
+								{#if provider.last_error}<span class="muted">{provider.last_error}</span>{/if}
+							</div>
+							{#if refreshErrors[provider.id]}
+								<p class="error-text" role="alert">{refreshErrors[provider.id]}</p>
+							{/if}
+							{#if provider.enabled}
+								<div class="provider-actions">
+									<button
+										type="button"
+										class="secondary test-button"
+										disabled={refreshingProvider === provider.id}
+										onclick={() => void refreshProviderCatalog(provider)}
+									>
+										{refreshingProvider === provider.id ? 'Refreshing…' : 'Refresh catalog'}
+									</button>
+								</div>
+								<details class="provider-test">
+									<summary>Test provider</summary>
+									<div class="test-stages">
+										{#each STAGES as stage (stage)}
+											{@const form = tupleForm(provider, stage)}
+											{@const tupleKey = testFormKey(provider.id, stage)}
+											{@const testEfforts = provider.type === 'openai_compatible' ? [] : supportedEfforts(provider, form.model_id)}
+											{@const retained = stageConformance(provider, stage)}
+											{@const justRun = tupleResults[tupleKey]}
+											{@const optionsError = stageOptionsError(provider.type, form.options)}
+											<div class="stage-test">
+												<span class="stage-name">{STAGE_LABELS[stage]}</span>
+												<div class="tuple-fields">
+													<label class="field">
+														<span>Model</span>
+														{#if modelChoices(provider).length > 0}
+															<select value={form.model_id} onchange={(event) => chooseTestModel(provider, stage, event.currentTarget.value)}>
+																{#each modelChoices(provider) as modelId (modelId)}
+																	<option value={modelId}>{modelId}</option>
+																{/each}
+															</select>
+														{:else}
+															<input type="text" bind:value={form.model_id} placeholder="Type a model id…" />
+														{/if}
+													</label>
+													{#if provider.type === 'openai_compatible'}
+														<label class="field">
+															<span>Temperature (milli)</span>
+															<input type="number" min="0" max="2000" bind:value={form.options.temperature_milli} />
+														</label>
+														<label class="field">
+															<span>Max output tokens</span>
+															<input type="number" min="1024" max="65536" bind:value={form.options.max_output_tokens} />
+														</label>
+													{:else}
+														<label class="field">
+															<span>Reasoning effort</span>
+															{#if testEfforts.length > 0}
+																<select value={String(form.options.reasoning_effort ?? testEfforts[0])} onchange={(event) => (form.options.reasoning_effort = event.currentTarget.value)}>
+																	{#each testEfforts as effort (effort)}
+																		<option value={effort}>{effort}</option>
+																	{/each}
+																</select>
+															{:else}
+																<input type="text" value={String(form.options.reasoning_effort ?? '')} disabled />
+															{/if}
+														</label>
+													{/if}
+												</div>
+												<div class="tuple-actions">
+													<button
+														type="button"
+														class="secondary test-button"
+														disabled={testingTuple === tupleKey || !form.model_id || optionsError !== ''}
+														onclick={() => void runTupleTest(provider, stage)}
+													>
+														{testingTuple === tupleKey ? 'Testing…' : `Test ${STAGE_LABELS[stage]}`}
+													</button>
+													{#if justRun && justRun.tuple === testTupleFingerprint(provider, stage, form)}
+														<span class="muted" role="status">{tupleResultText(justRun)}</span>
+													{/if}
+													{#if optionsError}
+														<span class="error-text" role="alert">{optionsError}</span>
+													{/if}
+													{#if testErrors[tupleKey]}
+														<span class="error-text" role="alert">{testErrors[tupleKey]}</span>
+													{/if}
+												</div>
+												{#if retained.length > 0}
+													<ul class="retained-list" role="list" aria-label={`Retained ${STAGE_LABELS[stage]} results`}>
+														{#each retained as summary (summary.model_id + JSON.stringify(summary.options ?? null))}
+															<li class="muted">
+																{conformanceTupleLabel(summary)} — {summary.status === 'healthy' ? 'Conformance fixture passed' : providerTestErrorText(summary.error_code)}{summary.duration_ms > 0 ? ` in ${summary.duration_ms} ms` : ''}{summary.checked_at ? ` · checked ${summary.checked_at}` : ''}
+															</li>
+														{/each}
+													</ul>
+												{/if}
+											</div>
+										{/each}
+									</div>
+								</details>
 							{/if}
 						</li>
 					{/each}
-				{/if}
-			{/each}
-		</ul>
-
-		<div class="profiles-heading">
-			<h3 class="sub-heading">Profiles</h3>
-			<button type="button" class="secondary" onclick={openNewProfile}>New profile</button>
-		</div>
-		{#if profiles.length === 0}
-			<p class="muted">No profiles yet. Create one to start analyzing through the pipeline.</p>
-		{:else}
-			<ul class="profile-list" role="list">
-				{#each profiles as profile (profile.id)}
-					{@const unusable = invalidBindings(profile)}
-					<li class="profile-row" class:active={profile.is_active || profile.id === activeProfileID}>
-						<label class="profile-activate">
-							<input
-								type="radio"
-								name="active-profile"
-								checked={profile.is_active || profile.id === activeProfileID}
-								disabled={activationBusy !== '' || !profileUsable(profile)}
-								onchange={() => void chooseActive(profile.id)}
-							/>
-							<span class="profile-copy">
-								<strong>{profile.name}</strong>
-								<small class="muted">{bindingSummary(profile)}</small>
-								{#each unusable as binding (binding.stage_id)}
-									<small class="error-text" role="status">{stageLabel(binding.stage_id)}: {binding.validity_reason ?? 'not usable'}</small>
-								{/each}
-							</span>
-						</label>
-						<div class="profile-actions">
-							{#if activationBusy === profile.id}
-								<span class="muted" role="status">Activating…</span>
-							{/if}
-							<button type="button" class="secondary" onclick={() => openProfileEditor(profile)}>Edit</button>
-							<button
-								type="button"
-								class="secondary danger"
-								disabled={profile.is_active || profile.id === activeProfileID}
-								onclick={() => void removeProfile(profile)}
-							>
-								Delete
-							</button>
-						</div>
-					</li>
-				{/each}
-			</ul>
+				</ul>
+			</section>
 		{/if}
 
 		{#if editorOpen}
@@ -570,44 +608,322 @@
 </section>
 
 <style>
-	.pipeline-panel { margin-top: 1.25rem; }
-	.section-heading, .profiles-heading, .editor-heading { display: flex; align-items: start; justify-content: space-between; gap: 0.75rem; }
-	.section-heading p { margin: 0.2rem 0 0; }
-	.muted, .status { color: var(--color-muted); }
-	.error-text { color: var(--color-danger); }
-	.sub-heading { margin: 1.25rem 0 0.6rem; }
-	.provider-list, .profile-list { list-style: none; margin: 0 0 0.4rem; padding: 0; display: grid; gap: 0.55rem; }
-	.provider-card, .profile-row { display: flex; align-items: center; justify-content: space-between; gap: 0.9rem; padding: 0.7rem 0.85rem; border: 1px solid var(--color-border); border-radius: 0.55rem; }
-	.provider-main { display: grid; gap: 0.15rem; }
-	.provider-card.disabled { opacity: 0.55; }
-	.test-result { list-style: none; font-size: 0.88rem; color: var(--color-muted); }
-	.stage-test { list-style: none; display: grid; gap: 0.5rem; padding: 0.7rem 0.85rem; border: 1px dashed var(--color-border); border-radius: 0.55rem; }
-	.stage-name { font-weight: 650; }
-	.tuple-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 0.7rem; }
-	.tuple-actions { display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap; }
-	.retained-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.25rem; font-size: 0.88rem; }
-	.profile-row.active { border-color: var(--color-accent); }
-	.profile-activate { display: flex; gap: 0.65rem; align-items: start; cursor: pointer; }
-	.profile-copy { display: grid; gap: 0.2rem; }
-	.profile-copy small { overflow-wrap: anywhere; }
-	.profile-actions { display: flex; gap: 0.45rem; align-items: center; }
-	.primary, .secondary { border: 1px solid var(--color-border); border-radius: 0.5rem; padding: 0.45rem 0.7rem; cursor: pointer; font: inherit; }
-	.primary { background: var(--color-accent); color: #171325; border-color: transparent; font-weight: 700; }
-	.secondary { background: var(--color-surface-raised); color: var(--color-text); }
-	.danger { color: var(--color-danger); }
-	button:disabled { opacity: 0.5; cursor: not-allowed; }
-	.test-button { white-space: nowrap; }
-	.profile-editor { margin-top: 1rem; padding: 1rem; border: 1px solid var(--color-border); border-radius: 0.6rem; background: var(--color-surface-raised); display: grid; gap: 0.9rem; }
-	.binding-editor { border: 1px solid var(--color-border); border-radius: 0.5rem; padding: 0.7rem 0.8rem 0.85rem; display: grid; gap: 0.7rem; margin: 0; }
-	.binding-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 0.7rem; }
-	.field { display: grid; gap: 0.3rem; font-size: 0.88rem; }
-	.field > span { font-weight: 650; }
-	.field input, .field select { width: 100%; padding: 0.45rem 0.55rem; font: inherit; }
-	.editor-actions { display: flex; align-items: center; gap: 0.8rem; }
+	.pipeline-panel {
+		display: grid;
+		gap: 1.5rem;
+	}
+
+	.pipeline-panel h2 {
+		margin-bottom: 0.55rem;
+	}
+
+	.muted,
+	.status {
+		color: var(--color-muted);
+	}
+
+	.error-text {
+		color: var(--color-danger);
+	}
+
+	.status {
+		color: var(--color-muted);
+	}
+
+	.active-profile-top,
+	.profiles-heading,
+	.editor-heading {
+		display: flex;
+		align-items: start;
+		justify-content: space-between;
+		gap: 0.75rem;
+	}
+
+	.profile-card {
+		padding: 0.85rem 0.95rem;
+		border: 1px solid var(--color-border);
+		border-radius: 0.55rem;
+		background: var(--color-surface-raised);
+		display: grid;
+		gap: 0.35rem;
+	}
+
+	.active-card {
+		border-color: var(--color-accent);
+	}
+
+	.active-profile-top {
+		align-items: center;
+		margin-bottom: 0.35rem;
+	}
+
+	.binding-row {
+		display: grid;
+		grid-template-columns: 11rem minmax(0, 1fr);
+		gap: 0.75rem;
+		font-size: 0.92rem;
+	}
+
+	.binding-stage {
+		color: var(--color-muted);
+	}
+
+	.binding-value {
+		overflow-wrap: anywhere;
+	}
+
+	.providers-intro {
+		margin: -0.25rem 0 0.7rem;
+	}
+
+	.provider-list,
+	.profile-list {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: grid;
+		gap: 0.55rem;
+	}
+
+	.profile-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.9rem;
+		padding: 0.7rem 0.85rem;
+		border: 1px solid var(--color-border);
+		border-radius: 0.55rem;
+	}
+
+	.profile-row.active {
+		border-color: var(--color-accent);
+	}
+
+	.profile-activate {
+		display: flex;
+		gap: 0.65rem;
+		align-items: start;
+		cursor: pointer;
+	}
+
+	.profile-copy {
+		display: grid;
+		gap: 0.2rem;
+	}
+
+	.profile-copy small {
+		overflow-wrap: anywhere;
+	}
+
+	.profile-actions {
+		display: flex;
+		gap: 0.45rem;
+		align-items: center;
+	}
+
+	.provider-card {
+		display: grid;
+		gap: 0.6rem;
+		padding: 0.7rem 0.85rem;
+		border: 1px solid var(--color-border);
+		border-radius: 0.55rem;
+	}
+
+	.provider-card.disabled {
+		opacity: 0.55;
+	}
+
+	.provider-main {
+		display: grid;
+		gap: 0.15rem;
+	}
+
+	.provider-title {
+		display: flex;
+		align-items: baseline;
+		gap: 0.7rem;
+		flex-wrap: wrap;
+	}
+
+	.provider-health {
+		font-size: 0.85rem;
+		font-weight: 650;
+	}
+
+	.health-ok {
+		color: #7ee2a8;
+	}
+
+	.health-bad {
+		color: var(--color-warning);
+	}
+
+	.provider-actions {
+		display: flex;
+		gap: 0.45rem;
+	}
+
+	.provider-test {
+		border: 1px dashed var(--color-border);
+		border-radius: 0.55rem;
+	}
+
+	.provider-test summary {
+		padding: 0.55rem 0.8rem;
+		cursor: pointer;
+		font-weight: 650;
+		color: var(--color-muted);
+	}
+
+	.provider-test summary:hover,
+	.provider-test summary:focus-visible {
+		color: var(--color-text);
+	}
+
+	.provider-test[open] summary {
+		border-bottom: 1px dashed var(--color-border);
+	}
+
+	.test-stages {
+		display: grid;
+		gap: 0.7rem;
+		padding: 0.7rem 0.8rem 0.85rem;
+	}
+
+	.stage-test {
+		display: grid;
+		gap: 0.5rem;
+	}
+
+	.stage-name {
+		font-weight: 650;
+	}
+
+	.tuple-fields {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 0.7rem;
+	}
+
+	.tuple-actions {
+		display: flex;
+		align-items: center;
+		gap: 0.8rem;
+		flex-wrap: wrap;
+	}
+
+	.retained-list {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: grid;
+		gap: 0.25rem;
+		font-size: 0.88rem;
+	}
+
+	.primary,
+	.secondary {
+		border: 1px solid var(--color-border);
+		border-radius: 0.5rem;
+		padding: 0.45rem 0.7rem;
+		cursor: pointer;
+		font: inherit;
+	}
+
+	.primary {
+		background: var(--color-accent);
+		color: #171325;
+		border-color: transparent;
+		font-weight: 700;
+	}
+
+	.secondary {
+		background: var(--color-surface-raised);
+		color: var(--color-text);
+	}
+
+	.danger {
+		color: var(--color-danger);
+	}
+
+	button:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
+	.test-button {
+		white-space: nowrap;
+	}
+
+	.profile-editor {
+		padding: 1rem;
+		border: 1px solid var(--color-border);
+		border-radius: 0.6rem;
+		background: var(--color-surface-raised);
+		display: grid;
+		gap: 0.9rem;
+	}
+
+	.binding-editor {
+		border: 1px solid var(--color-border);
+		border-radius: 0.5rem;
+		padding: 0.7rem 0.8rem 0.85rem;
+		display: grid;
+		gap: 0.7rem;
+		margin: 0;
+	}
+
+	.binding-fields {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 0.7rem;
+	}
+
+	.field {
+		display: grid;
+		gap: 0.3rem;
+		font-size: 0.88rem;
+	}
+
+	.field > span {
+		font-weight: 650;
+	}
+
+	.field input,
+	.field select {
+		width: 100%;
+		padding: 0.45rem 0.55rem;
+		font: inherit;
+	}
+
+	.editor-actions {
+		display: flex;
+		align-items: center;
+		gap: 0.8rem;
+	}
+
 	@media (max-width: 600px) {
-		.profile-row { align-items: start; flex-direction: column; }
-		.binding-fields { grid-template-columns: 1fr; }
-		.tuple-fields { grid-template-columns: 1fr; }
-		.editor-actions { align-items: start; flex-direction: column; }
+		.profile-row {
+			align-items: start;
+			flex-direction: column;
+		}
+
+		.binding-row {
+			grid-template-columns: 1fr;
+			gap: 0.1rem;
+		}
+
+		.binding-fields {
+			grid-template-columns: 1fr;
+		}
+
+		.tuple-fields {
+			grid-template-columns: 1fr;
+		}
+
+		.editor-actions {
+			align-items: start;
+			flex-direction: column;
+		}
 	}
 </style>

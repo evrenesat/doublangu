@@ -1,9 +1,9 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, expect, it, vi } from 'vitest';
-import RunDetailPage from '../../routes/settings/analysis-runs/[id]/+page.svelte';
+import RunDetailPage from '../../routes/analysis-runs/[id]/+page.svelte';
 
-function json(body: unknown): Response {
-	return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+function json(body: unknown, status = 200): Response {
+	return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 }
 
 afterEach(() => {
@@ -34,6 +34,10 @@ it('renders retained run artifacts as escaped diagnostic text', async () => {
 
 	render(RunDetailPage);
 	await waitFor(() => expect(screen.getByText('Turn artifacts')).toBeTruthy());
+	// The back link points at the top-level run list, not settings.
+	const backLink = document.querySelector('a.back-link') as HTMLAnchorElement | null;
+	expect(backLink?.getAttribute('href')).toBe('/analysis-runs');
+	expect(backLink?.textContent).toBe('← Analysis runs');
 	expect(screen.getAllByText('model-a')).toHaveLength(2);
 	expect(screen.getByText('v1.annotator_invalid_output')).toBeTruthy();
 	expect(screen.getByText('prompt <script>alert(1)</script>')).toBeTruthy();
@@ -41,4 +45,26 @@ it('renders retained run artifacts as escaped diagnostic text', async () => {
 	expect(screen.getByText('bad <field>')).toBeTruthy();
 	expect(document.querySelector('script')).toBeNull();
 	expect(fetchMock).toHaveBeenCalledWith('/api/v1/analysis/runs/run%20%2F%3F', expect.objectContaining({ credentials: 'same-origin' }));
+});
+
+it('shows a retryable not-found state for a missing run', async () => {
+	(globalThis as typeof globalThis & { __doublanguPage?: unknown }).__doublanguPage = { params: { id: 'missing' } };
+	let healthy = false;
+	const fetchMock = vi.fn(async (): Promise<Response> => {
+		if (!healthy) return json({ error: 'Not found', code: 'v1.not_found' }, 404);
+		return json({
+			id: 'missing', article_id: 'a', article_title: 'Een dag', requested_model: 'm', requested_effort: 'low',
+			provider_id: 'p', started_at: '', duration_ms: 0, status: 'succeeded', total_paragraphs: 1,
+			completed_paragraphs: 1, failed_block_index: -1, error_code: '', turns: []
+		});
+	});
+	vi.stubGlobal('fetch', fetchMock);
+
+	render(RunDetailPage);
+	await waitFor(() => expect(screen.getByText('Analysis run not found.')).toBeTruthy());
+	const retry = screen.getByRole('button', { name: 'Retry' });
+	expect(retry).toBeTruthy();
+	healthy = true;
+	await fireEvent.click(retry);
+	await waitFor(() => expect(screen.getByText('Een dag')).toBeTruthy());
 });

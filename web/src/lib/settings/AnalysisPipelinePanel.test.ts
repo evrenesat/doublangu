@@ -25,6 +25,114 @@ afterEach(() => {
 	}
 });
 
+function stubStandardFetch(options: { providers?: unknown; profiles?: unknown; activeProfileID?: string } = {}): ReturnType<typeof vi.fn> {
+	const fetchMock = vi.fn(async (input: string, init: RequestInit = {}): Promise<Response> => {
+		const method = init.method ?? 'GET';
+		if (input === '/api/v1/analysis/providers' && method === 'GET') return json(200, { providers: options.providers ?? [provider] });
+		if (input === '/api/v1/analysis/profiles' && method === 'GET') return json(200, { profiles: options.profiles ?? [] });
+		if (input === '/api/v1/analysis/settings' && method === 'GET') return json(200, { active_profile_id: options.activeProfileID ?? '' });
+		throw new Error(`unexpected request ${method} ${input}`);
+	});
+	vi.stubGlobal('fetch', fetchMock);
+	return fetchMock;
+}
+
+it('shows the active profile above collapsed provider test controls', async () => {
+	document.cookie = 'csrf_token=test-csrf-token; Path=/';
+	const staleProvider = { ...provider, stale: true, last_error: 'catalog refresh failed earlier' };
+	const profiles = [
+		{
+			id: 'profile-1',
+			name: 'Main',
+			is_active: true,
+			bindings: [
+				{ stage_id: 'linguistic_analysis', provider_id: 'codex-app-server', model_id: 'model-a', options: { reasoning_effort: 'low' } },
+				{ stage_id: 'translation', provider_id: 'codex-app-server', model_id: 'model-a', options: { reasoning_effort: 'low' } }
+			]
+		}
+	];
+	stubStandardFetch({ providers: [staleProvider], profiles, activeProfileID: 'profile-1' });
+
+	render(AnalysisPipelinePanel);
+	await waitFor(() => expect(screen.getByRole('heading', { name: 'Active profile' })).toBeTruthy());
+
+	// Information order: active profile, then profiles, then providers.
+	const activeHeading = screen.getByRole('heading', { name: 'Active profile' });
+	const profilesHeading = screen.getByRole('heading', { name: 'Profiles' });
+	const providersHeading = screen.getByRole('heading', { name: 'Providers' });
+	expect(activeHeading.compareDocumentPosition(profilesHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+	expect(profilesHeading.compareDocumentPosition(providersHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+	// The active profile card carries the selection and both stage rows.
+	const activeCard = document.querySelector('.active-card');
+	expect(activeCard?.textContent).toContain('Main');
+	expect((activeCard?.textContent ?? '').match(/Codex · model-a/g)).toHaveLength(2);
+	const activeRadio = screen.getByRole('radio', { name: /Main/ }) as HTMLInputElement;
+	expect(activeRadio.checked).toBe(true);
+	expect(screen.getByRole('button', { name: 'Delete' }).hasAttribute('disabled')).toBe(true);
+
+	// Stale-catalog state stays visible in the collapsed provider presentation.
+	expect(screen.getByText(/stale catalog/)).toBeTruthy();
+	expect(screen.getByText('catalog refresh failed earlier')).toBeTruthy();
+
+	// Detailed test controls live inside native details, collapsed by default.
+	const details = document.querySelector('details.provider-test') as HTMLDetailsElement | null;
+	expect(details).toBeTruthy();
+	expect(details!.open).toBe(false);
+	expect(details!.querySelector('button')!.textContent!.trim()).toBe('Test Linguistic analysis');
+});
+
+it('expands a provider to run a stage conformance test and refresh its catalog', async () => {
+	document.cookie = 'csrf_token=test-csrf-token; Path=/';
+	const refreshedProvider = { ...provider, retrieved_at: '2 Sep 2026 15:42' };
+	const fetchMock = vi.fn(async (input: string, init: RequestInit = {}): Promise<Response> => {
+		const method = init.method ?? 'GET';
+		if (input.startsWith('/api/v1/analysis/providers?refresh=true') && method === 'GET') {
+			return json(200, { providers: [refreshedProvider] });
+		}
+		if (input === '/api/v1/analysis/providers' && method === 'GET') {
+			return json(200, { providers: [provider] });
+		}
+		if (input === '/api/v1/analysis/providers/codex-app-server/test' && method === 'POST') {
+			expect(JSON.parse(String(init.body))).toEqual({
+				stage_id: 'linguistic_analysis',
+				model_id: 'model-a',
+				options: { reasoning_effort: 'low' }
+			});
+			return json(200, { status: 'healthy', duration_ms: 120 });
+		}
+		if (input === '/api/v1/analysis/profiles' && method === 'GET') return json(200, { profiles: [] });
+		if (input === '/api/v1/analysis/settings' && method === 'GET') return json(200, { active_profile_id: '' });
+		throw new Error(`unexpected request ${method} ${input}`);
+	});
+	vi.stubGlobal('fetch', fetchMock);
+
+	render(AnalysisPipelinePanel);
+	await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh catalog' })).toBeTruthy());
+
+	// Catalog refresh hits the forced-refresh query for exactly this provider.
+	await fireEvent.click(screen.getByRole('button', { name: 'Refresh catalog' }));
+	await waitFor(() =>
+		expect(
+			fetchMock.mock.calls.some(([url]) => String(url) === '/api/v1/analysis/providers?refresh=true&provider_id=codex-app-server')
+		).toBe(true)
+	);
+	await waitFor(() => expect(screen.getByText('Catalog retrieved: 2 Sep 2026 15:42')).toBeTruthy());
+
+	// Expand the provider to reach the tuple tests.
+	const details = document.querySelector('details.provider-test') as HTMLDetailsElement;
+	expect(details).toBeTruthy();
+	await fireEvent.click(screen.getByText('Test provider'));
+	details.open = true;
+	const testButton = await screen.findByRole('button', { name: 'Test Linguistic analysis' });
+	await fireEvent.click(testButton);
+	await waitFor(() => expect(screen.getByText(/Conformance fixture passed in 120 ms/)).toBeTruthy());
+	const posts = fetchMock.mock.calls.filter(
+		([url, init]) => url === '/api/v1/analysis/providers/codex-app-server/test' && (init?.method ?? 'GET') === 'POST'
+	);
+	expect(posts).toHaveLength(1);
+});
+
 it('creating a profile does not activate it, and manual activation saves explicitly', async () => {
 	document.cookie = 'csrf_token=test-csrf-token; Path=/';
 	const stored: unknown[] = [];

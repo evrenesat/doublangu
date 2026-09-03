@@ -8,7 +8,8 @@ import {
 	getSession, logoutSession,
 	listAnalysisRuns, getAnalysisRun, createAnalysisProfile, deleteAnalysisProfile,
 	getPipelineAnalysisSettings, listAnalysisProfiles, listAnalysisProviders,
-	savePipelineAnalysisSettings, testAnalysisProvider
+	savePipelineAnalysisSettings, testAnalysisProvider,
+	listSpeechWorkers, createSpeechWorkerEnrollment, revokeSpeechWorker
 } from './client';
 
 const library = { id: 'library-id', name: 'Dutch Library', source_language: 'nl', target_language: 'en', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-02T00:00:00Z' };
@@ -303,6 +304,23 @@ it('updates reader learning state with a CSRF JSON mutation', async () => {
 	mock(json(200, state));
 	expect(await updateLearningState(payload)).toEqual(state);
 	expectRequest('/api/v1/learning-state', 'PUT', payload);
+});
+
+it('lists, enrolls, and revokes speech workers through owner routes', async () => {
+	const worker = { id: 'worker-id', name: 'MacBook Air', protocol_version: 'speech-worker.v1', revoked_at: '', last_seen_at: '2026-01-02T00:00:00Z', capabilities: [], software_version: '0.2.1', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-02T00:00:00Z' };
+	const enrollment = { id: 'enrollment-id', token: 'one-time-token', expires_at: '2026-01-01T00:30:00Z' };
+
+	mock(json(200, [worker]));
+	expect(await listSpeechWorkers()).toEqual([worker]);
+	expectRequest('/api/v1/speech-workers');
+
+	mock(json(201, enrollment));
+	expect(await createSpeechWorkerEnrollment()).toEqual(enrollment);
+	expectRequest('/api/v1/speech-workers/enrollments', 'POST');
+
+	mock(json(200, { ok: true }));
+	await revokeSpeechWorker('worker /?');
+	expectRequest('/api/v1/speech-workers/worker%20%2F%3F', 'DELETE');
 });
 
 it('decodes a structured ordinary API error', async () => {

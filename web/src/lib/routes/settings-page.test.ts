@@ -1,9 +1,28 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, expect, it, vi } from 'vitest';
-import SettingsPage from '../../routes/settings/+page.svelte';
+import ReaderSettingsPage from '../../routes/settings/+page.svelte';
 
 function json(status: number, body: unknown): Response {
 	return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+}
+
+function localMirror(): Record<string, unknown> {
+	try {
+		return JSON.parse(localStorage.getItem('doublangu:reader:pronounce-on-hover') ?? '{}') as Record<string, unknown>;
+	} catch {
+		return {};
+	}
+}
+
+/** This jsdom URL has no working storage; stub it so the mirror logic is observable. */
+function stubStorage(): void {
+	const store = new Map<string, string>();
+	vi.stubGlobal('localStorage', {
+		getItem: (key: string) => store.get(key) ?? null,
+		setItem: (key: string, value: string) => void store.set(key, value),
+		removeItem: (key: string) => void store.delete(key),
+		clear: () => void store.clear()
+	});
 }
 
 afterEach(() => {
@@ -15,82 +34,91 @@ afterEach(() => {
 	}
 });
 
-it('renders recent runs without any legacy model editor when no providers exist', async () => {
+it('renders Reader content and requests only reader settings', async () => {
 	document.cookie = 'csrf_token=test-csrf-token; Path=/';
-	const run = {
-		id: 'run-id', article_id: 'article-id', article_title: 'Een dag', attempt_count: 1,
-		requested_model: 'visible-model', requested_effort: 'medium', status: 'succeeded',
-		total_paragraphs: 2, completed_paragraphs: 2, failed_block_index: -1, duration_ms: 123,
-		started_at: '2026-01-02T00:00:00Z', completed_at: '2026-01-02T00:00:01Z', error_code: ''
-	};
-	const fetchMock = vi.fn(async (input: string, init: RequestInit = {}): Promise<Response> => {
-		if (input === '/health') return json(200, { core_ready: true, loader_ready: true, schema_available: true, registry_state: 'ready', plugin_count: 0, plugin_ids: [] });
-		if (input === '/api/v1/analysis/runs?limit=10') return json(200, { runs: [run] });
-		if (input === '/api/v1/analysis/providers') return json(200, { providers: [] });
-		if (input === '/api/v1/analysis/profiles') return json(200, { profiles: [] });
-		if (input === '/api/v1/analysis/settings') return json(200, { active_profile_id: '' });
-		throw new Error(`unexpected request ${init.method ?? 'GET'} ${input}`);
+	const fetchMock = vi.fn(async (input: string): Promise<Response> => {
+		if (input === '/api/v1/reader/settings') return json(200, { pronounce_on_hover: true, updated_at: '2026-01-01T00:00:00Z' });
+		throw new Error(`unexpected request ${input}`);
 	});
 	vi.stubGlobal('fetch', fetchMock);
 
-	render(SettingsPage);
-	await waitFor(() => expect(screen.getByText('Een dag')).toBeTruthy());
-	// No legacy surface remains: no model editor, no legacy settings calls.
-	expect(screen.queryByRole('heading', { name: 'Article analysis' })).toBeNull();
-	expect(screen.queryByRole('button', { name: 'Save selection' })).toBeNull();
-	expect(screen.queryByRole('button', { name: 'Refresh models' })).toBeNull();
-	expect(screen.getByText('Choose the provider profile used for new article analysis.')).toBeTruthy();
-	expect(screen.getByText('Een dag')).toBeTruthy();
-	expect(screen.getByText('visible-model · medium')).toBeTruthy();
-	expect(screen.getByText(/new articles cannot be analyzed until a provider is configured/)).toBeTruthy();
-	const legacy = fetchMock.mock.calls.filter(([url]) => url === '/api/v1/analysis/models' || url === '/api/v1/analysis/pipeline-settings');
-	expect(legacy).toEqual([]);
+	render(ReaderSettingsPage);
+	await waitFor(() => expect((screen.getByRole('checkbox', { name: /Pronounce on hover/ }) as HTMLInputElement).checked).toBe(true));
+	expect(screen.getByRole('heading', { name: 'Reader' })).toBeTruthy();
+	expect(screen.getByRole('heading', { name: 'Pronunciation' })).toBeTruthy();
+	expect(screen.getByText("Play a word's pronunciation when the pointer hovers over it in the reader.")).toBeTruthy();
+
+	// Settings must no longer touch analysis or diagnostics surfaces.
+	for (const prefix of ['/api/v1/analysis/runs', '/api/v1/analysis/providers', '/api/v1/analysis/profiles', '/api/v1/analysis/settings', '/health']) {
+		expect(fetchMock.mock.calls.filter(([url]) => String(url).startsWith(prefix))).toEqual([]);
+	}
+	// The removed Settings surfaces stay gone.
+	expect(screen.queryByRole('heading', { name: 'Recent runs' })).toBeNull();
+	expect(screen.queryByRole('link', { name: 'Plugins' })).toBeNull();
+	expect(screen.queryByRole('link', { name: 'Library' })).toBeNull();
 });
 
-it('shows tuple tests and profile-bound runs when pipeline providers are configured', async () => {
+it('saves a checkbox mutation and mirrors it to the local copy', async () => {
 	document.cookie = 'csrf_token=test-csrf-token; Path=/';
-	const providers = {
-		providers: [
-			{
-				id: 'codex-app-server',
-				label: 'Codex',
-				type: 'codex_app_server',
-				enabled: true,
-				stale: false,
-				health: 'healthy',
-				models: [{ id: 'model-a', display_name: 'Model A', supported_reasoning_efforts: [{ value: 'low' }] }]
-			}
-		]
-	};
-	const run = {
-		id: 'run-id', article_id: 'article-id', article_title: 'Een dag', attempt_count: 1,
-		requested_model: '', requested_effort: '', status: 'succeeded',
-		profile_name: 'Mixed', profile_snapshot_hash: 'hash',
-		bindings: [
-			{ stage_id: 'linguistic_analysis', provider_id: 'codex-app-server', model_id: 'model-a' },
-			{ stage_id: 'translation', provider_id: 'mac-omlx', model_id: 'model-b' }
-		],
-		total_paragraphs: 2, completed_paragraphs: 2, failed_block_index: -1, duration_ms: 123,
-		started_at: '2026-01-02T00:00:00Z', completed_at: '2026-01-02T00:00:01Z', error_code: ''
-	};
+	stubStorage();
 	const fetchMock = vi.fn(async (input: string, init: RequestInit = {}): Promise<Response> => {
-		if (input === '/health') return json(200, { core_ready: true, loader_ready: true, schema_available: true, registry_state: 'ready', plugin_count: 0, plugin_ids: [] });
-		if (input === '/api/v1/analysis/runs?limit=10') return json(200, { runs: [run] });
-		if (input === '/api/v1/analysis/providers') return json(200, providers);
-		if (input === '/api/v1/analysis/profiles') return json(200, { profiles: [] });
-		if (input === '/api/v1/analysis/settings') return json(200, { active_profile_id: '' });
+		if (input === '/api/v1/reader/settings' && (init.method ?? 'GET') === 'GET') {
+			return json(200, { pronounce_on_hover: true, updated_at: '2026-01-01T00:00:00Z' });
+		}
+		if (input === '/api/v1/reader/settings' && init.method === 'PUT') {
+			expect(JSON.parse(String(init.body))).toEqual({ pronounce_on_hover: false });
+			return json(200, { pronounce_on_hover: false, updated_at: '2026-01-02T00:00:00Z' });
+		}
 		throw new Error(`unexpected request ${init.method ?? 'GET'} ${input}`);
 	});
 	vi.stubGlobal('fetch', fetchMock);
 
-	render(SettingsPage);
-	await waitFor(() => expect(screen.getByRole('heading', { name: 'Analysis providers & profiles' })).toBeTruthy());
-	expect(screen.queryByRole('heading', { name: 'Article analysis' })).toBeNull();
-	// Per-stage tuple tests and the per-provider refresh replace the old single test button.
-	await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh catalog' })).toBeTruthy());
-	expect(screen.getByRole('button', { name: 'Test Linguistic analysis' })).toBeTruthy();
-	expect(screen.getByRole('button', { name: 'Test Translation' })).toBeTruthy();
-	// Recent runs show the profile plus both compact bindings.
-	expect(screen.getByRole('heading', { name: 'Recent runs' })).toBeTruthy();
-	expect(screen.getByText('Mixed · codex-app-server · model-a · mac-omlx · model-b')).toBeTruthy();
+	render(ReaderSettingsPage);
+	const checkbox = (await screen.findByRole('checkbox', { name: /Pronounce on hover/ })) as HTMLInputElement;
+	expect(checkbox.checked).toBe(true);
+	await fireEvent.click(checkbox);
+	await waitFor(() => expect(checkbox.checked).toBe(false));
+	expect(localMirror()).toEqual({ pronounce_on_hover: false });
+});
+
+it('rolls back a failed mutation with an inline error', async () => {
+	document.cookie = 'csrf_token=test-csrf-token; Path=/';
+	stubStorage();
+	const fetchMock = vi.fn(async (input: string, init: RequestInit = {}): Promise<Response> => {
+		if (input === '/api/v1/reader/settings' && (init.method ?? 'GET') === 'GET') {
+			return json(200, { pronounce_on_hover: true, updated_at: '2026-01-01T00:00:00Z' });
+		}
+		if (input === '/api/v1/reader/settings' && init.method === 'PUT') {
+			return json(500, { error: 'save rejected', code: 'v1.internal' });
+		}
+		throw new Error(`unexpected request ${init.method ?? 'GET'} ${input}`);
+	});
+	vi.stubGlobal('fetch', fetchMock);
+
+	render(ReaderSettingsPage);
+	const checkbox = (await screen.findByRole('checkbox', { name: /Pronounce on hover/ })) as HTMLInputElement;
+	expect(checkbox.checked).toBe(true);
+	await fireEvent.click(checkbox);
+	await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());
+	expect(checkbox.checked).toBe(true);
+	expect(localMirror()).toEqual({ pronounce_on_hover: true });
+});
+
+it('shows a retryable load error', async () => {
+	document.cookie = 'csrf_token=test-csrf-token; Path=/';
+	let healthy = false;
+	const fetchMock = vi.fn(async (input: string): Promise<Response> => {
+		if (input === '/api/v1/reader/settings') {
+			if (!healthy) return json(500, { error: 'unavailable', code: 'v1.internal' });
+			return json(200, { pronounce_on_hover: false, updated_at: '2026-01-01T00:00:00Z' });
+		}
+		throw new Error(`unexpected request ${input}`);
+	});
+	vi.stubGlobal('fetch', fetchMock);
+
+	render(ReaderSettingsPage);
+	await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());
+	healthy = true;
+	await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+	await waitFor(() => expect((screen.getByRole('checkbox', { name: /Pronounce on hover/ }) as HTMLInputElement).checked).toBe(false));
 });

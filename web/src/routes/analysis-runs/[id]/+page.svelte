@@ -51,7 +51,7 @@
 </svelte:head>
 
 <div class="run-page">
-	<a class="back-link" href={appPath('/settings')}>← Back to settings</a>
+	<a class="back-link" href={appPath('/analysis-runs')}>← Analysis runs</a>
 	{#if loading}
 		<p class="status" role="status">Loading analysis run…</p>
 	{:else if error}

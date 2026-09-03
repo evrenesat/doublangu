@@ -680,20 +680,20 @@
 				<span class="status-label">English subtitles</span>
 				<strong class:status-ready={current.analysis_status === 'ready'} class:status-error={current.analysis_status === 'failed'}>{analysisLabel}</strong>
 				{#if pipelineConfigured}
-					<a class="analysis-provenance" href={appPath('/settings')}>Profile: {current.analysis_pipeline!.profile_name || current.analysis_pipeline!.profile_id}</a>
+					<a class="analysis-provenance" href={appPath('/settings/analysis')}>Profile: {current.analysis_pipeline!.profile_name || current.analysis_pipeline!.profile_id}</a>
 				{:else if current.analysis_model}
 					<span class="analysis-provenance">{current.analysis_model} · {current.analysis_effort}</span>
 				{:else}
-					<a class="analysis-provenance" href={appPath('/settings')}>Choose a model in Settings</a>
+					<a class="analysis-provenance" href={appPath('/settings/analysis')}>Choose a model in Settings</a>
 				{/if}
 				{#if pipelineConfigured}
 					{#if current.analysis_status === 'failed'}
 						<button type="button" class="status-action" disabled={reanalyzing} onclick={() => void retryAnalysis()}>{reanalyzing ? 'Retrying…' : 'Retry with saved profile'}</button>
-						<a class="status-action secondary-action" href={appPath('/settings')}>Change in Settings</a>
+						<a class="status-action secondary-action" href={appPath('/settings/analysis')}>Change in Settings</a>
 					{/if}
 				{:else if current.analysis_status === 'failed'}
 					<button type="button" class="status-action" disabled={reanalyzing} onclick={() => void retryAnalysis()}>{reanalyzing ? 'Retrying…' : `Retry with ${analysisSelectionLabel}`}</button>
-					<a class="status-action secondary-action" href={appPath('/settings')}>Change in Settings</a>
+					<a class="status-action secondary-action" href={appPath('/settings/analysis')}>Change in Settings</a>
 				{/if}
 				{#if freshAvailable}
 					<span class="fresh-run">
@@ -711,11 +711,11 @@
 							</select>
 							{#if pipelineOptionsError}
 								<button type="button" class="status-action secondary-action" onclick={() => void loadFreshProfiles()}>Retry loading profiles</button>
-								<a class="status-action secondary-action" href={appPath('/settings')}>Choose a usable profile in Settings</a>
+								<a class="status-action secondary-action" href={appPath('/settings/analysis')}>Choose a usable profile in Settings</a>
 							{:else if !pipelineProfilesReady}
 								<span class="muted" role="status">Loading profiles…</span>
 							{:else if usablePipelineProfiles.length === 0}
-								<a class="status-action secondary-action" href={appPath('/settings')}>Choose a usable profile in Settings</a>
+								<a class="status-action secondary-action" href={appPath('/settings/analysis')}>Choose a usable profile in Settings</a>
 							{:else}
 								<button type="button" class="status-action secondary-action" disabled={reanalyzing || pipelineSelectedProfileID === ''} onclick={() => void retryAnalysis(true)}>
 									{reanalyzing ? 'Running…' : 'Run fresh analysis'}

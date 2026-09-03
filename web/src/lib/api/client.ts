@@ -57,6 +57,10 @@ export type SemanticSense = components['schemas']['SemanticSense'];
 export type AudioRef = components['schemas']['AudioRef'];
 export type Narration = components['schemas']['Narration'];
 export type NarrationClearResult = components['schemas']['NarrationClearResult'];
+export type SpeechWorker = components['schemas']['SpeechWorker'];
+export type WorkerCapability = components['schemas']['WorkerCapability'];
+export type RelayCapability = components['schemas']['RelayCapability'];
+export type WorkerEnrollment = components['schemas']['WorkerEnrollment'];
 
 export interface SessionStatus {
 	authenticated: boolean;
@@ -357,4 +361,16 @@ export async function updateLearningState(data: LearningStateInput): Promise<Lea
 
 export async function updateSemanticLearningState(data: SemanticLearningStateInput): Promise<SemanticLearningState> {
 	return apiFetch('/api/v1/learning-state', { method: 'PUT', body: JSON.stringify(data), csrf: true });
+}
+
+export async function listSpeechWorkers(): Promise<SpeechWorker[]> {
+	return apiFetch('/api/v1/speech-workers');
+}
+
+export async function createSpeechWorkerEnrollment(): Promise<WorkerEnrollment> {
+	return apiFetch('/api/v1/speech-workers/enrollments', { method: 'POST', csrf: true });
+}
+
+export async function revokeSpeechWorker(workerId: string): Promise<void> {
+	return apiFetch(`/api/v1/speech-workers/${id(workerId)}`, { method: 'DELETE', csrf: true });
 }
