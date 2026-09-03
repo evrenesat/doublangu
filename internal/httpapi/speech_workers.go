@@ -10,6 +10,7 @@ import (
 
 	"doublangu/internal/jobs"
 	"doublangu/internal/library"
+	"doublangu/internal/llmrelay"
 	"doublangu/internal/speech"
 	"doublangu/internal/workers"
 )
@@ -222,8 +223,8 @@ func (h *SpeechWorkerHandler) ServeComplete(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	var metadata workers.CompleteMetadata
-	var audio []byte
-	seenMetadata, seenAudio := false, false
+	var audio, result []byte
+	seenMetadata, seenAudio, seenResult := false, false, false
 	for {
 		part, nextErr := multipart.NextPart()
 		if errors.Is(nextErr, io.EOF) {
@@ -258,16 +259,31 @@ func (h *SpeechWorkerHandler) ServeComplete(w http.ResponseWriter, r *http.Reque
 			}
 			audio = value
 			seenAudio = true
+		case "result":
+			if seenResult {
+				WriteError(w, http.StatusBadRequest, "relay result was repeated", ErrCodeRelayUploadRejected)
+				return
+			}
+			value, readErr := io.ReadAll(io.LimitReader(part, (2<<20)+1))
+			if readErr != nil || len(value) > 2<<20 {
+				WriteError(w, http.StatusRequestEntityTooLarge, "relay result is too large", ErrCodeRelayUploadRejected)
+				return
+			}
+			result = value
+			seenResult = true
 		default:
 			WriteError(w, http.StatusBadRequest, "unknown multipart field", ErrCodeAudioUploadRejected)
 			return
 		}
 	}
-	if !seenMetadata || !seenAudio {
+	// Metadata plus at least one payload part is required here; the worker
+	// service discriminates the exact TTS/relay shape after loading the
+	// job lease.
+	if !seenMetadata || (!seenAudio && !seenResult) {
 		WriteError(w, http.StatusBadRequest, "audio metadata and file are required", ErrCodeAudioUploadRejected)
 		return
 	}
-	if err := h.service.Complete(r.Context(), worker, jobID, metadata, audio); err != nil {
+	if err := h.service.Complete(r.Context(), worker, jobID, metadata, audio, result); err != nil {
 		writeWorkerOperationError(w, err, "audio upload rejected")
 		return
 	}
@@ -284,9 +300,16 @@ func writeWorkerOperationError(w http.ResponseWriter, err error, fallback string
 		WriteError(w, http.StatusConflict, "audio result differs from the accepted render", ErrCodeAudioNondeterministic)
 	case errors.Is(err, workers.ErrUploadRejected):
 		WriteError(w, http.StatusUnprocessableEntity, "audio upload failed validation", ErrCodeAudioUploadRejected)
+	case errors.Is(err, workers.ErrRelayRejected):
+		WriteError(w, http.StatusUnprocessableEntity, "relay upload failed validation", ErrCodeRelayUploadRejected)
 	case errors.Is(err, workers.ErrMalformedJob):
 		WriteError(w, http.StatusInternalServerError, "speech job is malformed", ErrCodeInternal)
 	default:
+		var nondeterministic *llmrelay.NondeterministicError
+		if errors.As(err, &nondeterministic) {
+			WriteError(w, http.StatusConflict, "relay result differs from the accepted result", ErrCodeRelayNondeterministic)
+			return
+		}
 		WriteError(w, http.StatusInternalServerError, fallback, ErrCodeInternal)
 	}
 }

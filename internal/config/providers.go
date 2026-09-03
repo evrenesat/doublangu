@@ -24,6 +24,7 @@ import (
 const (
 	ProviderTypeCodexAppServer   = "codex_app_server"
 	ProviderTypeOpenAICompatible = "openai_compatible"
+	ProviderTypeMacRelay         = "mac_relay"
 	ProviderConfigVersion        = 1
 	defaultRequestTimeoutSeconds = 600
 	providerIDPattern            = `^[a-z0-9][a-z0-9._-]{0,62}$`
@@ -228,6 +229,15 @@ func validateProviderEntry(entry ProviderEntry, allowInsecureHTTP bool) error {
 		if !apiKeyEnvRegex.MatchString(entry.APIKeyEnv) {
 			return fmt.Errorf("invalid api_key_env %q", entry.APIKeyEnv)
 		}
+	case ProviderTypeMacRelay:
+		// Relay jobs never carry a URL or credential: the Mac chooses the
+		// destination from local config and reads the key from Keychain.
+		if entry.BaseURL != "" {
+			return errors.New("mac_relay must not set base_url")
+		}
+		if entry.APIKeyEnv != "" {
+			return errors.New("mac_relay must not set api_key_env")
+		}
 	default:
 		return fmt.Errorf("unknown provider type %q", entry.Type)
 	}
@@ -375,7 +385,7 @@ func CanonicalizeProviderOptions(providerType string, raw json.RawMessage) (json
 			return nil, errors.New("codex reasoning_effort must not be empty")
 		}
 		canonical, _ = json.Marshal(options)
-	case ProviderTypeOpenAICompatible:
+	case ProviderTypeOpenAICompatible, ProviderTypeMacRelay:
 		for _, required := range []string{"temperature_milli", "max_output_tokens"} {
 			if _, ok := fields[required]; !ok {
 				return nil, fmt.Errorf("openai-compatible options require %s", required)

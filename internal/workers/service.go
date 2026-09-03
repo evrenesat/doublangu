@@ -18,6 +18,7 @@ import (
 
 	"doublangu/internal/jobs"
 	"doublangu/internal/library"
+	"doublangu/internal/llmrelay"
 	"doublangu/internal/media"
 	"doublangu/internal/speech"
 	"doublangu/internal/store"
@@ -44,11 +45,25 @@ type Service struct {
 	jobs   *jobs.Store
 	speech *speech.Store
 	media  *media.Store
+	relay  *llmrelay.Service
 }
 
-func NewService(db *store.DB, mediaStore *media.Store) *Service {
+// NewService builds the worker service. An optional shared relay service
+// may be supplied so worker completion and provider execution use the same
+// relay component; when omitted one is constructed over the same database.
+func NewService(db *store.DB, mediaStore *media.Store, relay ...*llmrelay.Service) *Service {
 	speechStore := speech.NewStore(db)
-	return &Service{db: db, jobs: jobs.NewStore(db, speechStore.ReconcileTerminalJobTx), speech: speechStore, media: mediaStore}
+	relayService := relayServiceOrNew(db, relay)
+	return &Service{db: db, jobs: jobs.NewStore(db, speechStore.ReconcileTerminalJobTx), speech: speechStore, media: mediaStore, relay: relayService}
+}
+
+func relayServiceOrNew(db *store.DB, relay []*llmrelay.Service) *llmrelay.Service {
+	for _, candidate := range relay {
+		if candidate != nil {
+			return candidate
+		}
+	}
+	return llmrelay.NewService(db)
 }
 
 type Enrollment struct {
@@ -62,6 +77,10 @@ type EnrollInput struct {
 	ProtocolVersion string                    `json:"protocol_version"`
 	Capabilities    []speech.WorkerCapability `json:"capabilities"`
 	SoftwareVersion string                    `json:"software_version"`
+	// LLMRelayCapabilities is the optional enrolled relay support. Old
+	// workers omit it; v0.2 enrolls it regardless of the local relay
+	// toggle so enable/disable needs no re-enrollment.
+	LLMRelayCapabilities []llmrelay.RelayCapability `json:"llm_relay_capabilities,omitempty"`
 }
 
 type Worker struct {
@@ -74,11 +93,19 @@ type Worker struct {
 	SoftwareVersion string                    `json:"software_version"`
 	CreatedAt       string                    `json:"created_at"`
 	UpdatedAt       string                    `json:"updated_at"`
+	// Relay fields are omitted when empty so v0.1 workers keep decoding
+	// their existing responses.
+	LLMRelayCapabilities []llmrelay.RelayCapability `json:"llm_relay_capabilities,omitempty"`
+	RelayLastSeenAt      string                     `json:"relay_last_seen_at,omitempty"`
 }
 
 type LeaseRequest struct {
 	ProtocolVersion string                    `json:"protocol_version"`
 	Capabilities    []speech.WorkerCapability `json:"capabilities"`
+	// LLMRelayCapabilities selects the relay lane: one entry and no
+	// speech capability. A TTS lease carries speech capabilities and no
+	// relay entry; mixed-lane requests are rejected.
+	LLMRelayCapabilities []llmrelay.RelayCapability `json:"llm_relay_capabilities,omitempty"`
 }
 
 type LeaseResponse struct {
@@ -97,6 +124,11 @@ type LeaseResponse struct {
 	ContextPronunciationKey string             `json:"context_pronunciation_key"`
 	Profile                 speech.Profile     `json:"profile"`
 	Limits                  speech.AudioLimits `json:"limits"`
+	// Operation and Relay are required iff the job is `llm.relay.v1` and
+	// omitted for TTS leases. Relay carries the validated request payload
+	// excluding protocol_version and operation.
+	Operation string          `json:"operation,omitempty"`
+	Relay     json.RawMessage `json:"relay,omitempty"`
 }
 
 type HeartbeatInput struct {
@@ -119,11 +151,18 @@ type FailInput struct {
 	Retry           bool   `json:"retry"`
 }
 
+// ErrRelayRejected reports a relay completion or failure that failed relay
+// validation. It maps to the relay upload code, never the audio code.
+var ErrRelayRejected = errors.New("relay upload rejected")
+
 type CompleteMetadata struct {
-	ProtocolVersion string                  `json:"protocol_version"`
-	Attempt         int                     `json:"attempt"`
-	LeaseToken      string                  `json:"lease_token"`
-	Artifact        speech.ArtifactMetadata `json:"artifact"`
+	ProtocolVersion string `json:"protocol_version"`
+	Attempt         int    `json:"attempt"`
+	LeaseToken      string `json:"lease_token"`
+	// Artifact is required for TTS jobs and forbidden for relay jobs. It
+	// is optional at decode time and discriminated after the job lease is
+	// loaded.
+	Artifact *speech.ArtifactMetadata `json:"artifact,omitempty"`
 }
 
 func (s *Service) CreateEnrollment(ctx context.Context) (*Enrollment, error) {
@@ -147,7 +186,7 @@ func (s *Service) ListWorkers(ctx context.Context) ([]Worker, error) {
 	if s == nil || s.db == nil {
 		return nil, errors.New("workers: nil database")
 	}
-	rows, err := s.db.Query(ctx, `SELECT id, name, protocol_version, revoked_at, last_seen_at, capabilities_json, software_version, created_at, updated_at FROM speech_worker ORDER BY created_at, id`)
+	rows, err := s.db.Query(ctx, `SELECT id, name, protocol_version, revoked_at, last_seen_at, capabilities_json, software_version, created_at, updated_at, llm_relay_capabilities_json, relay_last_seen_at FROM speech_worker ORDER BY created_at, id`)
 	if err != nil {
 		return nil, err
 	}
@@ -155,8 +194,8 @@ func (s *Service) ListWorkers(ctx context.Context) ([]Worker, error) {
 	result := make([]Worker, 0)
 	for rows.Next() {
 		var worker Worker
-		var capabilities string
-		if err := rows.Scan(&worker.ID, &worker.Name, &worker.ProtocolVersion, &worker.RevokedAt, &worker.LastSeenAt, &capabilities, &worker.SoftwareVersion, &worker.CreatedAt, &worker.UpdatedAt); err != nil {
+		var capabilities, relayCapabilities string
+		if err := rows.Scan(&worker.ID, &worker.Name, &worker.ProtocolVersion, &worker.RevokedAt, &worker.LastSeenAt, &capabilities, &worker.SoftwareVersion, &worker.CreatedAt, &worker.UpdatedAt, &relayCapabilities, &worker.RelayLastSeenAt); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(capabilities), &worker.Capabilities); err != nil {
@@ -164,6 +203,9 @@ func (s *Service) ListWorkers(ctx context.Context) ([]Worker, error) {
 		}
 		if worker.Capabilities == nil {
 			worker.Capabilities = []speech.WorkerCapability{}
+		}
+		if err := unmarshalRelayCapabilities(relayCapabilities, &worker.LLMRelayCapabilities); err != nil {
+			return nil, err
 		}
 		result = append(result, worker)
 	}
@@ -177,6 +219,9 @@ func (s *Service) Enroll(ctx context.Context, token string, input EnrollInput) (
 	if err := validateEnrollInput(input); err != nil {
 		return nil, "", err
 	}
+	if err := validateRelayEnrollCapabilities(input.LLMRelayCapabilities); err != nil {
+		return nil, "", err
+	}
 	if strings.TrimSpace(token) == "" {
 		return nil, "", ErrUnauthorized
 	}
@@ -187,6 +232,16 @@ func (s *Service) Enroll(ctx context.Context, token string, input EnrollInput) (
 	capabilities, err := json.Marshal(input.Capabilities)
 	if err != nil {
 		return nil, "", err
+	}
+	// Normalize to '[]': a JSON null would pass the `<> '[]'` relay
+	// availability predicate without carrying relay support.
+	relayCapabilities := []byte("[]")
+	if len(input.LLMRelayCapabilities) > 0 {
+		var err error
+		relayCapabilities, err = json.Marshal(input.LLMRelayCapabilities)
+		if err != nil {
+			return nil, "", err
+		}
 	}
 	var worker Worker
 	err = s.db.WithTransaction(ctx, func(tx *sql.Tx) error {
@@ -215,8 +270,8 @@ func (s *Service) Enroll(ctx context.Context, token string, input EnrollInput) (
 		if !found || expiresAt <= store.NowUTC() || usedAt != "" {
 			return ErrUnauthorized
 		}
-		worker = Worker{ID: library.NewULID(), Name: strings.TrimSpace(input.Name), ProtocolVersion: input.ProtocolVersion, Capabilities: input.Capabilities, SoftwareVersion: strings.TrimSpace(input.SoftwareVersion), CreatedAt: store.NowUTC(), UpdatedAt: store.NowUTC()}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO speech_worker (id, name, protocol_version, token_hash, capabilities_json, software_version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, worker.ID.String(), worker.Name, worker.ProtocolVersion, hashSecret(workerToken), string(capabilities), worker.SoftwareVersion, worker.CreatedAt, worker.UpdatedAt); err != nil {
+		worker = Worker{ID: library.NewULID(), Name: strings.TrimSpace(input.Name), ProtocolVersion: input.ProtocolVersion, Capabilities: input.Capabilities, SoftwareVersion: strings.TrimSpace(input.SoftwareVersion), CreatedAt: store.NowUTC(), UpdatedAt: store.NowUTC(), LLMRelayCapabilities: input.LLMRelayCapabilities}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO speech_worker (id, name, protocol_version, token_hash, capabilities_json, software_version, llm_relay_capabilities_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, worker.ID.String(), worker.Name, worker.ProtocolVersion, hashSecret(workerToken), string(capabilities), worker.SoftwareVersion, string(relayCapabilities), worker.CreatedAt, worker.UpdatedAt); err != nil {
 			return err
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE speech_worker_enrollment SET used_at = ? WHERE id = ? AND used_at = ''`, store.NowUTC(), enrollmentID)
@@ -232,7 +287,7 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Worker, erro
 	if s == nil || s.db == nil || strings.TrimSpace(token) == "" {
 		return nil, ErrUnauthorized
 	}
-	rows, err := s.db.Query(ctx, `SELECT id, name, protocol_version, token_hash, revoked_at, last_seen_at, capabilities_json, software_version, created_at, updated_at FROM speech_worker WHERE revoked_at = ''`)
+	rows, err := s.db.Query(ctx, `SELECT id, name, protocol_version, token_hash, revoked_at, last_seen_at, capabilities_json, software_version, created_at, updated_at, llm_relay_capabilities_json, relay_last_seen_at FROM speech_worker WHERE revoked_at = ''`)
 	if err != nil {
 		return nil, err
 	}
@@ -240,12 +295,15 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Worker, erro
 	var worker *Worker
 	for rows.Next() {
 		var candidate Worker
-		var tokenHash, capabilities string
-		if err := rows.Scan(&candidate.ID, &candidate.Name, &candidate.ProtocolVersion, &tokenHash, &candidate.RevokedAt, &candidate.LastSeenAt, &capabilities, &candidate.SoftwareVersion, &candidate.CreatedAt, &candidate.UpdatedAt); err != nil {
+		var tokenHash, capabilities, relayCapabilities string
+		if err := rows.Scan(&candidate.ID, &candidate.Name, &candidate.ProtocolVersion, &tokenHash, &candidate.RevokedAt, &candidate.LastSeenAt, &capabilities, &candidate.SoftwareVersion, &candidate.CreatedAt, &candidate.UpdatedAt, &relayCapabilities, &candidate.RelayLastSeenAt); err != nil {
 			return nil, err
 		}
 		if jobs.LeaseTokenMatches(token, tokenHash) {
 			if err := json.Unmarshal([]byte(capabilities), &candidate.Capabilities); err != nil {
+				return nil, err
+			}
+			if err := unmarshalRelayCapabilities(relayCapabilities, &candidate.LLMRelayCapabilities); err != nil {
 				return nil, err
 			}
 			worker = &candidate
@@ -286,6 +344,17 @@ func (s *Service) Lease(ctx context.Context, worker *Worker, request LeaseReques
 	if request.ProtocolVersion != speech.ProtocolVersion {
 		return nil, ErrProtocol
 	}
+	// Lane dispatch: a TTS lease carries speech capabilities and no relay
+	// entry; a relay lease carries one relay entry and no speech
+	// capability. Mixed-lane requests are rejected.
+	speechLane := len(request.Capabilities) > 0
+	relayLane := len(request.LLMRelayCapabilities) > 0
+	if speechLane == relayLane {
+		return nil, ErrProtocol
+	}
+	if relayLane {
+		return s.leaseRelay(ctx, worker, request)
+	}
 	if err := validateCapabilities(request.Capabilities); err != nil {
 		return nil, err
 	}
@@ -324,7 +393,68 @@ func (s *Service) Lease(ctx context.Context, worker *Worker, request LeaseReques
 	}
 }
 
+// leaseRelay serves the serial relay lane. One worker identity may hold one
+// TTS lease and one relay lease concurrently; the lanes claim disjoint job
+// types.
+func (s *Service) leaseRelay(ctx context.Context, worker *Worker, request LeaseRequest) (*LeaseResponse, error) {
+	if len(request.LLMRelayCapabilities) != 1 || request.LLMRelayCapabilities[0].MaxCompletionBytes != llmrelay.RelayCapabilityBytes {
+		return nil, ErrProtocol
+	}
+	if !llmrelay.RelayCapabilitySubset(request.LLMRelayCapabilities, worker.LLMRelayCapabilities) {
+		return nil, ErrProtocol
+	}
+	// A valid relay lease request marks relay presence before entering the
+	// long poll. TTS traffic never touches this timestamp.
+	if err := s.touchRelayPresence(ctx, worker.ID.String()); err != nil {
+		return nil, err
+	}
+	if _, err := s.jobs.RecoverExpired(ctx); err != nil {
+		return nil, err
+	}
+	deadline := time.Now().Add(LongPollLifetime)
+	for {
+		lease, err := s.jobs.ClaimMatching(ctx, jobs.TargetMacOS, worker.ID.String(), relayJobMatches)
+		if err == nil {
+			response, responseErr := s.leaseResponse(ctx, lease)
+			if responseErr != nil {
+				s.rejectMalformedLease(ctx, lease)
+				return nil, responseErr
+			}
+			return response, nil
+		}
+		if !errors.Is(err, jobs.ErrNoWork) {
+			return nil, err
+		}
+		if time.Now().After(deadline) {
+			return nil, ErrNoWork
+		}
+		timer := time.NewTimer(250 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+// relayJobMatches admits only well-formed relay jobs to the relay lane. TTS
+// payloads never decode as relay requests, so the lanes stay disjoint.
+func relayJobMatches(job jobs.Job) bool {
+	if job.JobType != jobs.LLMRelayJobType || job.ExecutionTarget != jobs.TargetMacOS || job.OwnerType != llmrelay.OwnerType || job.OwnerID == "" {
+		return false
+	}
+	payload, err := llmrelay.DecodeRelayPayload([]byte(job.PayloadJSON))
+	if err != nil || payload.RequestID != job.OwnerID {
+		return false
+	}
+	return llmrelay.HashRequest([]byte(job.PayloadJSON)) == job.InputHash
+}
+
 func (s *Service) leaseResponse(ctx context.Context, lease *jobs.Lease) (*LeaseResponse, error) {
+	if lease != nil && lease.JobType == jobs.LLMRelayJobType {
+		return s.relayLeaseResponse(lease)
+	}
 	var payload speech.JobPayload
 	if err := decodeStrict([]byte(lease.PayloadJSON), &payload); err != nil {
 		return nil, ErrMalformedJob
@@ -356,8 +486,37 @@ func (s *Service) leaseResponse(ctx context.Context, lease *jobs.Lease) (*LeaseR
 	return &LeaseResponse{ProtocolVersion: speech.ProtocolVersion, JobID: lease.ID, Attempt: lease.AttemptCount, LeaseToken: lease.LeaseToken, LeaseExpiresAt: lease.LeaseExpiresAt, JobType: lease.JobType, RenderID: renderID, RequestHash: payload.RequestHash, SpeechUnitID: unitID, Language: payload.Language, UnitKind: payload.UnitKind, SpokenText: payload.SpokenText, ContextPronunciationKey: payload.ContextPronunciationKey, Profile: payload.Profile, Limits: payload.Limits}, nil
 }
 
+// relayLeaseResponse keeps the common lease fields populated, leaves every
+// speech field at its zero value, and attaches the validated request payload
+// excluding protocol_version and operation.
+func (s *Service) relayLeaseResponse(lease *jobs.Lease) (*LeaseResponse, error) {
+	payload, err := llmrelay.DecodeRelayPayload([]byte(lease.PayloadJSON))
+	if err != nil || payload.RequestID != lease.OwnerID || llmrelay.HashRequest([]byte(lease.PayloadJSON)) != lease.InputHash {
+		return nil, ErrMalformedJob
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(lease.PayloadJSON), &raw); err != nil {
+		return nil, ErrMalformedJob
+	}
+	delete(raw, "protocol_version")
+	delete(raw, "operation")
+	trimmed, err := json.Marshal(raw)
+	if err != nil {
+		return nil, ErrMalformedJob
+	}
+	return &LeaseResponse{
+		ProtocolVersion: speech.ProtocolVersion, JobID: lease.ID, Attempt: lease.AttemptCount,
+		LeaseToken: lease.LeaseToken, LeaseExpiresAt: lease.LeaseExpiresAt, JobType: lease.JobType,
+		Operation: payload.Operation, Relay: trimmed,
+	}, nil
+}
+
 func (s *Service) rejectMalformedLease(ctx context.Context, lease *jobs.Lease) {
 	if lease == nil {
+		return
+	}
+	if lease.JobType == jobs.LLMRelayJobType {
+		_ = s.jobs.Fail(ctx, lease.ID, lease.AttemptCount, lease.LeaseToken, "v1.worker_malformed_job", false)
 		return
 	}
 	var payload speech.JobPayload
@@ -374,11 +533,17 @@ func (s *Service) Heartbeat(ctx context.Context, worker *Worker, jobID library.U
 	if worker == nil || input.ProtocolVersion != speech.ProtocolVersion {
 		return nil, ErrUnauthorized
 	}
-	if _, err := s.jobs.VerifyLease(ctx, jobID, input.Attempt, token, worker.ID.String()); err != nil {
+	job, err := s.jobs.VerifyLease(ctx, jobID, input.Attempt, token, worker.ID.String())
+	if err != nil {
 		if errors.Is(err, jobs.ErrLeaseExpired) || errors.Is(err, jobs.ErrLeaseLost) {
 			return nil, err
 		}
 		return nil, err
+	}
+	if job.JobType == jobs.LLMRelayJobType {
+		// Relay heartbeats keep relay presence fresh. TTS traffic never
+		// touches this timestamp.
+		_ = s.touchRelayPresence(ctx, worker.ID.String())
 	}
 	result, err := s.jobs.Heartbeat(ctx, jobID, input.Attempt, token, input.ProgressPercent)
 	if err != nil {
@@ -391,8 +556,12 @@ func (s *Service) Fail(ctx context.Context, worker *Worker, jobID library.ULID, 
 	if worker == nil || input.ProtocolVersion != speech.ProtocolVersion || !validWorkerErrorCode(input.ErrorCode) {
 		return ErrUploadRejected
 	}
-	if _, err := s.jobs.VerifyLease(ctx, jobID, input.Attempt, token, worker.ID.String()); err != nil {
+	job, err := s.jobs.VerifyLease(ctx, jobID, input.Attempt, token, worker.ID.String())
+	if err != nil {
 		return err
+	}
+	if job.JobType == jobs.LLMRelayJobType {
+		return s.failRelay(ctx, worker, job, token, input)
 	}
 	if err := s.jobs.Fail(ctx, jobID, input.Attempt, token, input.ErrorCode, input.Retry); err != nil {
 		return err
@@ -412,8 +581,18 @@ func (s *Service) Fail(ctx context.Context, worker *Worker, jobID library.ULID, 
 	return nil
 }
 
-func (s *Service) Complete(ctx context.Context, worker *Worker, jobID library.ULID, metadata CompleteMetadata, data []byte) error {
-	if worker == nil || metadata.ProtocolVersion != speech.ProtocolVersion || s.media == nil {
+// failRelay records a relay worker failure under the relay code/retry
+// matrix. Relay jobs own no render state, so no domain reconciliation runs.
+func (s *Service) failRelay(ctx context.Context, worker *Worker, job *jobs.Job, token string, input FailInput) error {
+	if err := llmrelay.ValidateFailure(input.ErrorCode, input.Retry); err != nil {
+		return ErrRelayRejected
+	}
+	_ = s.touchRelayPresence(ctx, worker.ID.String())
+	return s.jobs.Fail(ctx, job.ID, input.Attempt, token, input.ErrorCode, input.Retry)
+}
+
+func (s *Service) Complete(ctx context.Context, worker *Worker, jobID library.ULID, metadata CompleteMetadata, audio, result []byte) error {
+	if worker == nil || metadata.ProtocolVersion != speech.ProtocolVersion {
 		return ErrUnauthorized
 	}
 	job, err := s.jobs.VerifyLease(ctx, jobID, metadata.Attempt, metadata.LeaseToken, worker.ID.String())
@@ -422,6 +601,47 @@ func (s *Service) Complete(ctx context.Context, worker *Worker, jobID library.UL
 	}
 	if job.State == jobs.StateCanceled {
 		return jobs.ErrLeaseLost
+	}
+	if job.JobType == jobs.LLMRelayJobType {
+		return s.completeRelay(ctx, worker, job, metadata, audio, result)
+	}
+	if s.media == nil {
+		return ErrUnauthorized
+	}
+	return s.completeSpeech(ctx, job, metadata, audio)
+}
+
+// completeRelay validates the relay multipart shape and commits the result
+// atomically with the job success transition. Relay jobs require `result`
+// and forbid `metadata.artifact` and `audio`; no relay bytes enter the
+// media store.
+func (s *Service) completeRelay(ctx context.Context, worker *Worker, job *jobs.Job, metadata CompleteMetadata, audio, result []byte) error {
+	if metadata.Artifact != nil || len(audio) > 0 || len(result) == 0 {
+		return ErrRelayRejected
+	}
+	_ = s.touchRelayPresence(ctx, worker.ID.String())
+	err := s.db.WithTransaction(ctx, func(tx *sql.Tx) error {
+		return s.relay.CompleteTx(ctx, tx, *job, metadata.Attempt, metadata.LeaseToken, result)
+	})
+	if err == nil {
+		return nil
+	}
+	var nondeterministic *llmrelay.NondeterministicError
+	if errors.As(err, &nondeterministic) {
+		// The first accepted result stays authoritative; mark the
+		// in-flight job so it cannot linger on a rejected completion.
+		_ = s.jobs.Fail(ctx, job.ID, metadata.Attempt, metadata.LeaseToken, llmrelay.CodeNondeterministic, false)
+		return err
+	}
+	if errors.Is(err, jobs.ErrLeaseLost) || errors.Is(err, jobs.ErrLeaseExpired) {
+		return err
+	}
+	return ErrRelayRejected
+}
+
+func (s *Service) completeSpeech(ctx context.Context, job *jobs.Job, metadata CompleteMetadata, data []byte) error {
+	if metadata.Artifact == nil {
+		return ErrUploadRejected
 	}
 	var payload speech.JobPayload
 	if err := decodeStrict([]byte(job.PayloadJSON), &payload); err != nil {
@@ -438,7 +658,7 @@ func (s *Service) Complete(ctx context.Context, worker *Worker, jobID library.UL
 	if digest != metadata.Artifact.SHA256 {
 		return ErrUploadRejected
 	}
-	if err := speech.ValidateArtifact(metadata.Artifact, int64(len(data)), data, payload.RequestHash, payload.UnitKind); err != nil {
+	if err := speech.ValidateArtifact(*metadata.Artifact, int64(len(data)), data, payload.RequestHash, payload.UnitKind); err != nil {
 		return ErrUploadRejected
 	}
 	renderID, err := library.ParseULID(payload.RenderID)
@@ -451,18 +671,18 @@ func (s *Service) Complete(ctx context.Context, worker *Worker, jobID library.UL
 	prepared, err := s.media.PrepareWrite(data)
 	if err != nil {
 		_ = s.speech.MarkRenderFailed(ctx, renderID, "v1.audio_upload_failed")
-		_ = s.jobs.Fail(ctx, jobID, metadata.Attempt, metadata.LeaseToken, "v1.audio_upload_failed", true)
+		_ = s.jobs.Fail(ctx, job.ID, metadata.Attempt, metadata.LeaseToken, "v1.audio_upload_failed", true)
 		return err
 	}
 	_, err = s.media.CommitPrepared(ctx, s.db, speech.AudioMIME, prepared, func(tx *sql.Tx, blobDigest string, _ int64) error {
-		if err := speech.MarkRenderReadyTx(ctx, tx, renderID, payload.RequestHash, blobDigest, metadata.Artifact); err != nil {
+		if err := speech.MarkRenderReadyTx(ctx, tx, renderID, payload.RequestHash, blobDigest, *metadata.Artifact); err != nil {
 			var nondeterministic *speech.NondeterministicResultError
 			if errors.As(err, &nondeterministic) {
 				return ErrNondeterministic
 			}
 			return err
 		}
-		return jobs.CompleteTx(ctx, tx, jobID, metadata.Attempt, metadata.LeaseToken)
+		return jobs.CompleteTx(ctx, tx, job.ID, metadata.Attempt, metadata.LeaseToken)
 	})
 	if err != nil {
 		var nondeterministic *speech.NondeterministicResultError
@@ -472,11 +692,11 @@ func (s *Service) Complete(ctx context.Context, worker *Worker, jobID library.UL
 			// render so it cannot remain stuck in generating after the rejected
 			// artifact transaction rolls back.
 			_ = s.speech.MarkRenderFailed(ctx, renderID, "v1.audio_nondeterministic_result")
-			_ = s.jobs.Fail(ctx, jobID, metadata.Attempt, metadata.LeaseToken, "v1.audio_nondeterministic_result", false)
+			_ = s.jobs.Fail(ctx, job.ID, metadata.Attempt, metadata.LeaseToken, "v1.audio_nondeterministic_result", false)
 			return err
 		}
 		_ = s.speech.MarkRenderFailed(ctx, renderID, "v1.audio_upload_failed")
-		_ = s.jobs.Fail(ctx, jobID, metadata.Attempt, metadata.LeaseToken, "v1.audio_upload_failed", true)
+		_ = s.jobs.Fail(ctx, job.ID, metadata.Attempt, metadata.LeaseToken, "v1.audio_upload_failed", true)
 		return err
 	}
 	s.recomputeRenderArticles(ctx, renderID)
@@ -663,6 +883,47 @@ func listSubset(requested, enrolled []string) bool {
 		}
 	}
 	return true
+}
+
+// validateRelayEnrollCapabilities admits exactly zero or one relay support
+// entry carrying the beta byte bound.
+func validateRelayEnrollCapabilities(capabilities []llmrelay.RelayCapability) error {
+	if len(capabilities) > 1 {
+		return ErrProtocol
+	}
+	for _, capability := range capabilities {
+		if capability.MaxCompletionBytes != llmrelay.RelayCapabilityBytes {
+			return ErrProtocol
+		}
+	}
+	return nil
+}
+
+// unmarshalRelayCapabilities decodes the stored enrollment, tolerating the
+// empty default and legacy null encodings as no relay support.
+func unmarshalRelayCapabilities(raw string, target *[]llmrelay.RelayCapability) error {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" || trimmed == "[]" || trimmed == "null" {
+		*target = nil
+		return nil
+	}
+	var capabilities []llmrelay.RelayCapability
+	if err := json.Unmarshal([]byte(trimmed), &capabilities); err != nil {
+		return err
+	}
+	*target = capabilities
+	return nil
+}
+
+// touchRelayPresence marks active relay presence for one worker. Only relay
+// lane traffic calls it; TTS traffic never refreshes relay presence.
+func (s *Service) touchRelayPresence(ctx context.Context, workerID string) error {
+	if s == nil || s.db == nil {
+		return errors.New("workers: nil database")
+	}
+	now := store.NowUTC()
+	_, err := s.db.Exec(ctx, `UPDATE speech_worker SET relay_last_seen_at = ?, updated_at = ? WHERE id = ? AND revoked_at = ''`, now, now, workerID)
+	return err
 }
 
 func validWorkerErrorCode(code string) bool {

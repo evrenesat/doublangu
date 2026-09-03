@@ -24,6 +24,7 @@ const (
 	AnalysisJobType   = "reader.analysis.v2"
 	AVSpeechJobType   = "tts.avspeech.v1"
 	ChatterboxJobType = "tts.chatterbox.v3"
+	LLMRelayJobType   = "llm.relay.v1"
 
 	TargetServer = "server"
 	TargetMacOS  = "macos"
@@ -661,6 +662,63 @@ func (s *Store) RecoverExpired(ctx context.Context) (int64, error) {
 	return affected, err
 }
 
+// RecoverExpiredJob applies the same expired-lease retry/backoff transition
+// as RecoverExpired, but only to the named job. The relay wait loop uses it
+// while blocked on one child job so unrelated speech work is never recovered
+// without its domain callback. It reports whether the job was expired and
+// transitioned; a job that is queued, terminal, live, or missing reports
+// false without an error.
+func (s *Store) RecoverExpiredJob(ctx context.Context, id library.ULID) (bool, error) {
+	if s == nil || s.db == nil || id.IsZero() {
+		return false, &Error{Op: "recover expired job", Kind: "validation", Err: ErrInvalidJob}
+	}
+	recovered := false
+	err := s.db.WithTransaction(ctx, func(tx *sql.Tx) error {
+		now := store.NowUTC()
+		var jobType, ownerType, ownerID string
+		var attempt, max int
+		var state, leaseExpiresAt string
+		err := tx.QueryRowContext(ctx, `SELECT job_type, owner_type, owner_id, attempt_count, max_attempts, state, lease_expires_at FROM job WHERE id = ?`, id.String()).Scan(&jobType, &ownerType, &ownerID, &attempt, &max, &state, &leaseExpiresAt)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if state != StateLeased && state != StateRunning {
+			return nil
+		}
+		if leaseExpiresAt == "" || leaseExpiresAt > now {
+			return nil
+		}
+		next := StateFailed
+		available := now
+		if attempt < max {
+			next = StateQueued
+			available = time.Now().UTC().Add(backoffForAttempt(attempt)).Format("2006-01-02T15:04:05.000Z")
+		}
+		result, err := tx.ExecContext(ctx, `UPDATE job SET state = ?, available_at = ?, error_code = ?, lease_owner = '', lease_token_hash = '', lease_expires_at = '', updated_at = ?, completed_at = CASE WHEN ? = 'failed' THEN ? ELSE completed_at END WHERE id = ? AND state IN ('leased', 'running') AND lease_expires_at <= ?`, next, available, LeaseExpiredErrorCode, now, next, now, id.String(), now)
+		if err != nil {
+			return err
+		}
+		count, _ := result.RowsAffected()
+		if count != 1 {
+			return nil
+		}
+		recovered = true
+		if next == StateFailed && s.terminalRecovery != nil {
+			if err := s.terminalRecovery(ctx, tx, Job{
+				ID: id, JobType: jobType, OwnerType: ownerType, OwnerID: ownerID,
+				State: next, AttemptCount: attempt, MaxAttempts: max, ErrorCode: LeaseExpiredErrorCode,
+			}); err != nil {
+				return err
+			}
+		}
+		return reconcileDependencyFailuresTx(ctx, tx, now)
+	})
+	return recovered, err
+}
+
 func reconcileDependencyFailuresTx(ctx context.Context, tx *sql.Tx, now string) error {
 	for {
 		result, err := tx.ExecContext(ctx, `
@@ -682,7 +740,7 @@ func reconcileDependencyFailuresTx(ctx context.Context, tx *sql.Tx, now string) 
 }
 
 func validateSpec(spec *Spec) error {
-	if spec.JobType != AnalysisJobType && spec.JobType != AVSpeechJobType && spec.JobType != ChatterboxJobType {
+	if spec.JobType != AnalysisJobType && spec.JobType != AVSpeechJobType && spec.JobType != ChatterboxJobType && spec.JobType != LLMRelayJobType {
 		return fmt.Errorf("unsupported job type %q", spec.JobType)
 	}
 	if spec.ExecutionTarget != TargetServer && spec.ExecutionTarget != TargetMacOS {

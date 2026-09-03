@@ -1,25 +1,37 @@
 {
   "version": 1,
+  "allow_insecure_tailscale_http": false,
   "providers": [
     {
       "id": "codex-local",
+      "label": "Local Codex",
+      "endpoint_label": "Local authenticated Codex CLI",
       "type": "codex_app_server",
-      "model": "PLACEHOLDER_MODEL_ID",
-      "reasoning_effort": "low"
+      "enabled": true,
+      "request_timeout_seconds": 600
     },
     {
-      "id": "omlx-local",
-      "type": "openai_compatible",
-      "base_url": "http://127.0.0.1:9000/v1",
-      "model": "PLACEHOLDER_OMLX_MODEL_ID",
-      "api_key_env": "DOUBLANGU_OMLX_API_KEY"
+      "id": "mac-omlx",
+      "label": "Mac OMLX relay",
+      "endpoint_label": "Mac relay (local OMLX)",
+      "type": "mac_relay",
+      "enabled": true,
+      "request_timeout_seconds": 600
     }
   ],
   "bootstrap_profile": {
     "name": "Local mixed",
     "bindings": {
-      "linguistic_analysis": { "provider_id": "codex-local", "model_id": "PLACEHOLDER_MODEL_ID" },
-      "translation": { "provider_id": "omlx-local", "model_id": "PLACEHOLDER_OMLX_MODEL_ID" }
+      "linguistic_analysis": {
+        "provider_id": "codex-local",
+        "model_id": "PLACEHOLDER_MODEL_ID",
+        "options": { "reasoning_effort": "low" }
+      },
+      "translation": {
+        "provider_id": "mac-omlx",
+        "model_id": "PLACEHOLDER_OMLX_MODEL_ID",
+        "options": { "temperature_milli": 0, "max_output_tokens": 16384 }
+      }
     }
   }
 }

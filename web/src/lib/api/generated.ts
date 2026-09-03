@@ -1805,7 +1805,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Upload and atomically publish a speech render */
+        /** Upload and atomically publish a speech render or relay result */
         post: {
             parameters: {
                 query?: never;
@@ -1822,8 +1822,13 @@ export interface paths {
                     "multipart/form-data": {
                         /** @description JSON matching WorkerCompleteMetadata. */
                         metadata: string;
-                        /** Format: binary */
-                        audio: string;
+                        /**
+                         * Format: binary
+                         * @description Required for TTS jobs; forbidden for llm.relay.v1 jobs.
+                         */
+                        audio?: string;
+                        /** @description Required JSON for llm.relay.v1 jobs; forbidden for TTS jobs. */
+                        result?: string;
                     };
                 };
             };
@@ -3603,6 +3608,8 @@ export interface components {
             revoked_at: string;
             last_seen_at: string;
             capabilities: components["schemas"]["WorkerCapability"][];
+            llm_relay_capabilities?: components["schemas"]["RelayCapability"][];
+            relay_last_seen_at?: string;
             software_version: string;
             created_at: string;
             updated_at: string;
@@ -3617,6 +3624,7 @@ export interface components {
             /** @enum {string} */
             protocol_version: "speech-worker.v1";
             capabilities: components["schemas"]["WorkerCapability"][];
+            llm_relay_capabilities?: components["schemas"]["RelayCapability"][];
             software_version: string;
         };
         WorkerEnrollmentResponse: {
@@ -3628,7 +3636,8 @@ export interface components {
         WorkerLeaseRequest: {
             /** @enum {string} */
             protocol_version: "speech-worker.v1";
-            capabilities: components["schemas"]["WorkerCapability"][];
+            capabilities?: components["schemas"]["WorkerCapability"][];
+            llm_relay_capabilities?: components["schemas"]["RelayCapability"][];
         };
         SpeechProfile: {
             id: components["schemas"]["ULID"];
@@ -3659,6 +3668,13 @@ export interface components {
             /** Format: int64 */
             max_duration_ms: number;
         };
+        RelayCapability: {
+            /**
+             * Format: int64
+             * @enum {integer}
+             */
+            max_completion_bytes: 2097152;
+        };
         WorkerLease: {
             /** @enum {string} */
             protocol_version: "speech-worker.v1";
@@ -3667,17 +3683,24 @@ export interface components {
             lease_token: string;
             lease_expires_at: string;
             /** @enum {string} */
-            job_type: "tts.avspeech.v1" | "tts.chatterbox.v3";
-            render_id: components["schemas"]["ULID"];
-            request_hash: components["schemas"]["SHA256"];
-            speech_unit_id: components["schemas"]["ULID"];
-            language: string;
+            job_type: "tts.avspeech.v1" | "tts.chatterbox.v3" | "llm.relay.v1";
+            render_id?: components["schemas"]["ULID"];
+            request_hash?: components["schemas"]["SHA256"];
+            speech_unit_id?: components["schemas"]["ULID"];
+            language?: string;
             /** @enum {string} */
-            unit_kind: "word" | "phrase" | "sentence";
-            spoken_text: string;
-            context_pronunciation_key: string;
-            profile: components["schemas"]["SpeechProfile"];
-            limits: components["schemas"]["AudioLimits"];
+            unit_kind?: "word" | "phrase" | "sentence";
+            spoken_text?: string;
+            context_pronunciation_key?: string;
+            profile?: components["schemas"]["SpeechProfile"];
+            limits?: components["schemas"]["AudioLimits"];
+            /**
+             * @description Present only for llm.relay.v1 leases.
+             * @enum {string}
+             */
+            operation?: "chat_completion" | "list_models";
+            /** @description Validated relay request payload excluding protocol_version and operation. Present only for llm.relay.v1 leases. */
+            relay?: Record<string, never>;
         };
         WorkerHeartbeat: {
             /** @enum {string} */
@@ -3696,6 +3719,7 @@ export interface components {
             /** @enum {string} */
             protocol_version: "speech-worker.v1";
             attempt: number;
+            /** @description Relay jobs accept only v1.relay_unreachable (retry allowed), v1.relay_auth, v1.relay_invalid_response, v1.relay_model_unknown, and v1.relay_canceled (retry forbidden). */
             error_code: string;
             retry: boolean;
         };
@@ -3704,7 +3728,7 @@ export interface components {
             protocol_version: "speech-worker.v1";
             attempt: number;
             lease_token: string;
-            artifact: {
+            artifact?: {
                 request_hash: components["schemas"]["SHA256"];
                 sha256: components["schemas"]["SHA256"];
                 /** Format: int64 */

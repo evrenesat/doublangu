@@ -27,6 +27,7 @@ import (
 	"doublangu/internal/httpapi/pluginassets"
 	"doublangu/internal/jobs"
 	"doublangu/internal/library"
+	"doublangu/internal/llmrelay"
 	"doublangu/internal/media"
 	"doublangu/internal/pipeline"
 	manifest "doublangu/internal/plugins"
@@ -152,11 +153,15 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "WARNING: schema not available: %v\n", err)
 	}
 	registry := manifest.NewRegistry()
-	providerRegistry, configErr := loadProviderRegistry(db, cfg)
+	// One relay service serves both the provider registry and the worker
+	// service so completion and execution share durable relay state.
+	relayService := llmrelay.NewService(db)
+	providerRegistry, configErr := loadProviderRegistry(db, cfg, relayService)
 	if configErr != nil {
 		fmt.Fprintf(stderr, "provider config: %v\n", configErr)
 		return 1
 	}
+	workerService := workers.NewService(db, mediaStore, relayService)
 	analysisContext, stopAnalysis := context.WithCancel(context.Background())
 	defer stopAnalysis()
 	// The two-stage pipeline runner owns every analysis job in both modes:
@@ -165,7 +170,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	// automatically instead of bypassing it.
 	pipelineRunner := analysis.NewPipelineRunner(db, providerRegistry)
 	go pipelineRunner.Run(analysisContext)
-	if err := serve(cfg.Listen, registry, schema, db, newHandlerWithMedia(registry, schema, authHandler, healthHandler, cfg, db, mediaStore, providerRegistry, articleAnnotator), stdout); err != nil {
+	if err := serve(cfg.Listen, registry, schema, db, newHandlerWithMedia(registry, schema, authHandler, healthHandler, cfg, db, mediaStore, providerRegistry, workerService, articleAnnotator), stdout); err != nil {
 		fmt.Fprintf(stderr, "server: %v\n", err)
 		return 1
 	}
@@ -189,7 +194,7 @@ func newHandler(
 	db *store.DB,
 	providers ...annotator.Annotator,
 ) http.Handler {
-	return newHandlerWithMedia(registry, schema, authHandler, health, cfg, db, nil, nil, providers...)
+	return newHandlerWithMedia(registry, schema, authHandler, health, cfg, db, nil, nil, nil, providers...)
 }
 
 func newHandlerWithMedia(
@@ -201,6 +206,7 @@ func newHandlerWithMedia(
 	db *store.DB,
 	mediaStore *media.Store,
 	providerRegistry httpapiProviderRegistry,
+	workerService *workers.Service,
 	providers ...annotator.Annotator,
 ) http.Handler {
 	mux := http.NewServeMux()
@@ -302,7 +308,9 @@ func newHandlerWithMedia(
 	})
 	mux.Handle("/api/v1/reader/settings", readerSettingsRoutes)
 
-	workerService := workers.NewService(db, mediaStore)
+	if workerService == nil {
+		workerService = workers.NewService(db, mediaStore)
+	}
 	workerHandler := httpapi.NewSpeechWorkerHandler(workerService, authHandler.CSRF)
 	ownerWorkerMux := http.NewServeMux()
 	ownerWorkerMux.HandleFunc("POST /api/v1/speech-workers/enrollments", workerHandler.ServeOwnerEnrollments)
@@ -390,7 +398,7 @@ func articleMux(h *httpapi.ArticleHandler) http.Handler {
 // bootstrap profile. An explicit file must not be combined with legacy
 // provider-selection environment. Any failure is returned as an error so
 // startup aborts instead of silently running without providers.
-func loadProviderRegistry(db *store.DB, cfg *config.Config) (httpapiProviderRegistry, error) {
+func loadProviderRegistry(db *store.DB, cfg *config.Config, relayService *llmrelay.Service) (httpapiProviderRegistry, error) {
 	pathValue := os.Getenv("DOUBLANGU_PROVIDER_CONFIG")
 	if pathValue != "" {
 		if name, set := legacyProviderSelection(); set {
@@ -400,13 +408,13 @@ func loadProviderRegistry(db *store.DB, cfg *config.Config) (httpapiProviderRegi
 		if err != nil {
 			return nil, fmt.Errorf("load %q: %w", pathValue, err)
 		}
-		return registryFromFile(db, file)
+		return registryFromFile(db, file, relayService)
 	}
 	file, err := compatibilityProviderFile(db, cfg)
 	if err != nil {
 		return nil, err
 	}
-	return registryFromFile(db, file)
+	return registryFromFile(db, file, relayService)
 }
 
 // legacyProviderSelection reports whether legacy provider-selection
@@ -464,10 +472,10 @@ func compatibilityProviderFile(db *store.DB, cfg *config.Config) (*config.Provid
 	return file, nil
 }
 
-func registryFromFile(db *store.DB, file *config.ProviderConfigFile) (httpapiProviderRegistry, error) {
+func registryFromFile(db *store.DB, file *config.ProviderConfigFile, relayService *llmrelay.Service) (httpapiProviderRegistry, error) {
 	registry, err := annotator.NewRegistry(file, "codex", func(name string) (string, error) {
 		return os.Getenv(name), nil
-	})
+	}, relayService)
 	if err != nil {
 		return nil, err
 	}

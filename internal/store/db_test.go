@@ -811,8 +811,8 @@ func TestMigrationVersionRecorded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("version query: %v", err)
 	}
-	if version != 10 {
-		t.Errorf("expected version 10, got %d", version)
+	if version != 11 {
+		t.Errorf("expected version 11, got %d", version)
 	}
 }
 
@@ -836,8 +836,8 @@ func TestMigrationFreshInMemoryAlwaysApplies(t *testing.T) {
 		t.Fatalf("version count: %v", err)
 	}
 	// Each in-memory OpenTest starts fresh — all migrations run once per open.
-	if count != 10 {
-		t.Errorf("expected 10 migration records, got %d", count)
+	if count != 11 {
+		t.Errorf("expected 11 migration records, got %d", count)
 	}
 }
 
@@ -1023,8 +1023,8 @@ func TestFileBasedDBDoesNotReapplyMigrations(t *testing.T) {
 	if err := db2.QueryRow(context.Background(), "SELECT COUNT(*) FROM schema_version").Scan(&count); err != nil {
 		t.Fatalf("count: %v", err)
 	}
-	if count != 10 {
-		t.Errorf("expected 10 migration records, got %d (migrations should not reapply)", count)
+	if count != 11 {
+		t.Errorf("expected 11 migration records, got %d (migrations should not reapply)", count)
 	}
 }
 
@@ -1333,7 +1333,7 @@ func TestMigration002_UpgradeFromV1ToV2(t *testing.T) {
 	assertMigration008Schema(t, db)
 	assertMigration009Schema(t, db)
 	assertMigration010Schema(t, db)
-	assertMigrationVersion(t, db, 10)
+	assertMigrationVersion(t, db, 11)
 }
 
 func TestMetadataStoreCRUDOnCleanAndUpgradedDatabases(t *testing.T) {
@@ -1519,7 +1519,7 @@ func TestMigration002_RollbackLeavesNoLibraryTables(t *testing.T) {
 	assertMigration008Schema(t, db)
 	assertMigration009Schema(t, db)
 	assertMigration010Schema(t, db)
-	assertMigrationVersion(t, db, 10)
+	assertMigrationVersion(t, db, 11)
 }
 
 func TestFileDatabaseUsesWALForeignKeysBusyTimeoutAndCurrentVersion(t *testing.T) {
@@ -1543,7 +1543,7 @@ func TestFileDatabaseUsesWALForeignKeysBusyTimeoutAndCurrentVersion(t *testing.T
 	if err := db.QueryRow(ctx, "SELECT MAX(version) FROM schema_version").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if journal != "wal" || foreignKeys != 1 || busyTimeout != 5000 || version != 10 {
+	if journal != "wal" || foreignKeys != 1 || busyTimeout != 5000 || version != 11 {
 		t.Fatalf("journal=%q foreign_keys=%d busy_timeout=%d version=%d", journal, foreignKeys, busyTimeout, version)
 	}
 }

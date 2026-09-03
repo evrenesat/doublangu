@@ -1,5 +1,89 @@
 # Development Log
 
+## 2026-09-03 — Mac LLM relay backend checkpoint 4: blocked (no beta deploy path, no v0.2 Mac app)
+
+Checkpoint 4 (beta proof with the sibling app) was inventoried step by
+step and cannot execute from here. Checkpoints 1–3 are preserved
+unchanged: same uncommitted worktree, `go build ./internal/... ./cmd/...`
+clean, `git diff --check` clean, so the recorded race verification stands.
+
+Blockers, verified just now:
+
+- Deploy (step 1): no deploy tooling exists in the repo (`tools/` holds
+  only `pluginbuild`; the Makefile has no deploy target) and SSH to the
+  beta host fails (`Host key verification failed`, no credentials). The
+  checkpoint 1–3 work is also uncommitted on `main`, while prior beta
+  releases pin reviewed commits — deploying this worktree would bypass
+  review. No owner deployment approval was given.
+- v0.2 Mac app (step 2): the sibling plan is still marked "Ready for
+  implementation after backend checkpoints 1–2 are deployed to beta" and
+  `macos/speech-worker` contains zero relay references
+  (`llm_relay|llm\.relay|RelayCapability` match nothing). There is no v0.2
+  app to install, pair, or re-enroll.
+- Steps 3–9 need the owner Mac (`dev-ren-mac`), Mac-local OMLX, and owner
+  Settings/Keychain actions. This container is Linux (`Linux codex
+  6.17.2-1-pve x86_64`); `http://127.0.0.1:8899/v1/models` refuses
+  connection here, and OMLX must stay bound to the Mac's loopback anyway.
+- Public surface (step 10) baseline, read-only probe of the current
+  (pre-relay) beta: `GET /` → 302, `GET /beta/` → 401,
+  `GET /beta/api/v1/speech-worker/lease` → 401 (worker-auth enforced, no
+  browser-session access). No relay route exists to check yet; re-run this
+  probe after a real deploy of checkpoints 1–3.
+- Rollback (§10 item 11): not performed — nothing was deployed. The exact
+  procedure (remove the `mac_relay` entry, fail closed; stop the relay
+  lane, TTS continues; migration 011 forward-only) stands as recorded.
+
+To unblock: review + commit checkpoints 1–3, deploy the resulting commit
+to beta through the owner's normal beta procedure, implement the sibling
+Mac plan, then re-run checkpoint 4 steps 2–10 from the owner Mac.
+
+## 2026-09-03 — Mac LLM relay backend (checkpoints 1–3; checkpoint 4 pending beta)
+
+Implemented `plans/in-progress/mac-llm-relay-backend-handoff-reviewed.md`
+checkpoints 1–3 on `main`. Checkpoint 4 (beta proof with the sibling Mac
+app) needs the owner Mac and beta deployment and is not attempted here.
+
+- Checkpoint 1: migration `011_llm_relay.sql` (job rebuild admitting
+  `llm.relay.v1`, dependency backup/restore, relay worker columns,
+  `llm_relay_result`), `jobs.LLMRelayJobType` + spec validation,
+  `jobs.Store.RecoverExpiredJob`, and the new `internal/llmrelay` package
+  (strict request/result validation, request hashing, enqueue + 250 ms
+  durable wait, availability query, atomic completion). Migration number is
+  011, not 009: the baseline has since grown 009 (stage cache identity)
+  and 010 (truncation flags); `db_test.go` version/count assertions moved
+  10 → 11. The plan's `idx_job_dependency_reverse` name does not exist;
+  the rebuild recreates the real 005 index
+  `idx_job_dependency_dependency`.
+- Checkpoint 2: relay lane in the worker protocol (enroll/lease
+  `llm_relay_capabilities`, relay-only presence, relay lease responses,
+  three-part completion, relay fail matrix, concurrent TTS + relay
+  leases), `contracts/openapi.yaml` extension, regenerated
+  `web/src/lib/api/generated.ts` with no hand edits, v0.1 worker
+  backward-compatibility proof.
+- Checkpoint 3: `mac_relay` provider type in config + annotator (narrow
+  `RelayExecutor`, history-preserving session, provider-timeout scope,
+  auth/unreachable/model-unknown/expiry → unavailable,
+  invalid-response → invalid-output, deadline → timeout, caller cancel
+  preserved), shared relay service assembly in `main.go`, and a valid
+  current-schema `config/provider.example.json` including `mac-omlx`.
+
+### Verification
+
+- `go test ./internal/... -race -count=1` — all 17 packages passed.
+- `go test -race ./internal/annotator ./internal/config ./cmd/doublangu-server`
+  — passed; `DOUBLANGU_TEST_CODEX_LIVE=1` live app-server smoke — passed
+  (`TestLiveCodexChunk` skips: `DOUBLANGU_TEST_CODEX_MODEL` unset).
+- `npm --prefix web run validate:openapi` + `generate:api` (twice,
+  stable) — passed.
+- `npm --prefix web run check` — 0 errors, 0 warnings;
+  `test:unit -- --run` — 103 passed (17 files).
+- Reader E2E (`test:e2e`, needs Go on PATH for its webServer) — 35 passed.
+- `make verify` — passed. `gofmt`, `git diff --check` — clean.
+- Handoff evidence recorded here per §10 items 1–6, 10–11; items 7–9
+  (catalog models, stage provenance, OMLX-offline/retry) need checkpoint 4
+  beta hardware. Rollback: remove the `mac_relay` entry (fail closed),
+  stop the relay lane (TTS continues); migration 011 is forward-only.
+
 ## 2026-09-03 — Pipeline third review: compat registry, seed validation, input schema, exact options, failure caching
 
 Addressed five new material findings from `plans/reviews/latest_review.md`:

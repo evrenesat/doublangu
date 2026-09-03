@@ -20,6 +20,7 @@ import (
 const (
 	ProviderTypeCodexAppServer   = config.ProviderTypeCodexAppServer
 	ProviderTypeOpenAICompatible = config.ProviderTypeOpenAICompatible
+	ProviderTypeMacRelay         = config.ProviderTypeMacRelay
 )
 
 // ProviderDescriptor is the sanitized owner-visible provider card. It never
@@ -124,10 +125,19 @@ type Registry struct {
 // openai-compatible providers; the resolved secret lives only inside the
 // provider instance and is never serialized. Every instance derives its
 // request timeout from its own entry, so the owner-visible configuration and
-// fingerprint always describe runtime behavior.
-func NewRegistry(file *config.ProviderConfigFile, codexCodexBinary string, secrets func(string) (string, error)) (*Registry, error) {
+// fingerprint always describe runtime behavior. An optional shared relay
+// executor serves every enabled mac_relay provider; omitting it is allowed
+// only when no mac_relay provider is enabled.
+func NewRegistry(file *config.ProviderConfigFile, codexCodexBinary string, secrets func(string) (string, error), relay ...RelayExecutor) (*Registry, error) {
 	if file == nil {
 		return nil, errors.New("provider config is required")
+	}
+	var relayExecutor RelayExecutor
+	for _, candidate := range relay {
+		if candidate != nil {
+			relayExecutor = candidate
+			break
+		}
 	}
 	registry := &Registry{
 		instances: make(map[string]Provider, len(file.Providers)),
@@ -163,6 +173,14 @@ func NewRegistry(file *config.ProviderConfigFile, codexCodexBinary string, secre
 			registry.instances[entry.ID] = &openAICompatibleProvider{
 				descriptor: descriptor, baseURL: entry.BaseURL,
 				apiKey: secretValue, timeout: timeout, client: newOpenAIHTTPClient(timeout),
+			}
+		case ProviderTypeMacRelay:
+			if relayExecutor == nil {
+				return nil, fmt.Errorf("provider %q requires a relay executor", entry.ID)
+			}
+			timeout := time.Duration(config.ResolveTimeoutSeconds(entry)) * time.Second
+			registry.instances[entry.ID] = &macRelayProvider{
+				descriptor: descriptor, timeout: timeout, relay: relayExecutor,
 			}
 		default:
 			return nil, fmt.Errorf("provider %q has unknown type %q", entry.ID, entry.Type)

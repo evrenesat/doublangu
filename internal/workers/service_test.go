@@ -107,11 +107,12 @@ func TestEnrollmentLeaseCompletionAndIdempotentUpload(t *testing.T) {
 	}
 
 	data := fakeM4A()
-	metadata := CompleteMetadata{ProtocolVersion: speech.ProtocolVersion, Attempt: lease.Attempt, LeaseToken: lease.LeaseToken, Artifact: artifactFor(data, lease.RequestHash)}
-	if err := service.Complete(ctx, worker, lease.JobID, metadata, data); err != nil {
+	artifact := artifactFor(data, lease.RequestHash)
+	metadata := CompleteMetadata{ProtocolVersion: speech.ProtocolVersion, Attempt: lease.Attempt, LeaseToken: lease.LeaseToken, Artifact: &artifact}
+	if err := service.Complete(ctx, worker, lease.JobID, metadata, data, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := service.Complete(ctx, worker, lease.JobID, metadata, data); err != nil {
+	if err := service.Complete(ctx, worker, lease.JobID, metadata, data, nil); err != nil {
 		t.Fatalf("duplicate completion = %v", err)
 	}
 	var renderID, state, digest string
@@ -136,8 +137,9 @@ func TestEnrollmentLeaseCompletionAndIdempotentUpload(t *testing.T) {
 	conflicting := fakeM4A()
 	conflicting[len(conflicting)-1] = '3'
 	conflictingMetadata := metadata
-	conflictingMetadata.Artifact = artifactFor(conflicting, lease.RequestHash)
-	if err := service.Complete(ctx, worker, lease.JobID, conflictingMetadata, conflicting); !errors.Is(err, ErrNondeterministic) {
+	conflictingArtifact := artifactFor(conflicting, lease.RequestHash)
+	conflictingMetadata.Artifact = &conflictingArtifact
+	if err := service.Complete(ctx, worker, lease.JobID, conflictingMetadata, conflicting, nil); !errors.Is(err, ErrNondeterministic) {
 		t.Fatalf("conflicting completion = %v", err)
 	}
 	if err := service.Revoke(ctx, worker.ID); err != nil {
@@ -226,10 +228,11 @@ func TestHeartbeatReportsCancellationForActiveWorkerLease(t *testing.T) {
 	if !heartbeat.CancelRequested || heartbeat.ProgressPercent != 0 || heartbeat.LeaseExpiresAt != lease.LeaseExpiresAt {
 		t.Fatalf("canceled service heartbeat = %+v", heartbeat)
 	}
+	canceledArtifact := artifactFor(fakeM4A(), lease.RequestHash)
 	if err := service.Complete(ctx, worker, lease.JobID, CompleteMetadata{
 		ProtocolVersion: speech.ProtocolVersion, Attempt: lease.Attempt, LeaseToken: lease.LeaseToken,
-		Artifact: artifactFor(fakeM4A(), lease.RequestHash),
-	}, fakeM4A()); !errors.Is(err, jobs.ErrLeaseLost) {
+		Artifact: &canceledArtifact,
+	}, fakeM4A(), nil); !errors.Is(err, jobs.ErrLeaseLost) {
 		t.Fatalf("canceled service completion = %v", err)
 	}
 }

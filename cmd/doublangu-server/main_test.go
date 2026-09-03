@@ -972,7 +972,7 @@ func TestLoadProviderRegistrySynthesizesCompatibilityProvider(t *testing.T) {
 	}
 	t.Cleanup(func() { db.Close() })
 
-	registry, err := loadProviderRegistry(db, &config.Config{Annotator: "codex", CodexEffort: "medium"})
+	registry, err := loadProviderRegistry(db, &config.Config{Annotator: "codex", CodexEffort: "medium"}, nil)
 	if err != nil {
 		t.Fatalf("load = %v", err)
 	}
@@ -998,7 +998,7 @@ func TestLoadProviderRegistryRejectsCombinedSources(t *testing.T) {
 	}
 	t.Cleanup(func() { db.Close() })
 
-	if _, err := loadProviderRegistry(db, &config.Config{Annotator: "codex", CodexModel: "gpt-x", CodexEffort: "medium"}); err == nil {
+	if _, err := loadProviderRegistry(db, &config.Config{Annotator: "codex", CodexModel: "gpt-x", CodexEffort: "medium"}, nil); err == nil {
 		t.Fatal("combined file and legacy selection accepted, want startup error")
 	}
 }

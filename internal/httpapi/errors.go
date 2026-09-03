@@ -29,6 +29,8 @@ const (
 	ErrCodeWorkerOffline         = "v1.worker_offline"
 	ErrCodeAudioUploadRejected   = "v1.audio_upload_rejected"
 	ErrCodeAudioNondeterministic = "v1.audio_nondeterministic_result"
+	ErrCodeRelayUploadRejected   = "v1.relay_upload_rejected"
+	ErrCodeRelayNondeterministic = "v1.relay_nondeterministic_result"
 	ErrCodeAudioGeneration       = "v1.audio_generation_failed"
 	ErrCodeNarrationPurged       = "v1.narration_purged"
 	ErrCodeAnalysisNotReady      = "v1.analysis_not_ready"

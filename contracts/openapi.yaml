@@ -984,7 +984,7 @@ paths:
 
   /api/v1/speech-worker/jobs/{id}/complete:
     post:
-      summary: Upload and atomically publish a speech render
+      summary: Upload and atomically publish a speech render or relay result
       parameters:
         - name: id
           in: path
@@ -1000,11 +1000,12 @@ paths:
           multipart/form-data:
             schema:
               type: object
-              required: [metadata, audio]
+              required: [metadata]
               additionalProperties: false
               properties:
                 metadata: { type: string, description: JSON matching WorkerCompleteMetadata. }
-                audio: { type: string, format: binary }
+                audio: { type: string, format: binary, description: "Required for TTS jobs; forbidden for llm.relay.v1 jobs." }
+                result: { type: string, description: "Required JSON for llm.relay.v1 jobs; forbidden for TTS jobs." }
       responses:
         "200": { description: Render accepted., content: { application/json: { schema: { $ref: "#/components/schemas/OKResponse" } } } }
         "400": { $ref: "#/components/responses/BadRequest" }
@@ -2862,6 +2863,8 @@ components:
         revoked_at: { type: string }
         last_seen_at: { type: string }
         capabilities: { type: array, items: { $ref: "#/components/schemas/WorkerCapability" } }
+        llm_relay_capabilities: { type: array, maxItems: 1, items: { $ref: "#/components/schemas/RelayCapability" } }
+        relay_last_seen_at: { type: string }
         software_version: { type: string }
         created_at: { type: string }
         updated_at: { type: string }
@@ -2883,6 +2886,7 @@ components:
         name: { type: string, minLength: 1, maxLength: 120 }
         protocol_version: { type: string, enum: [speech-worker.v1] }
         capabilities: { type: array, minItems: 1, items: { $ref: "#/components/schemas/WorkerCapability" } }
+        llm_relay_capabilities: { type: array, maxItems: 1, items: { $ref: "#/components/schemas/RelayCapability" } }
         software_version: { type: string, maxLength: 120 }
 
     WorkerEnrollmentResponse:
@@ -2897,10 +2901,11 @@ components:
     WorkerLeaseRequest:
       type: object
       additionalProperties: false
-      required: [protocol_version, capabilities]
+      required: [protocol_version]
       properties:
         protocol_version: { type: string, enum: [speech-worker.v1] }
         capabilities: { type: array, minItems: 1, items: { $ref: "#/components/schemas/WorkerCapability" } }
+        llm_relay_capabilities: { type: array, minItems: 1, maxItems: 1, items: { $ref: "#/components/schemas/RelayCapability" } }
 
     SpeechProfile:
       type: object
@@ -2931,17 +2936,24 @@ components:
         max_bytes: { type: integer, format: int64, minimum: 1 }
         max_duration_ms: { type: integer, format: int64, minimum: 1 }
 
+    RelayCapability:
+      type: object
+      additionalProperties: false
+      required: [max_completion_bytes]
+      properties:
+        max_completion_bytes: { type: integer, format: int64, enum: [2097152] }
+
     WorkerLease:
       type: object
       additionalProperties: false
-      required: [protocol_version, job_id, attempt, lease_token, lease_expires_at, job_type, render_id, request_hash, speech_unit_id, language, unit_kind, spoken_text, context_pronunciation_key, profile, limits]
+      required: [protocol_version, job_id, attempt, lease_token, lease_expires_at, job_type]
       properties:
         protocol_version: { type: string, enum: [speech-worker.v1] }
         job_id: { $ref: "#/components/schemas/ULID" }
         attempt: { type: integer, minimum: 1, maximum: 3 }
         lease_token: { type: string }
         lease_expires_at: { type: string }
-        job_type: { type: string, enum: [tts.avspeech.v1, tts.chatterbox.v3] }
+        job_type: { type: string, enum: [tts.avspeech.v1, tts.chatterbox.v3, llm.relay.v1] }
         render_id: { $ref: "#/components/schemas/ULID" }
         request_hash: { $ref: "#/components/schemas/SHA256" }
         speech_unit_id: { $ref: "#/components/schemas/ULID" }
@@ -2951,6 +2963,8 @@ components:
         context_pronunciation_key: { type: string }
         profile: { $ref: "#/components/schemas/SpeechProfile" }
         limits: { $ref: "#/components/schemas/AudioLimits" }
+        operation: { type: string, enum: [chat_completion, list_models], description: "Present only for llm.relay.v1 leases." }
+        relay: { type: object, description: "Validated relay request payload excluding protocol_version and operation. Present only for llm.relay.v1 leases." }
 
     WorkerHeartbeat:
       type: object
@@ -2977,13 +2991,13 @@ components:
       properties:
         protocol_version: { type: string, enum: [speech-worker.v1] }
         attempt: { type: integer, minimum: 1, maximum: 3 }
-        error_code: { type: string, pattern: '^v1\.[a-z0-9._-]+$' }
+        error_code: { type: string, pattern: '^v1\.[a-z0-9._-]+$', description: "Relay jobs accept only v1.relay_unreachable (retry allowed), v1.relay_auth, v1.relay_invalid_response, v1.relay_model_unknown, and v1.relay_canceled (retry forbidden)." }
         retry: { type: boolean }
 
     WorkerCompleteMetadata:
       type: object
       additionalProperties: false
-      required: [protocol_version, attempt, lease_token, artifact]
+      required: [protocol_version, attempt, lease_token]
       properties:
         protocol_version: { type: string, enum: [speech-worker.v1] }
         attempt: { type: integer, minimum: 1, maximum: 3 }
