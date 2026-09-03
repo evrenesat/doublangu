@@ -24,6 +24,10 @@ type CSRFVerifier interface {
 // ErrCodeConflict is returned when a uniqueness or foreign-key constraint is violated.
 const ErrCodeConflict = "v1.conflict"
 
+// ErrCodeAnalysisUnavailable reports that no usable analysis profile is
+// active for pipeline operations.
+const ErrCodeAnalysisUnavailable = "v1.analysis_profile_unavailable"
+
 // LibraryHandler exposes authenticated CRUD routes for library metadata records.
 // Every mutation requires a valid CSRF double-submit cookie/header pair.
 type LibraryHandler struct {

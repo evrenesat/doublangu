@@ -781,3 +781,365 @@ Verification: nine focused Go packages pass, race suites pass, svelte-check
   challenge, authenticated shell delivery, and authenticated proxied health
   all passed. Existing protected credentials were retained and production was
   unchanged.
+
+## 2026-09-02 — Configurable analysis provider pipeline (implementation start)
+
+Implementing plans/configurable-analysis-provider-pipeline-handoff.md on the
+plan's reviewed baseline 1aeb9a7 (clean main, migration 007 latest, contract
+reader.analysis.v3 / prompt v6 intact; no reconciliation needed).
+
+- Checkpoint 1 (complete): new acyclic `internal/pipeline` package (stage
+  registry, linguistic/translation contract and prompt identities v1,
+  BindingSnapshot/ProfileSnapshot, domain-separated options/snapshot hashes);
+  `internal/semantics/stages.go` with strict linguistic/translation artifact
+  decoders, the linguistic validator mirroring v3 source-side invariants and
+  sorting constructions with server-assigned b<c> IDs, the translation
+  correspondence/source-copy validator, and the exact-id merge that still
+  passes unchanged v3 chunk validation; `internal/annotator/stages.go` with
+  source-side and translation-only prompts, closed schemas, and correction
+  builder. Verified without any provider.
+- Checkpoint 2 (complete): `internal/config/providers.go` strict file
+  configuration (id/label rules, URL allowlists incl. loopback and
+  100.64/10 Tailscale/CGNAT, api_key_env pattern, file ownership/mode rule,
+  provider fingerprints over sanitized identity, per-type option codecs);
+  annotator Provider/Session/ResolvedBinding boundary, Registry, Codex
+  app-server session reusing protocol primitives, bounded OpenAI-compatible
+  client (catalog, history-preserving corrections, usage/timing, redaction,
+  classified failures), and the shared two-correction stage executor with
+  typed provider/stage_validation/final_validation phases. Fake process/HTTP
+  tests cover both transports through the executor. main.go wiring of the
+  registry is deliberately sequenced with CP4/CP5 so the legacy runner keeps
+  working until the pipeline payload cutover.
+- Checkpoint 3 (in progress): migration 008 (profiles/bindings/settings,
+  stage cache, stage attempts/turns, run/article/block/semantic-sense
+  provenance columns, deterministic cancellation of old-format jobs with
+  v1.analysis_pipeline_upgraded) with fresh/upgrade/cascade tests passing;
+  legacy settings/caches and accepted materializations survive 008.
+
+Verification so far: 11 focused Go packages pass; gofmt/tidy/diff clean;
+race suites green for pipeline/semantics/annotator/config.
+
+### Pipeline checkpoint 3 (partial) and readiness matrix (2026-09-02)
+
+- Migration 008 tests pass (fresh schema, profile cascade/RESTRICT, 007->008
+  upgrade preserving legacy settings/caches/materializations, old-format job
+  cancellation with v1.analysis_pipeline_upgraded).
+- `internal/analysis/profiles.go`: transactional ProfileStore (list/get/
+  create/replace/rename/delete/activate, NOCASE-unique names, strict binding
+  shape and per-binding provider-type option codec validation, seed-only-
+  when-empty bootstrap with automatic activation). Unit tests cover CRUD,
+  activation, active-delete rejection, partial/unknown/bad-type rejections,
+  seeding, and canonical binding normalization.
+- Readiness matrix run: 11 focused Go packages pass; race suites pass for
+  pipeline, semantics, annotator, config, analysis; svelte-check 0/0; 76 web
+  unit tests pass; 8 reader E2E tests pass; gofmt/tidy/git diff clean.
+- Remaining plan work (sequenced): CP3 queue snapshot semantics, history
+  attempts/turns and recovery wiring; CP4 runner/cache/provenance; CP5 owner
+  API and generated client; CP6 settings/run-detail/reader controls; CP7
+  documentation and full matrix incl. owner-authorized live OMLX/Codex tests.
+  The worktree is intentionally uncommitted; no deploy or live provider test
+  was performed.
+
+### Pipeline checkpoint 3 follow-up and readiness rerun (2026-09-02)
+
+- `internal/analysis/stage_history.go`: durable per-stage attempts and turns
+  (start/finish/append/list) against the migration-008 tables with hard
+  retention bounds (1 MiB prompt/response reject, 64 KiB metadata and 16 KiB
+  excerpt truncation with explicit per-field flags), plus
+  `RecoverInterruptedStageAttempts` (running attempts become failed with
+  v1.analysis_interrupted, preserving artifacts and recorded duration),
+  wired into server startup next to the existing article recovery.
+- Migration 008 turn table adjusted (provider_stderr_excerpt and
+  per-field truncation flags) since it has not been deployed anywhere.
+- Stage-history tests pass (attempt uniqueness, turn recording, oversized
+  rejection, interrupted recovery, ordered listing).
+
+Readiness rerun: analysis/store/server suites pass; gofmt/git diff clean;
+24 changed files, uncommitted. Remaining plan work unchanged: CP3 queue
+snapshot semantics; CP4 runner/stage cache/provenance cutover; CP5 owner API
+and generated client; CP6 settings/run-detail/reader controls; CP7 full
+documentation and the owner-authorized live matrix.
+
+### Pipeline CP3/4 partial additions (2026-09-02)
+
+- `internal/pipeline/jobpayload.go`: canonical immutable JobPayload with
+  strict decode/encode and full verification (analysis contract, pipeline
+  version, registered profile bindings, recomputed snapshot hash, fresh
+  mode); round-trip and tamper tests pass.
+- Reader: `CreateArticleQueuedWithProfile` persists the resolved profile
+  snapshot columns (id/name/JSON/hash) on the article; legacy
+  `CreateArticleQueued` leaves them blank. Persistence test covers both.
+- Remaining: reader QueueAnalysis snapshot/retry semantics, runner two-stage
+  flow with stage cache and provenance, owner API/UI checkpoints, live tests.
+
+### Pipeline checkpoint 4 (core) (2026-09-02)
+
+- `internal/analysis/stage_cache.go`: exact stage cache identities (canonical
+  paragraph input hashes over sentences/tokens/candidates/prior-stripped
+  senses, upstream linguistic artifact hash for translation, artifact hashes)
+  with read/save helpers; cached artifacts are stored in their raw
+  provider shape so strict decoders and validators revalidate every hit.
+- `internal/analysis/pipeline_runner.go`: PipelineRunner claims pipeline
+  jobs, strictly decodes and verifies the JobPayload, fails closed when any
+  configured provider fingerprint changed, and runs the two-stage per-
+  paragraph loop: per-stage attempts (cache hit/miss/bypassed) and executor
+  turns recorded through the stage history store, linguistic then translation
+  execution or cache revalidation, exact-id cache writes after local
+  validation, namespace/revalidate, publication through
+  PersistAnalysisChunkWithProvenance (block profile columns and sense
+  translation provenance), progress only after commit, and the non-gating
+  final audit. Failure paths record the failed stage/provider on the run.
+- Gated end-to-end test proves the acceptance case: paragraph zero's
+  linguistic stage succeeds while its translation stage is blocked, nothing
+  is published, and the paragraph appears only after the gate releases; final
+  state records 4 stage attempts, 4 turns, and 4 exact cache rows for two
+  paragraphs.
+
+Readiness: analysis/reader/pipeline/semantics/annotator/store suites pass;
+gofmt and diff clean. Remaining plan work: CP5 owner API/OpenAPI, CP6 UI,
+CP7 full matrix and docs.
+
+### Pipeline checkpoint 4/5 progress (2026-09-02)
+
+- PipelineRunner end-to-end acceptance verified with a gated fake provider:
+  paragraphs publish only after both stages complete; stage attempts, turns,
+  and exact stage cache rows are recorded; the run finishes ready with empty
+  failed_stage_id.
+- Owner API (interim paths under /api/v1/analysis): GET providers (sanitized
+  descriptors, per-provider live catalogs, health), GET/POST profiles,
+  GET/PUT/DELETE profile by id, GET/PUT pipeline-settings (active profile),
+  and POST providers/{id}/test running the fixed "De kat zit op de mat."
+  fixture through the real stage executor with only status/duration/stable
+  code returned. CSRF, no-store, active-delete conflict, empty-body 400, and
+  unknown-provider 404 are covered by handler tests.
+- main.go loads DOUBLANGU_PROVIDER_CONFIG into the annotator registry and
+  seeds the bootstrap profile when none exist (logging only provider ids and
+  stable codes on failure); routes registered behind the existing owner auth.
+- All 11 focused Go packages pass; gofmt/diff clean.
+
+Remaining plan work: CP5 OpenAPI/generated client for the new routes and
+article/run pipeline provenance, articles reanalyze profile override wiring,
+legacy settings/models migration of in-repo callers; CP6 Settings/run-detail
+reader controls UI; CP7 full matrix and docs.
+
+### Pipeline CP5 owner HTTP wiring (2026-09-02)
+
+- ArticleHandler.ConfigurePipeline attaches the profile store and provider
+  registry; main.go activates pipeline behavior only when a provider config
+  file exists.
+- POST /api/v1/articles creates through the active profile (queues a pipeline
+  job with the immutable snapshot) or, when no usable profile is active,
+  stores a readable article with analysis failed and the first block failed
+  with v1.analysis_profile_unavailable (no invalid job is queued).
+- POST /api/v1/articles/{id}/reanalyze is strict: profile_id is rejected
+  unless fresh:true; fresh resolves the named or active profile, non-fresh
+  reuses the stored snapshot, legacy articles adopt the active profile once;
+  no usable profile yields 503 v1.analysis_profile_unavailable.
+- Article payloads now expose analysis_pipeline {profile_id, profile_name,
+  snapshot_hash} loaded from the article row; reader gains
+  HasPipelineSnapshot and CreateArticlePipelineUnavailable (first block
+  failed, no job).
+- Handler tests cover creation with active profile, unavailable fallback,
+  non-fresh profile rejection, unknown profile 404, fresh override switching
+  stored snapshots, fresh-active resolution, and stored-snapshot retries.
+  httpapi/analysis/reader/main suites green; gofmt clean.
+
+### Pipeline CP5 OpenAPI/client + run provenance (2026-09-02)
+
+- contracts/openapi.yaml gains the provider list/test, profile CRUD, and
+  pipeline-settings operations with strict schemas (CP12 400 matrix
+  satisfied); reanalyze documents profile_id valid only with fresh:true;
+  Article and run payloads expose analysis_pipeline provenance.
+- Generated client regenerated twice and proven byte-identical; CP12
+  validation and svelte-check pass.
+- analysis_run list/detail now surface profile_id/profile_name/
+  profile_snapshot_hash for pipeline runs (omitted when blank for legacy
+  runs).
+- Interim deviation: legacy /analysis/models and /analysis/settings endpoints
+  remain registered alongside the new pipeline endpoints until the CP6 UI
+  moves; pipeline-settings is temporarily mounted at
+  /api/v1/analysis/pipeline-settings and will be folded into /settings after
+  the legacy UI cutover.
+- All 11 focused Go suites green; gofmt and diff clean; 42 changed files.
+
+### Pipeline CP6/CP7 UI, docs, and verification (2026-09-02)
+
+- web/src/lib/settings (new, with AGENTS.md): analysisProfiles helpers +
+  tests and the AnalysisPipelinePanel (provider cards with live safe
+  conformance tests, profile create/edit/delete, active-profile radio, omlx
+  numeric option fields, codex effort select; endpoints and secrets never
+  rendered). Settings page mounts it under the legacy section; servers without
+  a provider config show an explanatory muted note.
+- Run detail shows pipeline provenance rows and per-stage attempt lists
+  (status/provider/model/cache disposition/duration/stable code); the Go run
+  payload now includes stage_attempts (contract-covered, client regenerated
+  twice byte-identical).
+- Reader: pipeline articles show the stored profile badge; failed articles
+  get "Retry with saved profile"; fresh runs carry an explicit profile picker
+  (defaulting to the stored or active profile) and send profile_id only with
+  fresh:true. Legacy model/effort controls unchanged for non-pipeline runs.
+- client.ts wrappers for providers/profile/settings/test endpoints; client
+  tests cover routing incl. the fresh/profile_id body rule.
+- Docs: README pipeline section, ARCHITECTURE 008 section, and
+  config/provider.example.json (placeholder model ids/env-name secret only).
+- Full matrix pass: 11 focused Go suites, race subset, go test ./..., go mod
+  tidy -diff, gofmt, git diff --check, CP12 validation, byte-identical API
+  regeneration, svelte-check 0/0, vitest 83, Playwright reader 8 — all green.
+- Rollback note: 008 is additive and compatibility mode returns by removing
+  the config file; nothing was committed or deployed.
+### Owner decisions (2026-09-02)
+
+- Opt-in live Codex/OMLX/mixed tests: skipped and reported as owner-gated
+  (no live providers invoked; no provider credentials used).
+- Deployment: declined — no commit, no push, no beta or production change.
+  Everything remains uncommitted on the working tree for owner review.
+
+### P1 review fixes: worker dispatch, lease liveness, superseded failure guard, correction context (2026-09-03)
+
+1. Production worker: `main.go` loads DOUBLANGU_PROVIDER_CONFIG before any
+   worker starts; a configured-file load error aborts startup (exit 1) instead
+   of silently enabling legacy mode. Pipeline mode starts the two-stage
+   `analysis.NewPipelineRunner` and never the legacy runner, so legacy code
+   cannot claim pipeline payloads; compatibility mode keeps the legacy runner.
+2. Lease liveness: PipelineRunner renews the job lease on a 20 s heartbeat
+   ticker for the whole run (interval overridable in tests) and verifies the
+   lease before executor entry and before every cache/history/publication
+   write; lease-lost/expired stage errors route to `v1.analysis_lease_lost`
+   without touching article state or newer-run history.
+3. Superseded failure guard: new job-scoped `reader.MarkAnalysisFailedForJob`
+   transitions the article only when `analysis_job_id` still matches; the
+   pipeline runner's failure path uses it and logs (never overwrites) when a
+   newer job owns the article.
+4. Correction context: the stage executor preserves the rejected raw artifact
+   into the corrective prompt, and `openAICompatibleSession.Turn` retains the
+   message history across repeated Turn calls (schema still sent per request),
+   so OMLX corrections see their own prior instructions and rejected output.
+
+New tests: executor corrective prompt embeds the rejected artifact; OMLX
+Turn-to-Turn history; reader supersede conflict; pipeline heartbeat keeps a
+lease live during a blocked provider call; lease-loss runs skip article
+failure and publication. All 11 focused Go suites, the race subset for
+annotator/analysis/reader, gofmt, tidy, and diff checks pass.
+
+### Review findings batch 2: usable bindings, failure turns, provider code, run-detail diagnostics, heartbeat race (2026-09-03)
+
+1. Profile saves (POST/PUT) now validate bindings against live enabled
+   provider instances: unknown or disabled providers and type mismatches are
+   rejected, and model bindings that changed from the stored profile must
+   appear in a successful catalog listing; unchanged bindings skip the
+   catalog so renames/re-options work while a catalog is briefly down.
+   Catalog outages surface 503 v1.analysis_profile_unavailable; bad bindings
+   400 v1.validation_error.
+2. Failed stage turns are persisted: runLinguistic hands executor turns back
+   on error and the linguistic failure branch records them; runTranslation
+   records executor turns before returning failures. Provider errors and
+   rejected corrective outputs now reach analysis_stage_turn.
+3. Provider-phase detection inspects the typed StageError.Phase ("provider")
+   instead of the stage-qualified string, so offline/auth/timeout failures
+   surface as v1.analysis_provider_unavailable.
+4. Run detail returns full pipeline attempts (provider type/fingerprint,
+   contract/prompt versions, input/upstream/options hashes, requested and
+   reported models, request id, finish reason, usage/timing/metadata JSON,
+   stderr, errors) with nested stage turns from analysis_stage_turn; the UI
+   renders them and no longer claims cache-only results for pipeline runs.
+5. Heartbeat progress is stored in sync/atomic.Int64 and loaded by the
+   heartbeat goroutine (no shared *int race, no progress regression).
+
+Coverage: httpapi rejection tests (unknown/disabled provider, unlisted model,
+catalog outage 503, unchanged-model rename skips catalog, changed model
+requires it); analysis end-to-end failure run asserting
+v1.analysis_provider_unavailable with the failed turn retained in run detail;
+OpenAPI stage attempt/turn schemas regenerated byte-identical; all 11 Go
+suites, race subset, svelte-check 0/0, and vitest 83 pass; gofmt/tidy/diff
+clean.
+
+## 2026-09-02 — Review fixes: pipeline cancellation, profile validation, provenance, API DTOs
+
+Applied the five material findings from the review of the configurable analysis
+provider pipeline against the working tree.
+
+- Cancellation/lease loss now propagates: the runner derives a per-run
+  cancelable context; the heartbeat cancels it on owner cancellation or lease
+  loss and retains the first error; provider calls abort immediately instead of
+  occupying the sole worker until timeout. Lease ownership is re-verified
+  before every success/failure artifact write (turns, attempt finish, cache,
+  paragraph publish); a reclaimed worker records no turns or failure state for
+  the in-flight stage and touches no article state. Covered by
+  TestPipelineRunnerCancelAbortsBlockedProviderCall.
+- Stored profiles are revalidated before activation (409 on disabled/removed
+  providers) and before article resolution and fresh-run selection (503),
+  through one shared usableProfileBindings check; covered by
+  TestPipelineArticleReanalyzeRejectsDisabledProvider.
+- Profile save validates the full provider/model/options tuple: options are
+  canonicalized first, options-only changes trigger the catalog check, and
+  Codex bindings verify the reasoning effort against the model's advertised
+  efforts via annotator.SupportsSelection.
+- Stage attempts now persist binding options/options hash/requested model at
+  start; both terminal paths thread the executor StageAttemptResult (reported
+  model, request id, finish reason, usage/timing/metadata) and compute the
+  duration; cache hits record cache_disposition=hit plus source_cache_id with
+  no turns. Covered by
+  TestPipelineRunnerPersistsStageProvenanceAndCacheIdentity.
+- Provider and profile responses use explicit DTOs matching the OpenAPI
+  schemas (additionalProperties:false): endpoint_label, config_fingerprint,
+  request_timeout_ms, and snapshot-only binding fields no longer serialize;
+  wire-shape assertions added to TestPipelineAnalysisProfilesAndSettings.
+
+Verification: gofmt clean, go mod tidy -diff clean, focused suites
+(config/semantics/annotator/analysis/reader/httpapi/store/cmd) pass, race
+suites for analysis and httpapi pass, openapi validate + generation
+reproducible, svelte-check 0/0, vitest 83 pass. Known follow-up:
+HistoryStore.GetRun exposes options_hash but not the raw options JSON of each
+stage attempt; the remaining provenance columns are already selected and
+rendered.
+
+## 2026-09-02 — Review round 2: preflight failure, catalog service, efforts, run options, usage totals
+
+- Terminal preflight failures (provider disappeared, fingerprint/type changed,
+  source/prepare mismatch) now transition the owning article and its first
+  unresolved paragraph to the failed state with the same stable code once job
+  retries are exhausted; a terminally failed job can no longer strand an
+  article in queued. Covered by TestPipelineRunnerPreflightTerminalFailureFailsArticle.
+- Added the shared per-provider catalog service (five-minute TTL, last-good
+  retention, stale flag, sanitized refresh error) in httpapi/provider_catalog.go.
+  ServeProviders honors refresh=true&provider_id for exactly one provider and
+  never drops models on a transient failure; profile create/update, settings
+  activation, active-profile resolution, and fresh-run profile selection all
+  validate the full model/options tuple against the non-stale catalog, so a
+  config change that removes a model or supported effort cannot be activated
+  or queued. Covered by TestPipelineProviderListingRefreshAndStale and
+  TestPipelineActivationRequiresCurrentModelAndEffort.
+- Model capabilities now flow to the browser: AnalysisProviderModel carries
+  supported_reasoning_efforts, the settings editor renders only the selected
+  model's advertised efforts, and the wire payload no longer coerces an
+  unknown effort to low (server validation is authoritative). Frontend unit
+  tests updated for preservation instead of coercion.
+- Run detail now includes each stage attempt's stored options object
+  (StageAttemptSummary.Options via GetRun, options_hash retained), declared in
+  the OpenAPI AnalysisStageAttempt schema and rendered on the owner run page.
+- Stage executor accumulates usage and timing totals across initial and
+  corrective completions instead of overwriting them with the final request;
+  per-turn completion metadata remains on the turn records. Covered by
+  TestExecuteStageAggregatesUsageAcrossCorrections.
+
+Verification: gofmt/tidy/diff clean; focused suites (config/semantics/
+annotator/analysis/reader/httpapi/store/cmd) pass; race suites for annotator,
+analysis, and httpapi pass; go test ./... passes; openapi validate + generation
+reproducible; svelte-check 0/0; vitest 15 files / 85 tests pass. Known
+follow-up: attempt-level request id/finish reason/metadata still reflect the
+final completion (usage/timing are aggregated; per-request ids are not stored
+per turn).
+
+## 2026-09-02 — Final readiness checks for review round 2
+
+- `make verify` (vet, check-no-network, manifest/auth foundation, login UI
+  compile + vitest, fingerprint integration) passes end to end.
+- Reader E2E `npm --prefix web run test:e2e -- reader.spec.ts` passes 8/8
+  (Playwright needs the Go toolchain on PATH for the spawned server).
+- Broad `go test ./...` passes; the earlier `go build ./...` complaint is
+  limited to plugins/official/sample, a plugin main package that only builds
+  under `-buildmode=plugin` (go vet and go test on it pass inside make verify)
+  and is untouched by this work.
+- Final tree review: only intended files changed/added by rounds 1-2;
+  gofmt/diff checks clean; pre-existing untracked artifacts
+  (`doublangu-server` binary, example provider config) preserved.

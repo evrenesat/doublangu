@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"doublangu/internal/analysis"
 	"doublangu/internal/annotator"
 	"doublangu/internal/library"
 	"doublangu/internal/media"
@@ -28,6 +29,9 @@ type ArticleHandler struct {
 	annotator annotator.Annotator
 	active    map[string]struct{}
 	activeMu  sync.Mutex
+	profiles  *analysis.ProfileStore
+	registry  providerRegistry
+	catalog   *ProviderCatalogService
 }
 
 // NewArticleHandler returns an article handler with an injected annotator.
@@ -52,6 +56,19 @@ func NewArticleHandler(db *store.DB, csrf CSRFVerifier, provider annotator.Annot
 		csrf:      csrf,
 		annotator: provider,
 		active:    make(map[string]struct{}),
+	}
+}
+
+// ConfigurePipeline attaches the pipeline profile service and provider
+// registry so article creation and reanalysis can resolve active profiles and
+// queue pipeline jobs. Without it the handler keeps the legacy single-provider
+// behavior.
+func (h *ArticleHandler) ConfigurePipeline(db *store.DB, registry providerRegistry, catalog ...*ProviderCatalogService) {
+	h.profiles = analysis.NewProfileStore(db)
+	h.registry = registry
+	h.catalog = NewProviderCatalogService(registry)
+	if len(catalog) > 0 && catalog[0] != nil {
+		h.catalog = catalog[0]
 	}
 }
 
@@ -296,9 +313,11 @@ func (h *ArticleHandler) serveQueuedAnalysis(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	fresh := false
+	profileID := ""
 	if force {
 		var input struct {
-			Fresh json.RawMessage `json:"fresh"`
+			Fresh     json.RawMessage `json:"fresh"`
+			ProfileID string          `json:"profile_id"`
 		}
 		if err := decodeOptionalJSONObject(w, r, &input); err != nil {
 			WriteError(w, http.StatusBadRequest, "invalid reanalysis request", ErrCodeValidation)
@@ -313,6 +332,15 @@ func (h *ArticleHandler) serveQueuedAnalysis(w http.ResponseWriter, r *http.Requ
 			WriteError(w, http.StatusBadRequest, "invalid reanalysis request", ErrCodeValidation)
 			return
 		}
+		profileID = strings.TrimSpace(input.ProfileID)
+	}
+	if h.profiles != nil {
+		h.queuePipelineAnalysis(w, r, id, force, fresh, profileID)
+		return
+	}
+	if profileID != "" {
+		WriteError(w, http.StatusBadRequest, "profile_id is valid only with fresh:true", ErrCodeValidation)
+		return
 	}
 	if _, err := h.store.QueueAnalysis(r.Context(), id, force, fresh); err != nil {
 		writeReaderError(w, err)
@@ -418,6 +446,10 @@ func (h *ArticleHandler) createArticle(w http.ResponseWriter, r *http.Request) {
 	article, err := reader.NewArticle(input.Title, input.Body, input.SourceLanguage, input.TargetLanguage)
 	if err != nil {
 		writeReaderError(w, err)
+		return
+	}
+	if h.profiles != nil {
+		h.createPipelineArticle(w, r, &article)
 		return
 	}
 	if err := h.store.CreateArticleQueued(r.Context(), &article); err != nil {

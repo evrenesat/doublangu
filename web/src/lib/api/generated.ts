@@ -505,6 +505,329 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/analysis/providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List configured analysis providers with live health and model catalogs */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Provider descriptors with optional model catalogs. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AnalysisProvidersResponse"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                405: components["responses"]["MethodNotAllowed"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/analysis/providers/{id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run the fixed conformance source through one stage of a provider
+         * @description Executes the real stage against the fixed safe fixture and returns only status, duration, and a stable error code. Options are canonicalized for the provider type; the provider must be enabled.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["AnalysisProviderTestRequest"];
+                };
+            };
+            responses: {
+                /** @description Fixture result. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AnalysisProviderTestResponse"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                405: components["responses"]["MethodNotAllowed"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/analysis/profiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List analysis profiles */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description All stored profiles with their bindings and active flag. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AnalysisProfileListResponse"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                405: components["responses"]["MethodNotAllowed"];
+            };
+        };
+        put?: never;
+        /** Create an analysis profile */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["AnalysisProfileInput"];
+                };
+            };
+            responses: {
+                /** @description The created profile. */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AnalysisProfile"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                405: components["responses"]["MethodNotAllowed"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/analysis/profiles/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one analysis profile */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The profile. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AnalysisProfile"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                404: components["responses"]["NotFound"];
+                405: components["responses"]["MethodNotAllowed"];
+            };
+        };
+        /** Replace an analysis profile */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["AnalysisProfileInput"];
+                };
+            };
+            responses: {
+                /** @description The replaced profile. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AnalysisProfile"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                405: components["responses"]["MethodNotAllowed"];
+            };
+        };
+        post?: never;
+        /** Delete an analysis profile */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The profile was deleted. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            deleted: string;
+                        };
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                405: components["responses"]["MethodNotAllowed"];
+                409: components["responses"]["Conflict"];
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/analysis/pipeline-settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get the active analysis profile */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Current active profile selection. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AnalysisPipelineSettings"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                405: components["responses"]["MethodNotAllowed"];
+            };
+        };
+        /** Set the active analysis profile */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["AnalysisPipelineSettingsInput"];
+                };
+            };
+            responses: {
+                /** @description Saved selection. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AnalysisPipelineSettings"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                405: components["responses"]["MethodNotAllowed"];
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/analysis/models": {
         parameters: {
             query?: never;
@@ -2865,6 +3188,65 @@ export interface components {
             hidden: boolean;
             supported_reasoning_efforts: components["schemas"]["ReasoningEffort"][];
         };
+        AnalysisProvidersResponse: {
+            providers: components["schemas"]["AnalysisProvider"][];
+        };
+        AnalysisProvider: {
+            id: string;
+            label?: string;
+            type: string;
+            enabled: boolean;
+            stale: boolean;
+            last_error?: string;
+            /** @enum {string} */
+            health: "disabled" | "healthy" | "unhealthy" | "unknown";
+            models?: components["schemas"]["AnalysisProviderModel"][];
+        };
+        AnalysisProviderModel: {
+            id: string;
+            display_name?: string;
+            supported_reasoning_efforts?: components["schemas"]["ReasoningEffort"][];
+        };
+        AnalysisProviderTestRequest: {
+            /** @enum {string} */
+            stage_id: "linguistic_analysis" | "translation";
+            model_id?: string;
+            options: Record<string, never>;
+        };
+        AnalysisProviderTestResponse: {
+            /** @enum {string} */
+            status: "healthy" | "unhealthy";
+            /** Format: int64 */
+            duration_ms: number;
+            error_code?: string;
+        };
+        AnalysisProfileInput: {
+            name: string;
+            bindings: components["schemas"]["AnalysisProfileBinding"][];
+        };
+        AnalysisProfileBinding: {
+            /** @enum {string} */
+            stage_id: "linguistic_analysis" | "translation";
+            provider_id: string;
+            model_id: string;
+            options: Record<string, never>;
+        };
+        AnalysisProfile: {
+            id: string;
+            name: string;
+            bindings: components["schemas"]["AnalysisProfileBinding"][];
+            is_active: boolean;
+        };
+        AnalysisProfileListResponse: {
+            profiles: components["schemas"]["AnalysisProfile"][];
+        };
+        AnalysisPipelineSettings: {
+            active_profile_id: string;
+            updated_at?: string;
+        };
+        AnalysisPipelineSettingsInput: {
+            active_profile_id: string;
+        };
         AnalysisModelsResponse: {
             models: components["schemas"]["AnalysisModel"][];
             retrieved_at: string;
@@ -2919,6 +3301,9 @@ export interface components {
             started_at: string;
             completed_at: string;
             error_code: string;
+            profile_id?: string;
+            profile_name?: string;
+            profile_snapshot_hash?: string;
         };
         AnalysisRun: {
             id: components["schemas"]["ULID"];
@@ -2934,6 +3319,9 @@ export interface components {
             provider_id: string;
             codex_cli_version: string;
             reported_model: string;
+            profile_id?: string;
+            profile_name?: string;
+            profile_snapshot_hash?: string;
             started_at: string;
             completed_at: string;
             /** Format: int64 */
@@ -2947,6 +3335,63 @@ export interface components {
             error_detail?: string;
             stderr_excerpt: string;
             turns: components["schemas"]["AnalysisTurn"][];
+            stage_attempts?: components["schemas"]["AnalysisStageAttempt"][];
+        };
+        AnalysisStageAttempt: {
+            id: string;
+            /** @enum {string} */
+            stage_id: "linguistic_analysis" | "translation";
+            block_index: number;
+            /** @enum {string} */
+            status: "running" | "succeeded" | "failed";
+            provider_id: string;
+            provider_type: string;
+            provider_config_fingerprint: string;
+            model_id: string;
+            contract_version: string;
+            prompt_version: string;
+            input_hash: string;
+            upstream_artifact_hash: string;
+            options_hash: string;
+            options?: Record<string, never>;
+            /** @enum {string} */
+            cache_disposition: "hit" | "miss" | "bypassed";
+            source_cache_id?: string;
+            requested_model?: string;
+            reported_model?: string;
+            request_id?: string;
+            finish_reason?: string;
+            usage_json?: string;
+            timing_json?: string;
+            metadata_json?: string;
+            provider_stderr_excerpt?: string;
+            error_code: string;
+            error_detail?: string;
+            started_at: string;
+            completed_at: string;
+            /** Format: int64 */
+            duration_ms: number;
+            turns: components["schemas"]["AnalysisStageTurn"][];
+        };
+        AnalysisStageTurn: {
+            id: string;
+            turn_index: number;
+            /** @enum {string} */
+            turn_kind: "initial" | "corrective";
+            prompt: string;
+            output_schema: string;
+            completed_response?: string;
+            response_hash?: string;
+            validation_error?: string;
+            provider_error?: string;
+            completion_metadata_json: string;
+            provider_stderr_excerpt?: string;
+            started_at: string;
+            completed_at: string;
+            /** Format: int64 */
+            duration_ms: number;
+            /** @enum {string} */
+            status: "running" | "completed" | "failed";
         };
         AnalysisRunsPage: {
             runs: components["schemas"]["AnalysisRunSummary"][];
@@ -2955,6 +3400,8 @@ export interface components {
         ReanalyzeInput: {
             /** @default false */
             fresh: boolean;
+            /** @description Pipeline profile override. Valid only together with fresh:true; a non-fresh request carrying profile_id is rejected. When absent, fresh runs resolve the active profile and normal retries reuse the article's stored snapshot. */
+            profile_id?: string;
         };
         /** @enum {string} */
         NarrationStatus: "not_requested" | "queued" | "generating" | "partial" | "ready" | "failed" | "purged";
@@ -3166,6 +3613,13 @@ export interface components {
             sentences: components["schemas"]["ArticleSentence"][];
             occurrences: components["schemas"]["ArticleOccurrence"][];
             narration: components["schemas"]["NarrationSummary"];
+            /** @description Present only for articles analyzed through the configurable provider pipeline. */
+            analysis_pipeline?: components["schemas"]["ArticleAnalysisPipeline"];
+        };
+        ArticleAnalysisPipeline: {
+            profile_id: string;
+            profile_name: string;
+            snapshot_hash: string;
         };
         AnalysisProgress: {
             total_paragraphs: number;

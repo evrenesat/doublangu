@@ -7,9 +7,11 @@
 		generateNarration,
 		getNarration,
 		getReaderSettings,
+		listAnalysisProfiles,
 		saveReaderSettings,
 		reanalyzeArticle,
 		updateSemanticLearningState,
+		type AnalysisProfile,
 		type Article,
 		type ArticleBlock,
 		type ArticleOccurrence,
@@ -75,6 +77,10 @@
 	let followFocus = $state(true);
 	let reanalyzing = $state(false);
 	let narrationRefreshKey = '';
+	let pipelineProfiles = $state<AnalysisProfile[]>([]);
+	let pipelineSelectedProfileID = $state('');
+	let pipelineProfilesLoadedFor = '';
+	let pipelineOptionsError = $state('');
 
 	const hoverAudio = new HoverAudioController({ onBlocked: () => (hoverActivationHint = true) });
 
@@ -159,6 +165,26 @@
 			? `${current.analysis_model} / ${current.analysis_effort}`
 			: 'selected model'
 	);
+	const pipelineConfigured = $derived(Boolean(current.analysis_pipeline?.profile_id));
+
+	$effect(() => {
+		const id = current.id;
+		if (!pipelineConfigured || pipelineProfilesLoadedFor === id) return;
+		pipelineProfilesLoadedFor = id;
+		pipelineOptionsError = '';
+		void (async () => {
+			try {
+				const result = await listAnalysisProfiles();
+				pipelineProfiles = result.profiles;
+				const stored = current.analysis_pipeline?.profile_id ?? '';
+				pipelineSelectedProfileID =
+					result.profiles.some((profile) => profile.id === stored) ? stored :
+					(result.profiles.find((profile) => profile.is_active)?.id ?? '');
+			} catch (cause) {
+				pipelineOptionsError = errorMessage(cause, 'Could not load analysis profiles.');
+			}
+		})();
+	});
 
 	const speechLabel = $derived.by(() => {
 		switch (current.narration_status) {
@@ -588,7 +614,7 @@
 		feedback = '';
 		feedbackIsError = false;
 		try {
-			emit(await reanalyzeArticle(current.id, fresh));
+			emit(await reanalyzeArticle(current.id, fresh, fresh ? pipelineSelectedProfileID : ''));
 		} catch (cause) {
 			feedbackIsError = true;
 			feedback = errorMessage(cause, 'Could not queue analysis.');
@@ -610,12 +636,35 @@
 		<div class="status-item">
 				<span class="status-label">English subtitles</span>
 				<strong class:status-ready={current.analysis_status === 'ready'} class:status-error={current.analysis_status === 'failed'}>{analysisLabel}</strong>
-				{#if current.analysis_model}
+				{#if pipelineConfigured}
+					<a class="analysis-provenance" href={appPath('/settings')}>Profile: {current.analysis_pipeline!.profile_name || current.analysis_pipeline!.profile_id}</a>
+				{:else if current.analysis_model}
 					<span class="analysis-provenance">{current.analysis_model} · {current.analysis_effort}</span>
 				{:else}
 					<a class="analysis-provenance" href={appPath('/settings')}>Choose a model in Settings</a>
 				{/if}
-				{#if current.analysis_status === 'failed'}
+				{#if pipelineConfigured}
+					{#if current.analysis_status === 'failed'}
+						<button type="button" class="status-action" disabled={reanalyzing} onclick={() => void retryAnalysis()}>{reanalyzing ? 'Retrying…' : 'Retry with saved profile'}</button>
+						<a class="status-action secondary-action" href={appPath('/settings')}>Change in Settings</a>
+					{/if}
+					<span class="fresh-run">
+						<select
+							aria-label="Profile for a fresh analysis run"
+							bind:value={pipelineSelectedProfileID}
+							disabled={pipelineProfiles.length === 0}
+						>
+							<option value="">Use the active profile</option>
+							{#each pipelineProfiles as profile (profile.id)}
+								<option value={profile.id}>{profile.name}{profile.is_active ? ' (active)' : ''}</option>
+							{/each}
+						</select>
+						<button type="button" class="status-action secondary-action" disabled={reanalyzing} onclick={() => void retryAnalysis(true)}>
+							{reanalyzing ? 'Running…' : 'Run fresh analysis'}
+						</button>
+					</span>
+					{#if pipelineOptionsError}<span class="reader-error" role="alert">{pipelineOptionsError}</span>{/if}
+				{:else if current.analysis_status === 'failed'}
 					<button type="button" class="status-action" disabled={reanalyzing} onclick={() => void retryAnalysis()}>{reanalyzing ? 'Retrying…' : `Retry with ${analysisSelectionLabel}`}</button>
 					<a class="status-action secondary-action" href={appPath('/settings')}>Change in Settings</a>
 					{#if current.analysis_revision}
@@ -773,4 +822,7 @@
 	@media (prefers-reduced-motion: reduce) {
 		.reader-body.has-focus :global(.reader-paragraph) { transition: none; }
 	}
+
+	.fresh-run { display: inline-flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+	.fresh-run select { padding: 0.3rem 0.45rem; font: inherit; max-width: 16rem; }
 </style>

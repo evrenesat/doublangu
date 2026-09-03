@@ -115,6 +115,16 @@ type Article struct {
 	// AnalysisJobID is the durable job that owns the current run. It is
 	// internal state; lease tokens and job payloads are never exposed.
 	AnalysisJobID string `json:"-"`
+	// Pipeline is the immutable analysis profile provenance when the article
+	// was created or last analyzed through the configurable pipeline.
+	Pipeline *ArticlePipelineProvenance `json:"analysis_pipeline,omitempty"`
+}
+
+// ArticlePipelineProvenance is the owner-visible article pipeline identity.
+type ArticlePipelineProvenance struct {
+	ProfileID    string `json:"profile_id"`
+	ProfileName  string `json:"profile_name"`
+	SnapshotHash string `json:"snapshot_hash"`
 }
 
 // ArticleSummary is the compact item returned by the article list endpoint.

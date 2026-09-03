@@ -459,3 +459,71 @@ Display state derives at load: effective subtitle text falls back to the sense
 translation, suppression reasons (`none`, `special_token`,
 `contiguous_group_member`) explain why an unlearned occurrence is not shown,
 and construction spans come from maximal adjacent member runs.
+
+## Configurable analysis provider pipeline (008)
+
+### Stage ownership
+
+Reader analysis (contract `reader.analysis.v3`) is produced by two
+server-owned stages with fixed identities and contract/prompt versions:
+
+- `linguistic_analysis` — tokens, constructions, semantic senses
+  (`reader.linguistic.v1`, prompt `reader-linguistic-prompt.v1`).
+- `translation` — shadow translations over the validated linguistic result
+  (`reader.translation.v1`, prompt `reader-translation-prompt.v1`).
+
+Stage prompts and output schemas live in `internal/annotator`; artifact
+types, strict decoders, and local validators live in `internal/semantics`
+(shared helpers reused by the legacy v3 runner); the stage executor that
+performs one initial plus at most two corrective turns is also in
+`internal/annotator`. `internal/pipeline` owns identities, snapshots, and job
+payloads and imports nothing from the other analysis packages;
+`internal/analysis` owns profiles, orchestration, history, and stage caches;
+`internal/reader` never imports `internal/analysis` — it receives a resolved
+`*pipeline.ProfileSnapshot` (see `QueueAnalysisWithProfile`).
+
+### Provider configuration and fingerprints
+
+`DOUBLANGU_PROVIDER_CONFIG` points at the trusted file checked by
+`config.CheckProviderConfigFile`: regular non-symlink file owned by root or
+the service uid, no group/world-writable bits, no world-readable bit.
+`api_key_env` references secrets by environment variable name only. The
+registry fingerprint covers the sanitized provider identity (type, model,
+url policy), so any identity change fails queued work closed with
+`v1.analysis_provider_changed` before state is touched.
+
+### Profiles, snapshots, and jobs
+
+Profiles live in `analysis_pipeline_profile` with per-stage bindings. Every
+queued pipeline article/job stores an immutable snapshot JSON plus a
+domain-separated `profile_snapshot_hash`; job payloads are strict-decoded and
+re-hashed when the runner claims them (`pipeline.JobPayload`). Queue
+idempotency keys include the pipeline version, snapshot hash, content hash,
+and fresh/normal mode. Settings changes never mutate queued or running work.
+
+### Two-stage execution, caches, and publication
+
+The `PipelineRunner` processes one article job at a time: per block it
+prepares the paragraph, executes (or cache-hits) the linguistic stage, then
+executes (or cache-hits) translation with the linguistic artifact hash as the
+upstream identity, merges by exact ids, revalidates the merged v3 response,
+and publishes in one transaction with full provenance
+(`PersistAnalysisChunkWithProvenance`, block profile columns and sense
+translation provenance). Paragraphs become visible only after both stages
+succeed; a failed stage records the failed stage/provider on the run and
+leaves the prior accepted materialization readable. Attempts and executor
+turns are persisted in `analysis_stage_attempt` / `analysis_stage_turn`
+(truncated, bounded, never logging secrets); stage cache rows store raw
+provider-shaped artifacts that must round-trip the strict decoders on every
+hit. The final audit over raw chunk responses is diagnostic and never gates
+publication.
+
+### Failure, retry, and rollback
+
+Stable codes: `v1.analysis_profile_unavailable`,
+`v1.analysis_provider_changed`, `v1.analysis_provider_unavailable`,
+`v1.analysis_stage_failed`, `v1.analysis_pipeline_upgraded` (migration
+cancellation), `v1.analysis_interrupted`. Migration 008 is additive and
+cancels legacy queued analysis with the upgrade code; removing the config
+file and restarting restores compatibility mode on the same database, which
+is the rollback path.

@@ -32,6 +32,20 @@ export type AnalysisTurn = components['schemas']['AnalysisTurn'];
 export type AnalysisRunSummary = components['schemas']['AnalysisRunSummary'];
 export type AnalysisRun = components['schemas']['AnalysisRun'];
 export type AnalysisRunsPage = components['schemas']['AnalysisRunsPage'];
+export type AnalysisProvidersResponse = components['schemas']['AnalysisProvidersResponse'];
+export type AnalysisProvider = components['schemas']['AnalysisProvider'];
+export type AnalysisProviderModel = components['schemas']['AnalysisProviderModel'];
+export type AnalysisProviderTestRequest = components['schemas']['AnalysisProviderTestRequest'];
+export type AnalysisProviderTestResponse = components['schemas']['AnalysisProviderTestResponse'];
+export type AnalysisProfile = components['schemas']['AnalysisProfile'];
+export type AnalysisProfileBinding = components['schemas']['AnalysisProfileBinding'];
+export type AnalysisProfileInput = components['schemas']['AnalysisProfileInput'];
+export type AnalysisProfileListResponse = components['schemas']['AnalysisProfileListResponse'];
+export type AnalysisPipelineSettings = components['schemas']['AnalysisPipelineSettings'];
+export type AnalysisPipelineSettingsInput = components['schemas']['AnalysisPipelineSettingsInput'];
+export type ArticleAnalysisPipeline = components['schemas']['ArticleAnalysisPipeline'];
+export type AnalysisStageAttempt = components['schemas']['AnalysisStageAttempt'];
+export type AnalysisStageTurn = components['schemas']['AnalysisStageTurn'];
 export type ReaderSettings = components['schemas']['ReaderSettings'];
 export type ReaderSettingsInput = components['schemas']['ReaderSettingsInput'];
 export type NarrationStatus = components['schemas']['NarrationStatus'];
@@ -259,10 +273,46 @@ export async function enrichArticle(articleId: string): Promise<Article> {
 	return appArticleAudio(await apiFetch<Article>(`/api/v1/articles/${id(articleId)}/enrich`, { method: 'POST', csrf: true }));
 }
 
-export async function reanalyzeArticle(articleId: string, fresh = false): Promise<Article> {
+export async function reanalyzeArticle(articleId: string, fresh = false, profileId = ''): Promise<Article> {
+	let body: string | undefined;
+	if (fresh || profileId) {
+		body = JSON.stringify({ fresh, ...(profileId ? { profile_id: profileId } : {}) });
+	}
 	return appArticleAudio(await apiFetch<Article>(`/api/v1/articles/${id(articleId)}/reanalyze`, {
-		method: 'POST', body: fresh ? JSON.stringify({ fresh: true }) : undefined, csrf: true
+		method: 'POST', body, csrf: true
 	}));
+}
+
+export async function listAnalysisProviders(): Promise<AnalysisProvidersResponse> {
+	return apiFetch('/api/v1/analysis/providers');
+}
+
+export async function testAnalysisProvider(providerId: string, data: AnalysisProviderTestRequest): Promise<AnalysisProviderTestResponse> {
+	return apiFetch(`/api/v1/analysis/providers/${id(providerId)}/test`, { method: 'POST', body: JSON.stringify(data), csrf: true });
+}
+
+export async function listAnalysisProfiles(): Promise<AnalysisProfileListResponse> {
+	return apiFetch('/api/v1/analysis/profiles');
+}
+
+export async function createAnalysisProfile(data: AnalysisProfileInput): Promise<AnalysisProfile> {
+	return apiFetch('/api/v1/analysis/profiles', { method: 'POST', body: JSON.stringify(data), csrf: true });
+}
+
+export async function updateAnalysisProfile(profileId: string, data: AnalysisProfileInput): Promise<AnalysisProfile> {
+	return apiFetch(`/api/v1/analysis/profiles/${id(profileId)}`, { method: 'PUT', body: JSON.stringify(data), csrf: true });
+}
+
+export async function deleteAnalysisProfile(profileId: string): Promise<{ deleted: string }> {
+	return apiFetch(`/api/v1/analysis/profiles/${id(profileId)}`, { method: 'DELETE', csrf: true });
+}
+
+export async function getPipelineAnalysisSettings(): Promise<AnalysisPipelineSettings> {
+	return apiFetch('/api/v1/analysis/pipeline-settings');
+}
+
+export async function savePipelineAnalysisSettings(data: AnalysisPipelineSettingsInput): Promise<AnalysisPipelineSettings> {
+	return apiFetch('/api/v1/analysis/pipeline-settings', { method: 'PUT', body: JSON.stringify(data), csrf: true });
 }
 
 export async function getAnalysisModels(refresh = false): Promise<AnalysisModelsResponse> {

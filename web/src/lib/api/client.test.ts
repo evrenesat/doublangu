@@ -6,7 +6,9 @@ import {
 	createArticle, enrichArticle, getArticle, listArticles, updateLearningState,
 	clearNarration, generateNarration, getNarration, reanalyzeArticle, updateSemanticLearningState,
 	getSession, logoutSession, getAnalysisModels, getAnalysisSettings, saveAnalysisSettings,
-	listAnalysisRuns, getAnalysisRun
+	listAnalysisRuns, getAnalysisRun, createAnalysisProfile, deleteAnalysisProfile,
+	getPipelineAnalysisSettings, listAnalysisProfiles, listAnalysisProviders,
+	savePipelineAnalysisSettings, testAnalysisProvider
 } from './client';
 
 const library = { id: 'library-id', name: 'Dutch Library', source_language: 'nl', target_language: 'en', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-02T00:00:00Z' };

@@ -83,6 +83,10 @@
 				<div><dt>Completed</dt><dd>{run.completed_at || '—'}</dd></div>
 				<div><dt>Contract</dt><dd>{run.contract_version}</dd></div>
 				<div><dt>Prompt</dt><dd>{run.prompt_version}</dd></div>
+				{#if run.profile_name}
+					<div><dt>Profile</dt><dd>{run.profile_name}</dd></div>
+					<div><dt>Profile snapshot</dt><dd><code>{run.profile_snapshot_hash || '—'}</code></dd></div>
+				{/if}
 			</dl>
 			{#if run.error_code}
 				<div class="failure-detail">
@@ -92,12 +96,73 @@
 			{/if}
 		</section>
 
+		{#if run.stage_attempts && run.stage_attempts.length > 0}
+			<section class="panel" aria-labelledby="stages-heading">
+				<h2 id="stages-heading">Stage attempts</h2>
+				<div class="stage-list">
+					{#each run.stage_attempts as attempt (attempt.id)}
+						<details class="stage-card" open={attempt.status === 'failed'}>
+							<summary>
+								<span class="stage-name">{attempt.stage_id} · paragraph {attempt.block_index + 1}</span>
+								<span class={`stage-status ${attempt.status === 'failed' ? 'failed' : attempt.status === 'running' ? 'running' : 'ok'}`}>{attempt.status}</span>
+								<span class="muted">{attempt.provider_id} · {attempt.model_id} · cache {attempt.cache_disposition} · {attempt.duration_ms} ms</span>
+								{#if attempt.error_code}<span class="failed">{attempt.error_code}</span>{/if}
+							</summary>
+							<div class="stage-content">
+								<dl class="stage-metadata">
+									<div><dt>Provider</dt><dd>{attempt.provider_type} · {attempt.provider_id} ({attempt.provider_config_fingerprint})</dd></div>
+									<div><dt>Contracts</dt><dd>{attempt.contract_version} · {attempt.prompt_version}</dd></div>
+									<div><dt>Hashes</dt><dd>input {attempt.input_hash} · upstream {attempt.upstream_artifact_hash} · options {attempt.options_hash}</dd></div>
+									{#if attempt.options}<div><dt>Options</dt><dd><pre class="options-json">{JSON.stringify(attempt.options, null, 2)}</pre></dd></div>{/if}
+									<div><dt>Models</dt><dd>requested {attempt.requested_model || '—'} · reported {attempt.reported_model || '—'}</dd></div>
+									{#if attempt.request_id}<div><dt>Request id</dt><dd>{attempt.request_id}</dd></div>{/if}
+									{#if attempt.finish_reason}<div><dt>Finish reason</dt><dd>{attempt.finish_reason}</dd></div>{/if}
+									{#if attempt.usage_json}<div><dt>Usage</dt><dd>{attempt.usage_json}</dd></div>{/if}
+									{#if attempt.timing_json}<div><dt>Timing</dt><dd>{attempt.timing_json}</dd></div>{/if}
+									{#if attempt.metadata_json}<div><dt>Metadata</dt><dd>{attempt.metadata_json}</dd></div>{/if}
+									<div><dt>Started</dt><dd>{attempt.started_at}{attempt.completed_at ? ` → ${attempt.completed_at}` : ''}</dd></div>
+								</dl>
+								{#if attempt.error_detail}<p class="failed">Error: {attempt.error_detail}</p>{/if}
+								{#if attempt.provider_stderr_excerpt}<h3>Provider stderr excerpt</h3><pre>{attempt.provider_stderr_excerpt}</pre>{/if}
+								{#if attempt.turns.length === 0}
+									<p class="muted">No provider turns were needed; the accepted artifact came from the exact cache.</p>
+								{:else}
+									<div class="turn-list">
+										{#each attempt.turns as turn (turn.id)}
+											<details class="turn" open={turn.status === 'failed'}>
+												<summary>
+													<span>{turn.turn_kind}</span>
+													<span class={`turn-status ${turn.status === 'failed' ? 'failed' : 'ok'}`}>{turn.status}</span>
+												</summary>
+												<div class="turn-content">
+													<p class="muted">Started {turn.started_at} · {turn.duration_ms} ms</p>
+													<h3>Prompt</h3>
+													<pre>{turn.prompt}</pre>
+													<h3>Output schema</h3>
+													<pre>{turn.output_schema}</pre>
+													<h3>Completed response</h3>
+													<pre>{turn.completed_response || '—'}</pre>
+													{#if turn.validation_error}<h3>Validation error</h3><pre>{turn.validation_error}</pre>{/if}
+													{#if turn.provider_error}<h3>Provider error</h3><pre>{turn.provider_error}</pre>{/if}
+													<h3>Completion metadata</h3>
+													<pre>{turn.completion_metadata_json}</pre>
+													{#if turn.provider_stderr_excerpt}<h3>Provider stderr excerpt</h3><pre>{turn.provider_stderr_excerpt}</pre>{/if}
+												</div>
+											</details>
+										{/each}
+									</div>
+								{/if}
+							</div>
+						</details>
+					{/each}
+				</div>
+			</section>
+		{/if}
+
+		{#if run.turns.length > 0}
 		<section class="panel" aria-labelledby="turns-heading">
 			<h2 id="turns-heading">Turn artifacts</h2>
-			{#if run.turns.length === 0}
-				<p class="muted">No provider turns were needed; the accepted result came from the exact cache.</p>
-			{:else}
-				<div class="turn-list">
+			<div class="turn-list">
 					{#each run.turns as turn (turn.id)}
 						<details class="turn" open={turn.status === 'failed'}>
 							<summary>
@@ -120,9 +185,9 @@
 							</div>
 						</details>
 					{/each}
-				</div>
-				{/if}
-			</section>
+			</div>
+		</section>
+		{/if}
 		{#if run.stderr_excerpt}
 			<section class="panel" aria-labelledby="stderr-heading">
 				<h2 id="stderr-heading">Provider stderr excerpt</h2>
@@ -153,6 +218,15 @@
 	.running { color: var(--color-warning); }
 	.failure-detail { margin-top: 1rem; padding: 0.8rem; background: var(--color-danger-bg); border-radius: 0.5rem; color: var(--color-danger); }
 	.failure-detail pre { color: inherit; }
+	.stage-list { display: grid; gap: 0.6rem; }
+	.stage-card { border: 1px solid var(--color-border); border-radius: 0.55rem; overflow: hidden; }
+	.stage-card summary { display: flex; flex-wrap: wrap; gap: 0.3rem 1rem; align-items: baseline; padding: 0.6rem 0.8rem; cursor: pointer; background: var(--color-surface-raised); }
+	.stage-name { font-weight: 650; }
+	.stage-content { padding: 0.6rem 0.8rem 0.9rem; }
+	.stage-metadata { margin: 0 0 0.8rem; display: grid; gap: 0.25rem 1.2rem; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); }
+	.stage-metadata div { min-width: 0; }
+	.stage-metadata dt { color: var(--color-muted); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; }
+	.stage-metadata dd { margin: 0; overflow-wrap: anywhere; font-size: 0.88rem; }
 	.turn-list { display: grid; gap: 0.7rem; }
 	.turn { border: 1px solid var(--color-border); border-radius: 0.55rem; overflow: hidden; }
 	.turn summary { display: flex; justify-content: space-between; gap: 1rem; padding: 0.75rem 0.9rem; cursor: pointer; background: var(--color-surface-raised); }

@@ -13,6 +13,7 @@
 		type AnalysisRunSummary
 	} from '$lib/api/client';
 	import { appPath } from '$lib/paths';
+	import AnalysisPipelinePanel from '$lib/settings/AnalysisPipelinePanel.svelte';
 
 	let coreReady = $state<boolean | null>(null);
 	let loaderReady = $state<boolean | null>(null);
@@ -304,6 +305,8 @@
 				{/if}
 			{/if}
 		</section>
+
+	<AnalysisPipelinePanel />
 
 	<section class="panel reader-settings" aria-labelledby="reader-heading">
 		<div class="section-heading">

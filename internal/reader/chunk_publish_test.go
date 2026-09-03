@@ -425,3 +425,115 @@ func TestMarkAnalysisProcessingIsJobScoped(t *testing.T) {
 		t.Fatalf("article status after active transition = %q", status)
 	}
 }
+
+// TestArticleProfileSnapshotPersistence proves the resolved profile snapshot
+// is stored on the article at creation and stays blank for legacy creation.
+func TestArticleProfileSnapshotPersistence(t *testing.T) {
+	db, err := store.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	articles := NewStore(db)
+
+	snapshot := profileSnapshotFixture(t)
+	article, err := NewArticle("Snap", "Een zin.", "nl", "en")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := articles.CreateArticleQueuedWithProfile(ctx, &article, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	var profileID, profileName, snapshotHash string
+	if err := db.QueryRow(ctx, `SELECT analysis_profile_id, analysis_profile_name, analysis_pipeline_snapshot_hash FROM article WHERE id = ?`, article.ID.String()).Scan(&profileID, &profileName, &snapshotHash); err != nil {
+		t.Fatal(err)
+	}
+	if profileID != snapshot.ID || profileName != snapshot.Name || snapshotHash == "" {
+		t.Fatalf("snapshot columns = %q/%q/%q", profileID, profileName, snapshotHash)
+	}
+	// Legacy creation path leaves the columns blank.
+	legacy, err := NewArticle("Legacy", "Een zin.", "nl", "en")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := articles.CreateArticleQueued(ctx, &legacy); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(ctx, `SELECT analysis_profile_id, analysis_pipeline_snapshot_hash FROM article WHERE id = ?`, legacy.ID.String()).Scan(&profileID, &snapshotHash); err != nil {
+		t.Fatal(err)
+	}
+	if profileID != "" || snapshotHash != "" {
+		t.Fatalf("legacy snapshot columns = %q/%q", profileID, snapshotHash)
+	}
+}
+
+// TestQueueAnalysisWithProfileSnapshotSemantics proves the immutable snapshot
+// rules: creation stores profile A; a fresh run with profile B replaces it;
+// a normal retry with a stale caller profile still reuses the stored B.
+func TestQueueAnalysisWithProfileSnapshotSemantics(t *testing.T) {
+	db, err := store.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	articles := NewStore(db)
+	profileA := profileSnapshotFixture(t)
+	profileB := *profileA
+	profileB.ID = "profile-2"
+	profileB.Name = "Profile B"
+	hashA, err := profileA.SnapshotHash()
+	if err != nil {
+		t.Fatal(err)
+	}
+	hashB, err := profileB.SnapshotHash()
+	if err != nil {
+		t.Fatal(err)
+	}
+	article, err := NewArticle("SnapQ", "Een zin.", "nl", "en")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := articles.CreateArticleQueuedWithProfile(ctx, &article, profileA); err != nil {
+		t.Fatal(err)
+	}
+	var storedHash string
+	if err := db.QueryRow(ctx, `SELECT analysis_pipeline_snapshot_hash FROM article WHERE id = ?`, article.ID.String()).Scan(&storedHash); err != nil {
+		t.Fatal(err)
+	}
+	if storedHash != hashA {
+		t.Fatalf("creation snapshot = %q, want %q", storedHash, hashA)
+	}
+	// A fresh run with profile B supersedes and persists B.
+	if _, err := articles.QueueAnalysisWithProfile(ctx, article.ID, true, true, &profileB); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(ctx, `SELECT analysis_pipeline_snapshot_hash FROM article WHERE id = ?`, article.ID.String()).Scan(&storedHash); err != nil {
+		t.Fatal(err)
+	}
+	if storedHash != hashB {
+		t.Fatalf("fresh snapshot = %q, want %q", storedHash, hashB)
+	}
+	// A normal retry ignores a stale caller profile and keeps the stored B.
+	if _, err := articles.QueueAnalysisWithProfile(ctx, article.ID, false, false, profileA); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(ctx, `SELECT analysis_pipeline_snapshot_hash FROM article WHERE id = ?`, article.ID.String()).Scan(&storedHash); err != nil {
+		t.Fatal(err)
+	}
+	if storedHash != hashB {
+		t.Fatalf("normal retry snapshot = %q, want stored %q", storedHash, hashB)
+	}
+	var queuedJobs int
+	if err := db.QueryRow(ctx, `SELECT COUNT(*) FROM job WHERE owner_type = 'article' AND owner_id = ? AND job_type = ? AND state IN ('queued', 'leased', 'running')`, article.ID.String(), jobs.AnalysisJobType).Scan(&queuedJobs); err != nil {
+		t.Fatal(err)
+	}
+	if queuedJobs != 1 {
+		t.Fatalf("active jobs = %d", queuedJobs)
+	}
+	// A fresh run without any snapshot is rejected before state changes.
+	if _, err := articles.QueueAnalysisWithProfile(ctx, article.ID, true, true, nil); err == nil {
+		t.Fatal("fresh run without a profile accepted")
+	}
+}

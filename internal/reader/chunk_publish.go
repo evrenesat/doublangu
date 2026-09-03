@@ -50,7 +50,31 @@ func activateJobTx(ctx context.Context, tx *sql.Tx, id library.ULID, jobID libra
 //  5. marks the block ready with its published provenance.
 //
 // Sentences and narration bindings are source-owned and are never touched.
+// ChunkPipelineProvenance carries the immutable pipeline identity for one
+// published paragraph: the profile snapshot and the linguistic/translation
+// provider pairs that produced the merged artifact.
+type ChunkPipelineProvenance struct {
+	ProfileID             string
+	ProfileName           string
+	SnapshotHash          string
+	LinguisticProviderID  string
+	LinguisticModel       string
+	TranslationProviderID string
+	TranslationModel      string
+}
+
 func (s *Store) PersistAnalysisChunk(ctx context.Context, id library.ULID, blockIndex int, jobID, runID library.ULID, prepared semantics.PreparedArticle, validated semantics.ValidatedResponse, providerID, requestedModel, providerEffort string, prior ...[]semantics.NewSense) error {
+	return s.persistAnalysisChunk(ctx, id, blockIndex, jobID, runID, prepared, validated, providerID, requestedModel, providerEffort, nil, prior...)
+}
+
+// PersistAnalysisChunkWithProvenance publishes one validated paragraph with
+// the full pipeline provenance: block profile columns and sense translation
+// provenance are written for newly created rows only.
+func (s *Store) PersistAnalysisChunkWithProvenance(ctx context.Context, id library.ULID, blockIndex int, jobID, runID library.ULID, prepared semantics.PreparedArticle, validated semantics.ValidatedResponse, providerID, requestedModel, providerEffort string, provenance *ChunkPipelineProvenance, prior ...[]semantics.NewSense) error {
+	return s.persistAnalysisChunk(ctx, id, blockIndex, jobID, runID, prepared, validated, providerID, requestedModel, providerEffort, provenance, prior...)
+}
+
+func (s *Store) persistAnalysisChunk(ctx context.Context, id library.ULID, blockIndex int, jobID, runID library.ULID, prepared semantics.PreparedArticle, validated semantics.ValidatedResponse, providerID, requestedModel, providerEffort string, provenance *ChunkPipelineProvenance, prior ...[]semantics.NewSense) error {
 	if s == nil || s.db == nil {
 		return errors.New("reader: nil database")
 	}
@@ -59,11 +83,11 @@ func (s *Store) PersistAnalysisChunk(ctx context.Context, id library.ULID, block
 		priorSenses = prior[0]
 	}
 	return s.db.WithTransaction(ctx, func(tx *sql.Tx) error {
-		return persistAnalysisChunkTx(ctx, tx, id, blockIndex, jobID, runID, prepared, validated, providerID, requestedModel, providerEffort, priorSenses)
+		return persistAnalysisChunkTx(ctx, tx, id, blockIndex, jobID, runID, prepared, validated, providerID, requestedModel, providerEffort, priorSenses, provenance)
 	})
 }
 
-func persistAnalysisChunkTx(ctx context.Context, tx *sql.Tx, id library.ULID, blockIndex int, jobID, runID library.ULID, prepared semantics.PreparedArticle, validated semantics.ValidatedResponse, providerID, requestedModel, providerEffort string, priorSenses []semantics.NewSense) error {
+func persistAnalysisChunkTx(ctx context.Context, tx *sql.Tx, id library.ULID, blockIndex int, jobID, runID library.ULID, prepared semantics.PreparedArticle, validated semantics.ValidatedResponse, providerID, requestedModel, providerEffort string, priorSenses []semantics.NewSense, provenance *ChunkPipelineProvenance) error {
 	const op = "publish analysis chunk"
 	var sourceLanguage, targetLanguage, contentHash, analysisJobID string
 	if err := tx.QueryRowContext(ctx, `SELECT source_language, target_language, content_hash, analysis_job_id FROM article WHERE id = ?`, id.String()).Scan(&sourceLanguage, &targetLanguage, &contentHash, &analysisJobID); errors.Is(err, sql.ErrNoRows) {
@@ -109,8 +133,12 @@ func persistAnalysisChunkTx(ctx context.Context, tx *sql.Tx, id library.ULID, bl
 	// idempotent EnsureSenseTx, which returns the same active sense row that
 	// the earlier paragraph published, so their durable identity is reused.
 	newByRef := make(map[string]*semantics.Sense)
+	translationProvenance := semantics.TranslationProvenance{}
+	if provenance != nil {
+		translationProvenance = semantics.TranslationProvenance{ProviderID: provenance.TranslationProviderID, ProviderModel: provenance.TranslationModel}
+	}
 	for _, proposal := range priorSenses {
-		sense, err := semantics.EnsureSenseTx(ctx, tx, sourceLanguage, targetLanguage, proposal, providerID, requestedModel)
+		sense, err := semantics.EnsureSenseTx(ctx, tx, sourceLanguage, targetLanguage, proposal, providerID, requestedModel, translationProvenance)
 		if err != nil {
 			return &Error{Op: op, Kind: KindValidation, Err: err}
 		}
@@ -120,7 +148,7 @@ func persistAnalysisChunkTx(ctx context.Context, tx *sql.Tx, id library.ULID, bl
 		if _, already := newByRef[proposal.Ref]; already {
 			return &Error{Op: op, Kind: KindValidation, Err: fmt.Errorf("new sense ref %q collides with a prior validated sense", proposal.Ref)}
 		}
-		sense, err := semantics.EnsureSenseTx(ctx, tx, sourceLanguage, targetLanguage, proposal, providerID, requestedModel)
+		sense, err := semantics.EnsureSenseTx(ctx, tx, sourceLanguage, targetLanguage, proposal, providerID, requestedModel, translationProvenance)
 		if err != nil {
 			return &Error{Op: op, Kind: KindValidation, Err: err}
 		}
@@ -253,6 +281,15 @@ func persistAnalysisChunkTx(ctx context.Context, tx *sql.Tx, id library.ULID, bl
 	if err := speech.QueueBlockPronunciationsTx(ctx, tx, id, library.ULID(blockID)); err != nil {
 		return err
 	}
+	var profileColumns string
+	var profileArgs []any
+	if provenance != nil {
+		profileColumns = ", published_analysis_profile_id = ?, published_analysis_profile_name = ?, published_analysis_snapshot_hash = ?"
+		profileArgs = []any{provenance.ProfileID, provenance.ProfileName, provenance.SnapshotHash}
+	}
+	args := []any{jobID.String(), jobID.String(), runID.String(), semantics.AnalysisContractVersion, requestedModel, providerEffort, store.NowUTC()}
+	args = append(args, profileArgs...)
+	args = append(args, blockID, jobID.String())
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE article_block SET
 			analysis_status = 'ready',
@@ -263,9 +300,9 @@ func persistAnalysisChunkTx(ctx context.Context, tx *sql.Tx, id library.ULID, bl
 			published_analysis_revision = ?,
 			published_analysis_model = ?,
 			published_analysis_effort = ?,
-			published_at = ?
+			published_at = ?`+profileColumns+`
 		WHERE id = ? AND analysis_job_id = ?
-	`, jobID.String(), jobID.String(), runID.String(), semantics.AnalysisContractVersion, requestedModel, providerEffort, store.NowUTC(), blockID, jobID.String()); err != nil {
+	`, args...); err != nil {
 		return err
 	}
 	return nil

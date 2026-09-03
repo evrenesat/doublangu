@@ -245,6 +245,180 @@ paths:
 
   # --- Analysis settings and owner diagnostics ---
 
+  /api/v1/analysis/providers:
+    get:
+      summary: List configured analysis providers with live health and model catalogs
+      security: [{ sessionCookie: [] }]
+      responses:
+        "200":
+          description: Provider descriptors with optional model catalogs.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AnalysisProvidersResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "405": { $ref: "#/components/responses/MethodNotAllowed" }
+
+  /api/v1/analysis/providers/{id}/test:
+    post:
+      summary: Run the fixed conformance source through one stage of a provider
+      description: >-
+        Executes the real stage against the fixed safe fixture and returns only
+        status, duration, and a stable error code. Options are canonicalized
+        for the provider type; the provider must be enabled.
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AnalysisProviderTestRequest" }
+      responses:
+        "200":
+          description: Fixture result.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AnalysisProviderTestResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "405": { $ref: "#/components/responses/MethodNotAllowed" }
+
+  /api/v1/analysis/profiles:
+    get:
+      summary: List analysis profiles
+      security: [{ sessionCookie: [] }]
+      responses:
+        "200":
+          description: All stored profiles with their bindings and active flag.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AnalysisProfileListResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "405": { $ref: "#/components/responses/MethodNotAllowed" }
+    post:
+      summary: Create an analysis profile
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AnalysisProfileInput" }
+      responses:
+        "201":
+          description: The created profile.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AnalysisProfile" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "405": { $ref: "#/components/responses/MethodNotAllowed" }
+
+  /api/v1/analysis/profiles/{id}:
+    get:
+      summary: Get one analysis profile
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The profile.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AnalysisProfile" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "405": { $ref: "#/components/responses/MethodNotAllowed" }
+    put:
+      summary: Replace an analysis profile
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AnalysisProfileInput" }
+      responses:
+        "200":
+          description: The replaced profile.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AnalysisProfile" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "405": { $ref: "#/components/responses/MethodNotAllowed" }
+    delete:
+      summary: Delete an analysis profile
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The profile was deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [deleted]
+                properties:
+                  deleted: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "405": { $ref: "#/components/responses/MethodNotAllowed" }
+
+  /api/v1/analysis/pipeline-settings:
+    get:
+      summary: Get the active analysis profile
+      security: [{ sessionCookie: [] }]
+      responses:
+        "200":
+          description: Current active profile selection.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AnalysisPipelineSettings" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "405": { $ref: "#/components/responses/MethodNotAllowed" }
+    put:
+      summary: Set the active analysis profile
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AnalysisPipelineSettingsInput" }
+      responses:
+        "200":
+          description: Saved selection.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AnalysisPipelineSettings" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "405": { $ref: "#/components/responses/MethodNotAllowed" }
+
   /api/v1/analysis/models:
     get:
       summary: List available analysis models and reasoning efforts
@@ -1979,6 +2153,113 @@ components:
           type: array
           items: { $ref: "#/components/schemas/ReasoningEffort" }
 
+    AnalysisProvidersResponse:
+      type: object
+      additionalProperties: false
+      required: [providers]
+      properties:
+        providers:
+          type: array
+          items: { $ref: "#/components/schemas/AnalysisProvider" }
+    AnalysisProvider:
+      type: object
+      additionalProperties: false
+      required: [id, type, enabled, stale, health]
+      properties:
+        id: { type: string }
+        label: { type: string }
+        type: { type: string }
+        enabled: { type: boolean }
+        stale: { type: boolean }
+        last_error: { type: string }
+        health:
+          type: string
+          enum: [disabled, healthy, unhealthy, unknown]
+        models:
+          type: array
+          items: { $ref: "#/components/schemas/AnalysisProviderModel" }
+    AnalysisProviderModel:
+      type: object
+      additionalProperties: false
+      required: [id]
+      properties:
+        id: { type: string }
+        display_name: { type: string }
+        supported_reasoning_efforts:
+          type: array
+          items: { $ref: "#/components/schemas/ReasoningEffort" }
+    AnalysisProviderTestRequest:
+      type: object
+      additionalProperties: false
+      required: [stage_id, options]
+      properties:
+        stage_id:
+          type: string
+          enum: [linguistic_analysis, translation]
+        model_id: { type: string }
+        options: { type: object }
+    AnalysisProviderTestResponse:
+      type: object
+      additionalProperties: false
+      required: [status, duration_ms]
+      properties:
+        status:
+          type: string
+          enum: [healthy, unhealthy]
+        duration_ms: { type: integer, format: int64 }
+        error_code: { type: string }
+    AnalysisProfileInput:
+      type: object
+      additionalProperties: false
+      required: [name, bindings]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        bindings:
+          type: array
+          items: { $ref: "#/components/schemas/AnalysisProfileBinding" }
+    AnalysisProfileBinding:
+      type: object
+      additionalProperties: false
+      required: [stage_id, provider_id, model_id, options]
+      properties:
+        stage_id:
+          type: string
+          enum: [linguistic_analysis, translation]
+        provider_id: { type: string }
+        model_id: { type: string }
+        options: { type: object }
+    AnalysisProfile:
+      type: object
+      additionalProperties: false
+      required: [id, name, bindings, is_active]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        bindings:
+          type: array
+          items: { $ref: "#/components/schemas/AnalysisProfileBinding" }
+        is_active: { type: boolean }
+    AnalysisProfileListResponse:
+      type: object
+      additionalProperties: false
+      required: [profiles]
+      properties:
+        profiles:
+          type: array
+          items: { $ref: "#/components/schemas/AnalysisProfile" }
+    AnalysisPipelineSettings:
+      type: object
+      additionalProperties: false
+      required: [active_profile_id]
+      properties:
+        active_profile_id: { type: string }
+        updated_at: { type: string }
+    AnalysisPipelineSettingsInput:
+      type: object
+      additionalProperties: false
+      required: [active_profile_id]
+      properties:
+        active_profile_id: { type: string }
     AnalysisModelsResponse:
       type: object
       additionalProperties: false
@@ -2055,6 +2336,9 @@ components:
         started_at: { type: string }
         completed_at: { type: string }
         error_code: { type: string }
+        profile_id: { type: string }
+        profile_name: { type: string }
+        profile_snapshot_hash: { type: string }
 
     AnalysisRun:
       type: object
@@ -2078,6 +2362,9 @@ components:
         provider_id: { type: string }
         codex_cli_version: { type: string }
         reported_model: { type: string }
+        profile_id: { type: string }
+        profile_name: { type: string }
+        profile_snapshot_hash: { type: string }
         started_at: { type: string }
         completed_at: { type: string }
         duration_ms: { type: integer, format: int64, minimum: 0 }
@@ -2091,6 +2378,72 @@ components:
         turns:
           type: array
           items: { $ref: "#/components/schemas/AnalysisTurn" }
+        stage_attempts:
+          type: array
+          items: { $ref: "#/components/schemas/AnalysisStageAttempt" }
+
+    AnalysisStageAttempt:
+      type: object
+      additionalProperties: false
+      required: [id, stage_id, block_index, status, provider_id, provider_type,
+        provider_config_fingerprint, model_id, contract_version, prompt_version,
+        input_hash, upstream_artifact_hash, options_hash, cache_disposition,
+        error_code, started_at, completed_at, duration_ms, turns]
+      properties:
+        id: { type: string }
+        stage_id: { type: string, enum: [linguistic_analysis, translation] }
+        block_index: { type: integer, minimum: 0 }
+        status: { type: string, enum: [running, succeeded, failed] }
+        provider_id: { type: string }
+        provider_type: { type: string }
+        provider_config_fingerprint: { type: string }
+        model_id: { type: string }
+        contract_version: { type: string }
+        prompt_version: { type: string }
+        input_hash: { type: string }
+        upstream_artifact_hash: { type: string }
+        options_hash: { type: string }
+        options: { type: object }
+        cache_disposition: { type: string, enum: [hit, miss, bypassed] }
+        source_cache_id: { type: string }
+        requested_model: { type: string }
+        reported_model: { type: string }
+        request_id: { type: string }
+        finish_reason: { type: string }
+        usage_json: { type: string }
+        timing_json: { type: string }
+        metadata_json: { type: string }
+        provider_stderr_excerpt: { type: string }
+        error_code: { type: string }
+        error_detail: { type: string }
+        started_at: { type: string }
+        completed_at: { type: string }
+        duration_ms: { type: integer, format: int64, minimum: 0 }
+        turns:
+          type: array
+          items: { $ref: "#/components/schemas/AnalysisStageTurn" }
+
+    AnalysisStageTurn:
+      type: object
+      additionalProperties: false
+      required: [id, turn_index, turn_kind, prompt, output_schema,
+        completion_metadata_json, started_at, completed_at, duration_ms, status]
+      properties:
+        id: { type: string }
+        turn_index: { type: integer, minimum: 0 }
+        turn_kind: { type: string, enum: [initial, corrective] }
+        prompt: { type: string }
+        output_schema: { type: string }
+        completed_response: { type: string }
+        response_hash: { type: string }
+        validation_error: { type: string }
+        provider_error: { type: string }
+        completion_metadata_json: { type: string }
+        provider_stderr_excerpt: { type: string }
+        started_at: { type: string }
+        completed_at: { type: string }
+        duration_ms: { type: integer, format: int64, minimum: 0 }
+        status: { type: string, enum: [running, completed, failed] }
 
     AnalysisRunsPage:
       type: object
@@ -2107,6 +2460,13 @@ components:
       additionalProperties: false
       properties:
         fresh: { type: boolean, default: false }
+        profile_id:
+          type: string
+          description: >-
+            Pipeline profile override. Valid only together with fresh:true;
+            a non-fresh request carrying profile_id is rejected. When absent,
+            fresh runs resolve the active profile and normal retries reuse the
+            article's stored snapshot.
 
     NarrationStatus:
       type: string
@@ -2411,6 +2771,19 @@ components:
         sentences: { type: array, items: { $ref: "#/components/schemas/ArticleSentence" } }
         occurrences: { type: array, items: { $ref: "#/components/schemas/ArticleOccurrence" } }
         narration: { $ref: "#/components/schemas/NarrationSummary" }
+        analysis_pipeline:
+          allOf:
+            - $ref: "#/components/schemas/ArticleAnalysisPipeline"
+          description: Present only for articles analyzed through the configurable provider pipeline.
+
+    ArticleAnalysisPipeline:
+      type: object
+      additionalProperties: false
+      required: [profile_id, profile_name, snapshot_hash]
+      properties:
+        profile_id: { type: string }
+        profile_name: { type: string }
+        snapshot_hash: { type: string }
 
     AnalysisProgress:
       type: object

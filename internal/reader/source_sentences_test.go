@@ -2,8 +2,10 @@ package reader
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
+	"doublangu/internal/pipeline"
 	"doublangu/internal/semantics"
 	"doublangu/internal/store"
 )
@@ -204,4 +206,30 @@ func TestPersistAnalysisMarksReplacedSentencesAsLegacy(t *testing.T) {
 	if sentences != 1 {
 		t.Errorf("sentences after persist = %d, want 1", sentences)
 	}
+}
+
+// profileSnapshotFixture builds a canonical two-stage profile for store tests.
+func profileSnapshotFixture(t *testing.T) *pipeline.ProfileSnapshot {
+	t.Helper()
+	bindings := make([]pipeline.BindingSnapshot, 0, 2)
+	for _, stage := range pipeline.RegisteredStages() {
+		contract, prompt, _ := pipeline.StageContracts(stage)
+		binding := pipeline.BindingSnapshot{
+			StageID: stage, ProviderID: "codex-app-server", ProviderType: "codex_app_server",
+			ProviderConfigFingerprint: "fp", ModelID: "model-a",
+			Options:         json.RawMessage(`{"reasoning_effort":"medium"}`),
+			ContractVersion: contract, PromptVersion: prompt,
+		}
+		optionsHash, err := pipeline.OptionsHashOf(binding.Options)
+		if err != nil {
+			t.Fatal(err)
+		}
+		binding.OptionsHash = optionsHash
+		bindings = append(bindings, binding)
+	}
+	snapshot := &pipeline.ProfileSnapshot{ID: "profile-1", Name: "Imported Codex", Bindings: bindings}
+	if _, err := snapshot.SnapshotHash(); err != nil {
+		t.Fatal(err)
+	}
+	return snapshot
 }

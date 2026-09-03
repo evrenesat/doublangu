@@ -11,6 +11,7 @@ import (
 
 	"doublangu/internal/jobs"
 	"doublangu/internal/library"
+	"doublangu/internal/pipeline"
 	"doublangu/internal/semantics"
 	"doublangu/internal/speech"
 	"doublangu/internal/store"
@@ -387,6 +388,171 @@ func insertArticleTx(ctx context.Context, tx *sql.Tx, article *Article) error {
 // insertBlockSentencesTx persists the deterministic sentence rows for one
 // source block. Rows are source-owned: they are created once and semantic
 // analysis never deletes, renumbers, or replaces them.
+// profileSnapshotColumns returns the article snapshot columns to persist for
+// a resolved pipeline profile. Nil snapshots keep every column empty.
+func profileSnapshotColumns(snapshot *pipeline.ProfileSnapshot) (id, name, snapshotJSON, snapshotHash string, err error) {
+	if snapshot == nil {
+		return "", "", "", "", nil
+	}
+	hash, err := snapshot.SnapshotHash()
+	if err != nil {
+		return "", "", "", "", err
+	}
+	encoded, err := json.Marshal(snapshot)
+	if err != nil {
+		return "", "", "", "", err
+	}
+	return snapshot.ID, snapshot.Name, string(encoded), hash, nil
+}
+
+// persistArticleProfileSnapshotTx stores the resolved profile snapshot on the
+// article row inside the caller's transaction. Settings changes never rewrite
+// an already stored snapshot.
+func persistArticleProfileSnapshotTx(ctx context.Context, tx *sql.Tx, id library.ULID, snapshot *pipeline.ProfileSnapshot) error {
+	profileID, profileName, snapshotJSON, snapshotHash, err := profileSnapshotColumns(snapshot)
+	if err != nil {
+		return &Error{Op: "persist article profile", Kind: KindValidation, Err: err}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE article SET analysis_profile_id = ?, analysis_profile_name = ?, analysis_pipeline_snapshot_json = ?, analysis_pipeline_snapshot_hash = ? WHERE id = ?`,
+		profileID, profileName, snapshotJSON, snapshotHash, id.String()); err != nil {
+		return err
+	}
+	return nil
+}
+
+// CreateArticleQueuedWithProfile stores source text, deterministic sentences,
+// narration, and the article's initial pipeline analysis job in one
+// transaction while persisting the resolved profile snapshot. It is the
+// pipeline article-creation path; CreateArticleQueued remains the legacy
+// compatibility helper.
+// CreateArticlePipelineUnavailable stores a readable source article when no
+// usable analysis profile is active: no job is queued and the first block is
+// marked failed with the stable profile-unavailable code.
+func (s *Store) CreateArticlePipelineUnavailable(ctx context.Context, article *Article) error {
+	if article == nil {
+		return &Error{Op: "create article", Kind: KindValidation, Err: errors.New("article is nil")}
+	}
+	if err := article.Validate(); err != nil {
+		return &Error{Op: "create article", Kind: KindValidation, Err: err}
+	}
+	blocks := make([]semantics.Block, len(article.Blocks))
+	for index, block := range article.Blocks {
+		blocks[index] = semantics.Block{BlockIndex: block.BlockIndex, SourceText: block.SourceText}
+	}
+	prepared, err := semantics.Prepare(article.Title, article.SourceLanguage, article.TargetLanguage, blocks, nil)
+	if err != nil {
+		return &Error{Op: "create article", Kind: KindValidation, Err: err}
+	}
+	anchors, err := SegmentArticleSentences(blocks)
+	if err != nil {
+		return &Error{Op: "create article", Kind: KindValidation, Err: err}
+	}
+	prepared.Sentences = anchors
+	article.ContentHash = prepared.ContentHash
+	article.AnalysisStatus = AnalysisFailed
+	article.AnalysisRevision = ""
+	article.AnalysisErrorCode = ""
+	article.AnalysisModel = ""
+	article.AnalysisEffort = ""
+	article.NarrationStatus = NarrationNotRequested
+	article.NarrationErrorCode = ""
+	article.SentenceRevision = SentenceRevisionSourceSentencesV1
+	article.AnalysisJobID = ""
+	return s.db.WithTransaction(ctx, func(tx *sql.Tx) error {
+		if err := insertArticleTx(ctx, tx, article); err != nil {
+			return err
+		}
+		if err := failFirstBlockTx(ctx, tx, article.ID, "v1.analysis_profile_unavailable"); err != nil {
+			return err
+		}
+		return speech.QueueArticleNarrationTx(ctx, tx, article.ID, false)
+	})
+}
+
+func (s *Store) CreateArticleQueuedWithProfile(ctx context.Context, article *Article, snapshot *pipeline.ProfileSnapshot) error {
+	if article == nil {
+		return &Error{Op: "create article", Kind: KindValidation, Err: errors.New("article is nil")}
+	}
+	if err := article.Validate(); err != nil {
+		return &Error{Op: "create article", Kind: KindValidation, Err: err}
+	}
+	if snapshot == nil {
+		return s.CreateArticleQueued(ctx, article)
+	}
+	if _, _, _, snapshotHash, err := profileSnapshotColumns(snapshot); err != nil {
+		return &Error{Op: "create article", Kind: KindValidation, Err: err}
+	} else {
+		_ = snapshotHash
+	}
+	blocks := make([]semantics.Block, len(article.Blocks))
+	for index, block := range article.Blocks {
+		blocks[index] = semantics.Block{BlockIndex: block.BlockIndex, SourceText: block.SourceText}
+	}
+	prepared, err := semantics.Prepare(article.Title, article.SourceLanguage, article.TargetLanguage, blocks, nil)
+	if err != nil {
+		return &Error{Op: "create article", Kind: KindValidation, Err: err}
+	}
+	anchors, err := SegmentArticleSentences(blocks)
+	if err != nil {
+		return &Error{Op: "create article", Kind: KindValidation, Err: err}
+	}
+	prepared.Sentences = anchors
+	snapshotHash, err := snapshot.SnapshotHash()
+	if err != nil {
+		return &Error{Op: "create article", Kind: KindValidation, Err: err}
+	}
+	article.ContentHash = prepared.ContentHash
+	article.AnalysisStatus = AnalysisQueued
+	article.AnalysisRevision = ""
+	article.AnalysisErrorCode = ""
+	article.AnalysisModel = ""
+	article.AnalysisEffort = ""
+	article.NarrationStatus = NarrationNotRequested
+	article.NarrationErrorCode = ""
+	article.SentenceRevision = SentenceRevisionSourceSentencesV1
+	article.AnalysisJobID = ""
+	return s.db.WithTransaction(ctx, func(tx *sql.Tx) error {
+		if err := insertArticleTx(ctx, tx, article); err != nil {
+			return err
+		}
+		if err := persistArticleProfileSnapshotTx(ctx, tx, article.ID, snapshot); err != nil {
+			return err
+		}
+		payload, err := pipeline.EncodeJobPayload(pipeline.JobPayload{
+			ArticleID: article.ID.String(), ContentHash: prepared.ContentHash,
+			AnalysisContractVersion: pipeline.AnalysisContractVersion,
+			PipelineVersion:         pipeline.PipelineVersion, Fresh: false,
+			Profile: *snapshot, ProfileSnapshotHash: snapshotHash,
+		})
+		if err != nil {
+			return err
+		}
+		job, err := jobs.EnqueueTx(ctx, tx, jobs.Spec{
+			JobType: jobs.AnalysisJobType, ExecutionTarget: jobs.TargetServer,
+			OwnerType: "article", OwnerID: article.ID.String(),
+			IdempotencyKey: pipelineIdempotencyKey(article.ID, snapshotHash, prepared.ContentHash, false, false),
+			InputHash:      prepared.ContentHash, PayloadJSON: string(payload), Priority: 100,
+		})
+		if err != nil {
+			return err
+		}
+		article.AnalysisJobID = job.ID.String()
+		if err := activateJobTx(ctx, tx, article.ID, job.ID); err != nil {
+			return err
+		}
+		return speech.QueueArticleNarrationTx(ctx, tx, article.ID, false)
+	})
+}
+
+// failFirstBlockTx marks the first source block failed with the given code
+// so the article renders readable (the remaining blocks stay pending).
+func failFirstBlockTx(ctx context.Context, tx *sql.Tx, articleID library.ULID, code string) error {
+	if _, err := tx.ExecContext(ctx, `UPDATE article_block SET analysis_status = 'failed', analysis_error_code = ? WHERE id = (SELECT id FROM article_block WHERE article_id = ? ORDER BY block_index LIMIT 1)`, code, articleID.String()); err != nil {
+		return writeError("fail first article block", err)
+	}
+	return nil
+}
+
 func insertBlockSentencesTx(ctx context.Context, tx *sql.Tx, blockID library.ULID, sourceText string) error {
 	sentences, err := SegmentSentences(sourceText)
 	if err != nil {
@@ -531,6 +697,20 @@ func (s *Store) QueueAnalysis(ctx context.Context, id library.ULID, force bool, 
 // analysisIdempotencyKey builds the durable job identity for one queue
 // request. The prefix is historical job-type naming; the payload contract and
 // prompt versions inside the key keep v3 work distinct from older attempts.
+// pipelineIdempotencyKey builds the durable job identity for pipeline jobs:
+// pipeline version, snapshot hash, content hash, and fresh/force mode. The
+// snapshot hash makes settings changes after queueing unable to alias jobs.
+func pipelineIdempotencyKey(id library.ULID, snapshotHash, contentHash string, fresh, force bool) string {
+	mode := "normal"
+	if fresh {
+		mode = "fresh"
+	}
+	if force {
+		return fmt.Sprintf("reader.pipeline:%s:%s:%s:%s:%s:request:%s", id.String(), pipeline.PipelineVersion, snapshotHash, contentHash, mode, library.NewULID().String())
+	}
+	return fmt.Sprintf("reader.pipeline:%s:%s:%s:%s:%s", id.String(), pipeline.PipelineVersion, snapshotHash, contentHash, mode)
+}
+
 func analysisIdempotencyKey(id library.ULID, contentHash, model, effort string, fresh, force bool) string {
 	mode := "normal"
 	if fresh {
@@ -540,6 +720,120 @@ func analysisIdempotencyKey(id library.ULID, contentHash, model, effort string, 
 		return fmt.Sprintf("reader.analysis.v2:%s:%s:%s:%s:%s:%s:%s:request:%s", id.String(), contentHash, semantics.AnalysisContractVersion, semantics.PromptVersion, model, effort, mode, library.NewULID().String())
 	}
 	return fmt.Sprintf("reader.analysis.v2:%s:%s:%s:%s:%s:%s:%s", id.String(), contentHash, semantics.AnalysisContractVersion, semantics.PromptVersion, model, effort, mode)
+}
+
+// QueueAnalysisWithProfile queues a pipeline analysis job for an article.
+// A normal queue reuses the article's stored profile snapshot (a legacy
+// article with a blank snapshot adopts the supplied fallback and persists it);
+// a fresh run requires the caller-supplied snapshot. The snapshot is stored on
+// the article in the same transaction as the job, and later settings changes
+// never mutate it.
+func (s *Store) QueueAnalysisWithProfile(ctx context.Context, id library.ULID, force bool, fresh bool, snapshot *pipeline.ProfileSnapshot) (*jobs.Job, error) {
+	prepared, err := s.PrepareAnalysis(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if fresh && snapshot == nil {
+		return nil, &Error{Op: "queue analysis", Kind: KindValidation, Err: errors.New("a fresh pipeline run requires a resolved profile")}
+	}
+	var job *jobs.Job
+	err = s.db.WithTransaction(ctx, func(tx *sql.Tx) error {
+		var profileID, profileName, snapshotJSON, snapshotHash string
+		if err := tx.QueryRowContext(ctx, `SELECT analysis_profile_id, analysis_profile_name, analysis_pipeline_snapshot_json, analysis_pipeline_snapshot_hash FROM article WHERE id = ?`, id.String()).Scan(&profileID, &profileName, &snapshotJSON, &snapshotHash); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return &Error{Op: "queue analysis", Kind: KindNotFound, Err: fmt.Errorf("%s not found", id.String())}
+			}
+			return err
+		}
+		active := snapshot
+		activeHash := ""
+		if snapshotJSON != "" {
+			// Normal retries reuse the stored snapshot exactly; a fresh run's
+			// caller-supplied profile overrides it.
+			if fresh && snapshot != nil {
+				active = snapshot
+				hashValue, hashErr := active.SnapshotHash()
+				if hashErr != nil {
+					return &Error{Op: "queue analysis", Kind: KindValidation, Err: hashErr}
+				}
+				activeHash = hashValue
+			} else {
+				stored, decodeErr := decodeStoredProfile(snapshotJSON)
+				if decodeErr != nil {
+					return &Error{Op: "queue analysis", Kind: KindConflict, Err: fmt.Errorf("stored profile snapshot is corrupt: %w", decodeErr)}
+				}
+				active = stored
+				activeHash = snapshotHash
+			}
+		} else if active != nil {
+			hashValue, err := active.SnapshotHash()
+			if err != nil {
+				return &Error{Op: "queue analysis", Kind: KindValidation, Err: err}
+			}
+			activeHash = hashValue
+		} else {
+			return &Error{Op: "queue analysis", Kind: KindConflict, Err: errors.New("article has no profile snapshot and no fallback profile was supplied")}
+		}
+		_ = profileID
+		_ = profileName
+		status, err := articleAnalysisStatusTx(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if !force && (status == string(AnalysisQueued) || status == string(AnalysisProcessing)) {
+			existing, err := jobs.GetActiveOwnerJobTx(ctx, tx, "article", id.String(), jobs.AnalysisJobType)
+			if err != nil {
+				return err
+			}
+			job = existing
+			return nil
+		}
+		payload, err := pipeline.EncodeJobPayload(pipeline.JobPayload{
+			ArticleID: id.String(), ContentHash: prepared.ContentHash,
+			AnalysisContractVersion: pipeline.AnalysisContractVersion,
+			PipelineVersion:         pipeline.PipelineVersion, Fresh: fresh,
+			Profile: *active, ProfileSnapshotHash: activeHash,
+		})
+		if err != nil {
+			return err
+		}
+		key := pipelineIdempotencyKey(id, activeHash, prepared.ContentHash, fresh, force)
+		if force {
+			if _, err := jobs.CancelOwnerJobsTx(ctx, tx, "article", id.String(), jobs.AnalysisJobType, "v1.analysis_superseded"); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE article SET content_hash = ?, analysis_status = 'queued', analysis_error_code = '', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`, prepared.ContentHash, id.String()); err != nil {
+			return err
+		}
+		job, err = jobs.EnqueueTx(ctx, tx, jobs.Spec{
+			JobType: jobs.AnalysisJobType, ExecutionTarget: jobs.TargetServer,
+			OwnerType: "article", OwnerID: id.String(), IdempotencyKey: key,
+			InputHash: prepared.ContentHash, PayloadJSON: string(payload), Priority: 100,
+		})
+		if err != nil {
+			return err
+		}
+		if (snapshotJSON == "" || fresh) && active != nil {
+			if err := persistArticleProfileSnapshotTx(ctx, tx, id, active); err != nil {
+				return err
+			}
+		}
+		return activateJobTx(ctx, tx, id, job.ID)
+	})
+	return job, err
+}
+
+// decodeStoredProfile rebuilds the immutable snapshot from stored JSON.
+func decodeStoredProfile(raw string) (*pipeline.ProfileSnapshot, error) {
+	var profile pipeline.ProfileSnapshot
+	if err := json.Unmarshal([]byte(raw), &profile); err != nil {
+		return nil, err
+	}
+	if _, err := profile.SnapshotHash(); err != nil {
+		return nil, err
+	}
+	return &profile, nil
 }
 
 func articleAnalysisStatusTx(ctx context.Context, tx *sql.Tx, id library.ULID) (string, error) {
@@ -676,6 +970,32 @@ func (s *Store) MarkAnalysisFailed(ctx context.Context, id library.ULID, code st
 	count, _ := result.RowsAffected()
 	if count == 0 {
 		return &Error{Op: "mark analysis failed", Kind: KindNotFound, Err: sql.ErrNoRows}
+	}
+	return nil
+}
+
+// MarkAnalysisFailedForJob marks the article failed only when the given job
+// is still the active analysis job, so a superseded run can never overwrite
+// the state of a newer run. The legacy MarkAnalysisFailed above remains for
+// synchronous single-flight paths that own the article outright.
+func (s *Store) MarkAnalysisFailedForJob(ctx context.Context, id library.ULID, jobID library.ULID, code string) error {
+	if !validErrorCode(code) {
+		return &Error{Op: "mark analysis failed", Kind: KindValidation, Err: errors.New("invalid analysis error code")}
+	}
+	result, err := s.db.Exec(ctx, `UPDATE article SET analysis_status = 'failed', analysis_error_code = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ? AND analysis_job_id = ?`, code, id.String(), jobID.String())
+	if err != nil {
+		return err
+	}
+	count, _ := result.RowsAffected()
+	if count == 0 {
+		var exists int
+		if err := s.db.QueryRow(ctx, `SELECT COUNT(*) FROM article WHERE id = ?`, id.String()).Scan(&exists); err != nil {
+			return err
+		}
+		if exists == 0 {
+			return &Error{Op: "mark analysis failed", Kind: KindNotFound, Err: sql.ErrNoRows}
+		}
+		return &Error{Op: "mark analysis failed", Kind: KindConflict, Err: errors.New("analysis job was superseded")}
 	}
 	return nil
 }
@@ -1022,8 +1342,14 @@ func sha256Hex(data []byte) string { sum := sha256.Sum256(data); return hex.Enco
 // loadV2Tx fills additive semantic-reader fields while leaving legacy
 // annotations untouched. It is called by the existing GetArticle transaction.
 func (s *Store) loadV2Tx(ctx context.Context, tx *sql.Tx, id library.ULID, article *Article, blockByID map[string]int) error {
-	if err := tx.QueryRowContext(ctx, `SELECT content_hash, analysis_status, analysis_revision, analysis_error_code, analysis_model, analysis_effort, analysis_job_id, narration_status, narration_error_code FROM article WHERE id = ?`, id.String()).Scan(&article.ContentHash, &article.AnalysisStatus, &article.AnalysisRevision, &article.AnalysisErrorCode, &article.AnalysisModel, &article.AnalysisEffort, &article.AnalysisJobID, &article.NarrationStatus, &article.NarrationErrorCode); err != nil {
+	var profileID, profileName, snapshotHash string
+	if err := tx.QueryRowContext(ctx, `SELECT content_hash, analysis_status, analysis_revision, analysis_error_code, analysis_model, analysis_effort, analysis_job_id, narration_status, narration_error_code, analysis_profile_id, analysis_profile_name, analysis_pipeline_snapshot_hash FROM article WHERE id = ?`, id.String()).Scan(&article.ContentHash, &article.AnalysisStatus, &article.AnalysisRevision, &article.AnalysisErrorCode, &article.AnalysisModel, &article.AnalysisEffort, &article.AnalysisJobID, &article.NarrationStatus, &article.NarrationErrorCode, &profileID, &profileName, &snapshotHash); err != nil {
 		return fmt.Errorf("reader load article lifecycle: %w", err)
+	}
+	if profileID != "" {
+		article.Pipeline = &ArticlePipelineProvenance{
+			ProfileID: profileID, ProfileName: profileName, SnapshotHash: snapshotHash,
+		}
 	}
 	article.Sentences = make([]ArticleSentence, 0)
 	article.Occurrences = make([]ArticleOccurrence, 0)
@@ -1406,4 +1732,16 @@ func (s *Store) UpsertSemanticLearningState(ctx context.Context, senseID library
 		return nil
 	})
 	return &state, err
+}
+
+// HasPipelineSnapshot reports whether the article carries an immutable
+// pipeline profile snapshot (created or last queued through the pipeline).
+func (s *Store) HasPipelineSnapshot(ctx context.Context, id library.ULID) (bool, error) {
+	var hash string
+	if err := s.db.QueryRow(ctx, `SELECT analysis_pipeline_snapshot_hash FROM article WHERE id = ?`, id.String()).Scan(&hash); errors.Is(err, sql.ErrNoRows) {
+		return false, &Error{Op: "article pipeline snapshot", Kind: KindNotFound, Err: sql.ErrNoRows}
+	} else if err != nil {
+		return false, err
+	}
+	return hash != "", nil
 }

@@ -3,6 +3,7 @@ package analysis
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -20,30 +21,34 @@ var ErrInvalidRunQuery = errors.New("invalid analysis run query")
 // ErrorDetail is intentionally available only from owner-authenticated
 // diagnostics handlers; public article responses expose only ErrorCode.
 type Run struct {
-	ID                  library.ULID `json:"id"`
-	ArticleID           library.ULID `json:"article_id"`
-	ArticleTitle        string       `json:"article_title"`
-	JobID               library.ULID `json:"job_id"`
-	AttemptCount        int          `json:"attempt_count"`
-	ContentHash         string       `json:"content_hash"`
-	ContractVersion     string       `json:"contract_version"`
-	PromptVersion       string       `json:"prompt_version"`
-	RequestedModel      string       `json:"requested_model"`
-	RequestedEffort     string       `json:"requested_effort"`
-	ProviderID          string       `json:"provider_id"`
-	CodexCLIVersion     string       `json:"codex_cli_version"`
-	ReportedModel       string       `json:"reported_model"`
-	StartedAt           string       `json:"started_at"`
-	CompletedAt         string       `json:"completed_at"`
-	DurationMS          int64        `json:"duration_ms"`
-	Status              string       `json:"status"`
-	TotalParagraphs     int          `json:"total_paragraphs"`
-	CompletedParagraphs int          `json:"completed_paragraphs"`
-	FailedBlockIndex    int          `json:"failed_block_index"`
-	ErrorCode           string       `json:"error_code"`
-	ErrorDetail         string       `json:"error_detail,omitempty"`
-	StderrExcerpt       string       `json:"stderr_excerpt,omitempty"`
-	Turns               []Turn       `json:"turns"`
+	ID                  library.ULID          `json:"id"`
+	ArticleID           library.ULID          `json:"article_id"`
+	ArticleTitle        string                `json:"article_title"`
+	JobID               library.ULID          `json:"job_id"`
+	AttemptCount        int                   `json:"attempt_count"`
+	ContentHash         string                `json:"content_hash"`
+	ContractVersion     string                `json:"contract_version"`
+	PromptVersion       string                `json:"prompt_version"`
+	RequestedModel      string                `json:"requested_model"`
+	RequestedEffort     string                `json:"requested_effort"`
+	ProviderID          string                `json:"provider_id"`
+	CodexCLIVersion     string                `json:"codex_cli_version"`
+	ReportedModel       string                `json:"reported_model"`
+	StartedAt           string                `json:"started_at"`
+	CompletedAt         string                `json:"completed_at"`
+	DurationMS          int64                 `json:"duration_ms"`
+	Status              string                `json:"status"`
+	TotalParagraphs     int                   `json:"total_paragraphs"`
+	CompletedParagraphs int                   `json:"completed_paragraphs"`
+	FailedBlockIndex    int                   `json:"failed_block_index"`
+	ErrorCode           string                `json:"error_code"`
+	ErrorDetail         string                `json:"error_detail,omitempty"`
+	StderrExcerpt       string                `json:"stderr_excerpt,omitempty"`
+	Turns               []Turn                `json:"turns"`
+	ProfileID           string                `json:"profile_id,omitempty"`
+	ProfileName         string                `json:"profile_name,omitempty"`
+	ProfileSnapshotHash string                `json:"profile_snapshot_hash,omitempty"`
+	StageAttempts       []StageAttemptSummary `json:"stage_attempts,omitempty"`
 }
 
 // RunSummary deliberately uses the same safe fields as Run without turn
@@ -63,6 +68,9 @@ type RunSummary struct {
 	StartedAt           string       `json:"started_at"`
 	CompletedAt         string       `json:"completed_at"`
 	ErrorCode           string       `json:"error_code"`
+	ProfileID           string       `json:"profile_id,omitempty"`
+	ProfileName         string       `json:"profile_name,omitempty"`
+	ProfileSnapshotHash string       `json:"profile_snapshot_hash,omitempty"`
 }
 
 type RunStart struct {
@@ -110,6 +118,61 @@ type Turn struct {
 	CompletedAt            string       `json:"completed_at"`
 	DurationMS             int64        `json:"duration_ms"`
 	Status                 string       `json:"status"`
+}
+
+// StageAttemptSummary is the owner-visible stage attempt row for pipeline
+// runs, including the stored provider/model/options/hash/usage metadata and
+// the nested stage turns recorded for the attempt.
+type StageAttemptSummary struct {
+	ID                        string             `json:"id"`
+	StageID                   string             `json:"stage_id"`
+	BlockIndex                int                `json:"block_index"`
+	Status                    string             `json:"status"`
+	ProviderID                string             `json:"provider_id"`
+	ProviderType              string             `json:"provider_type"`
+	ProviderConfigFingerprint string             `json:"provider_config_fingerprint"`
+	ModelID                   string             `json:"model_id"`
+	ContractVersion           string             `json:"contract_version"`
+	PromptVersion             string             `json:"prompt_version"`
+	InputHash                 string             `json:"input_hash"`
+	UpstreamArtifactHash      string             `json:"upstream_artifact_hash"`
+	OptionsHash               string             `json:"options_hash"`
+	Options                   json.RawMessage    `json:"options,omitempty"`
+	CacheDisposition          string             `json:"cache_disposition"`
+	SourceCacheID             string             `json:"source_cache_id"`
+	RequestedModel            string             `json:"requested_model"`
+	ReportedModel             string             `json:"reported_model"`
+	RequestID                 string             `json:"request_id"`
+	FinishReason              string             `json:"finish_reason"`
+	UsageJSON                 string             `json:"usage_json"`
+	TimingJSON                string             `json:"timing_json"`
+	MetadataJSON              string             `json:"metadata_json"`
+	ProviderStderrExcerpt     string             `json:"provider_stderr_excerpt,omitempty"`
+	ErrorCode                 string             `json:"error_code"`
+	ErrorDetail               string             `json:"error_detail,omitempty"`
+	StartedAt                 string             `json:"started_at"`
+	CompletedAt               string             `json:"completed_at,omitempty"`
+	DurationMS                int64              `json:"duration_ms"`
+	Turns                     []StageTurnSummary `json:"turns"`
+}
+
+// StageTurnSummary is one retained stage turn inside an attempt.
+type StageTurnSummary struct {
+	ID                     string `json:"id"`
+	TurnIndex              int    `json:"turn_index"`
+	TurnKind               string `json:"turn_kind"`
+	Prompt                 string `json:"prompt"`
+	OutputSchema           string `json:"output_schema"`
+	CompletedResponse      string `json:"completed_response,omitempty"`
+	ResponseHash           string `json:"response_hash,omitempty"`
+	ValidationError        string `json:"validation_error,omitempty"`
+	ProviderError          string `json:"provider_error,omitempty"`
+	CompletionMetadataJSON string `json:"completion_metadata_json"`
+	ProviderStderrExcerpt  string `json:"provider_stderr_excerpt,omitempty"`
+	StartedAt              string `json:"started_at"`
+	CompletedAt            string `json:"completed_at,omitempty"`
+	DurationMS             int64  `json:"duration_ms"`
+	Status                 string `json:"status"`
 }
 
 type RunsPage struct {
@@ -258,7 +321,8 @@ func (s *HistoryStore) ListRuns(ctx context.Context, articleID string, limit int
 		SELECT r.id, r.article_id, a.title, r.attempt_count, r.requested_model,
 		       r.requested_effort, r.status, r.total_paragraphs,
 		       r.completed_paragraphs, r.failed_block_index, r.duration_ms,
-		       r.started_at, r.completed_at, r.error_code
+		       r.started_at, r.completed_at, r.error_code,
+		       r.profile_id, r.profile_name, r.profile_snapshot_hash
 		FROM analysis_run r JOIN article a ON a.id = r.article_id
 		WHERE `+strings.Join(where, " AND ")+`
 		ORDER BY r.started_at DESC, r.id DESC LIMIT ?
@@ -271,7 +335,7 @@ func (s *HistoryStore) ListRuns(ctx context.Context, articleID string, limit int
 	for rows.Next() {
 		var summary RunSummary
 		var rawID, rawArticleID string
-		if err := rows.Scan(&rawID, &rawArticleID, &summary.ArticleTitle, &summary.AttemptCount, &summary.RequestedModel, &summary.RequestedEffort, &summary.Status, &summary.TotalParagraphs, &summary.CompletedParagraphs, &summary.FailedBlockIndex, &summary.DurationMS, &summary.StartedAt, &summary.CompletedAt, &summary.ErrorCode); err != nil {
+		if err := rows.Scan(&rawID, &rawArticleID, &summary.ArticleTitle, &summary.AttemptCount, &summary.RequestedModel, &summary.RequestedEffort, &summary.Status, &summary.TotalParagraphs, &summary.CompletedParagraphs, &summary.FailedBlockIndex, &summary.DurationMS, &summary.StartedAt, &summary.CompletedAt, &summary.ErrorCode, &summary.ProfileID, &summary.ProfileName, &summary.ProfileSnapshotHash); err != nil {
 			return RunsPage{}, err
 		}
 		summary.ID = library.ULID(rawID)
@@ -302,15 +366,82 @@ func (s *HistoryStore) GetRun(ctx context.Context, id library.ULID) (Run, error)
 		       r.codex_cli_version, r.reported_model, r.started_at,
 		       r.completed_at, r.duration_ms, r.status, r.total_paragraphs,
 		       r.completed_paragraphs, r.failed_block_index, r.error_code,
-		       r.error_detail, r.stderr_excerpt
+		       r.error_detail, r.stderr_excerpt,
+		       r.profile_id, r.profile_name, r.profile_snapshot_hash
 		FROM analysis_run r JOIN article a ON a.id = r.article_id WHERE r.id = ?
-	`, id.String()).Scan(&rawID, &rawArticleID, &run.ArticleTitle, &rawJobID, &run.AttemptCount, &run.ContentHash, &run.ContractVersion, &run.PromptVersion, &run.RequestedModel, &run.RequestedEffort, &run.ProviderID, &run.CodexCLIVersion, &run.ReportedModel, &run.StartedAt, &run.CompletedAt, &run.DurationMS, &run.Status, &run.TotalParagraphs, &run.CompletedParagraphs, &run.FailedBlockIndex, &run.ErrorCode, &run.ErrorDetail, &run.StderrExcerpt)
+	`, id.String()).Scan(&rawID, &rawArticleID, &run.ArticleTitle, &rawJobID, &run.AttemptCount, &run.ContentHash, &run.ContractVersion, &run.PromptVersion, &run.RequestedModel, &run.RequestedEffort, &run.ProviderID, &run.CodexCLIVersion, &run.ReportedModel, &run.StartedAt, &run.CompletedAt, &run.DurationMS, &run.Status, &run.TotalParagraphs, &run.CompletedParagraphs, &run.FailedBlockIndex, &run.ErrorCode, &run.ErrorDetail, &run.StderrExcerpt, &run.ProfileID, &run.ProfileName, &run.ProfileSnapshotHash)
 	if err != nil {
 		return Run{}, err
 	}
 	run.ID = library.ULID(rawID)
 	run.ArticleID = library.ULID(rawArticleID)
 	run.JobID = library.ULID(rawJobID)
+	attemptRows, err := s.db.Query(ctx, `
+		SELECT id, stage_id, block_index, status, provider_id, provider_type,
+		       provider_config_fingerprint, model_id, options_json,
+		       contract_version,
+		       prompt_version, input_hash, upstream_artifact_hash, options_hash,
+		       cache_disposition, source_cache_id, requested_model,
+		       reported_model, request_id, finish_reason, usage_json,
+		       timing_json, metadata_json, provider_stderr_excerpt,
+		       error_code, error_detail, started_at, completed_at, duration_ms
+		FROM analysis_stage_attempt WHERE run_id = ?
+		ORDER BY block_index, stage_id
+	`, id.String())
+	if err != nil {
+		return Run{}, err
+	}
+	defer attemptRows.Close()
+	run.StageAttempts = make([]StageAttemptSummary, 0)
+	for attemptRows.Next() {
+		var attempt StageAttemptSummary
+		var optionsText string
+		if err := attemptRows.Scan(&attempt.ID, &attempt.StageID, &attempt.BlockIndex, &attempt.Status, &attempt.ProviderID, &attempt.ProviderType, &attempt.ProviderConfigFingerprint, &attempt.ModelID, &optionsText, &attempt.ContractVersion, &attempt.PromptVersion, &attempt.InputHash, &attempt.UpstreamArtifactHash, &attempt.OptionsHash, &attempt.CacheDisposition, &attempt.SourceCacheID, &attempt.RequestedModel, &attempt.ReportedModel, &attempt.RequestID, &attempt.FinishReason, &attempt.UsageJSON, &attempt.TimingJSON, &attempt.MetadataJSON, &attempt.ProviderStderrExcerpt, &attempt.ErrorCode, &attempt.ErrorDetail, &attempt.StartedAt, &attempt.CompletedAt, &attempt.DurationMS); err != nil {
+			return Run{}, err
+		}
+		if optionsText != "" {
+			attempt.Options = json.RawMessage(optionsText)
+		}
+		attempt.Turns = make([]StageTurnSummary, 0)
+		run.StageAttempts = append(run.StageAttempts, attempt)
+	}
+	if err := attemptRows.Err(); err != nil {
+		return Run{}, err
+	}
+	if len(run.StageAttempts) > 0 {
+		turnRows, err := s.db.Query(ctx, `
+			SELECT t.stage_attempt_id, t.id, t.turn_index, t.turn_kind,
+			       t.prompt, t.output_schema, t.completed_response,
+			       t.response_hash, t.validation_error, t.provider_error,
+			       t.completion_metadata_json, t.provider_stderr_excerpt,
+			       t.started_at, t.completed_at, t.duration_ms, t.status
+			FROM analysis_stage_turn t
+			JOIN analysis_stage_attempt a ON a.id = t.stage_attempt_id
+			WHERE a.run_id = ? ORDER BY a.block_index, t.turn_index
+		`, id.String())
+		if err != nil {
+			return Run{}, err
+		}
+		defer turnRows.Close()
+		byAttempt := make(map[string]int, len(run.StageAttempts))
+		for index, attempt := range run.StageAttempts {
+			byAttempt[attempt.ID] = index
+		}
+		for turnRows.Next() {
+			var rawAttemptID, rawTurnID string
+			var turn StageTurnSummary
+			if err := turnRows.Scan(&rawAttemptID, &rawTurnID, &turn.TurnIndex, &turn.TurnKind, &turn.Prompt, &turn.OutputSchema, &turn.CompletedResponse, &turn.ResponseHash, &turn.ValidationError, &turn.ProviderError, &turn.CompletionMetadataJSON, &turn.ProviderStderrExcerpt, &turn.StartedAt, &turn.CompletedAt, &turn.DurationMS, &turn.Status); err != nil {
+				return Run{}, err
+			}
+			turn.ID = rawTurnID
+			if index, ok := byAttempt[rawAttemptID]; ok {
+				run.StageAttempts[index].Turns = append(run.StageAttempts[index].Turns, turn)
+			}
+		}
+		if err := turnRows.Err(); err != nil {
+			return Run{}, err
+		}
+	}
 	rows, err := s.db.Query(ctx, `
 		SELECT id, run_id, block_index, turn_index, turn_kind, prompt,
 		       output_schema, completed_response, response_hash, validation_error,

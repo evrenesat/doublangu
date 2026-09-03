@@ -135,7 +135,18 @@ func getSense(ctx context.Context, q interface {
 // EnsureSenseTx returns an existing active sense or creates the semantic item
 // and sense in the caller's transaction. Sense identity is discriminator-based
 // so same-spelling contextual homonyms remain independent.
-func EnsureSenseTx(ctx context.Context, tx *sql.Tx, sourceLanguage, targetLanguage string, proposal NewSense, providerID, providerModel string) (*Sense, error) {
+// TranslationProvenance records which binding supplied target-language
+// translation for a pipeline-created sense. Legacy calls leave it empty and
+// the semantic_sense translation columns stay blank.
+type TranslationProvenance struct {
+	ProviderID    string
+	ProviderModel string
+}
+
+// EnsureSenseTx materializes a sense. Pipeline callers may supply the
+// translation binding provenance for newly created senses; an existing active
+// sense is reused unchanged and never has its provenance rewritten.
+func EnsureSenseTx(ctx context.Context, tx *sql.Tx, sourceLanguage, targetLanguage string, proposal NewSense, providerID, providerModel string, translation ...TranslationProvenance) (*Sense, error) {
 	if !proposal.Kind.Valid() || strings.TrimSpace(proposal.CanonicalForm) == "" || strings.TrimSpace(proposal.PrimaryTranslation) == "" || strings.TrimSpace(proposal.SenseDiscriminator) == "" {
 		return nil, errors.New("invalid sense proposal")
 	}
@@ -180,17 +191,24 @@ func EnsureSenseTx(ctx context.Context, tx *sql.Tx, sourceLanguage, targetLangua
 	}
 	now := store.NowUTC()
 	senseID := library.NewULID().String()
+	translationProviderID := ""
+	translationProviderModel := ""
+	if len(translation) > 0 {
+		translationProviderID = translation[0].ProviderID
+		translationProviderModel = translation[0].ProviderModel
+	}
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO semantic_sense (
 			id, semantic_item_id, target_language, sense_discriminator,
 			primary_translation, alternatives_json, literal_translation, meaning_note,
 			usage_note, parts_note, canonical_pronunciation_text, provider_id,
-			provider_model, analysis_contract_version, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			provider_model, analysis_contract_version, translation_provider_id,
+			translation_provider_model, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, senseID, itemID, targetLanguage, proposal.SenseDiscriminator, proposal.PrimaryTranslation,
 		string(alternatives), proposal.LiteralTranslation, proposal.MeaningNote, proposal.UsageNote,
 		proposal.PartsNote, proposal.CanonicalPronunciationText, providerID, providerModel,
-		AnalysisContractVersion, now, now)
+		AnalysisContractVersion, translationProviderID, translationProviderModel, now, now)
 	if err != nil {
 		return nil, fmt.Errorf("insert semantic sense: %w", err)
 	}

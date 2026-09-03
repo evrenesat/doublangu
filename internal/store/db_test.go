@@ -481,6 +481,165 @@ func TestMigration007_UpgradeBackfill(t *testing.T) {
 	}
 }
 
+func assertMigration008Schema(t *testing.T, db *DB) {
+	t.Helper()
+	ctx := context.Background()
+	for _, name := range []string{
+		"analysis_pipeline_profile", "analysis_pipeline_binding", "analysis_pipeline_settings",
+		"analysis_stage_cache", "analysis_stage_attempt", "analysis_stage_turn",
+		"idx_stage_cache_identity", "idx_stage_attempt_run", "idx_stage_turn_attempt",
+	} {
+		var count int
+		if err := db.QueryRow(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE name = ?", name).Scan(&count); err != nil {
+			t.Fatalf("find pipeline schema object %s: %v", name, err)
+		}
+		if count != 1 {
+			t.Errorf("pipeline schema object %s count = %d, want 1", name, count)
+		}
+	}
+	for _, column := range []string{
+		"pipeline_version", "profile_id", "profile_name", "profile_snapshot_json",
+		"profile_snapshot_hash", "failed_stage_id", "failed_provider_id",
+	} {
+		var count int
+		if err := db.QueryRow(ctx, `SELECT COUNT(*) FROM pragma_table_info('analysis_run') WHERE name = ?`, column).Scan(&count); err != nil || count != 1 {
+			t.Errorf("analysis_run column %s count = %d err=%v", column, count, err)
+		}
+	}
+	for _, column := range []string{
+		"analysis_profile_id", "analysis_profile_name",
+		"analysis_pipeline_snapshot_json", "analysis_pipeline_snapshot_hash",
+	} {
+		var count int
+		if err := db.QueryRow(ctx, `SELECT COUNT(*) FROM pragma_table_info('article') WHERE name = ?`, column).Scan(&count); err != nil || count != 1 {
+			t.Errorf("article column %s count = %d err=%v", column, count, err)
+		}
+	}
+	for _, column := range []string{
+		"published_analysis_profile_id", "published_analysis_profile_name",
+		"published_analysis_snapshot_hash",
+	} {
+		var count int
+		if err := db.QueryRow(ctx, `SELECT COUNT(*) FROM pragma_table_info('article_block') WHERE name = ?`, column).Scan(&count); err != nil || count != 1 {
+			t.Errorf("article_block column %s count = %d err=%v", column, count, err)
+		}
+	}
+	for _, column := range []string{"translation_provider_id", "translation_provider_model"} {
+		var count int
+		if err := db.QueryRow(ctx, `SELECT COUNT(*) FROM pragma_table_info('semantic_sense') WHERE name = ?`, column).Scan(&count); err != nil || count != 1 {
+			t.Errorf("semantic_sense column %s count = %d err=%v", column, count, err)
+		}
+	}
+}
+
+// TestMigration008_ProfileCascadeAndLegacyPreservation proves profiles
+// cascade through bindings/settings correctly and that a full 007->008
+// upgrade preserves legacy analysis rows.
+func TestMigration008_ProfileCascadeAndLegacyPreservation(t *testing.T) {
+	db, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	assertMigration008Schema(t, db)
+
+	if _, err := db.Exec(ctx, `INSERT INTO analysis_pipeline_profile (id, name) VALUES ('profile-1', 'Codex Only')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO analysis_pipeline_binding (profile_id, stage_id, provider_id, model_id, options_json, options_hash) VALUES ('profile-1', 'linguistic_analysis', 'codex-app-server', 'model-a', '{"reasoning_effort":"low"}', 'hash')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO analysis_pipeline_binding (profile_id, stage_id, provider_id, model_id, options_json, options_hash) VALUES ('profile-1', 'translation', 'codex-app-server', 'model-a', '{"reasoning_effort":"low"}', 'hash2')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO analysis_pipeline_settings (id, active_profile_id, updated_at) VALUES (1, 'profile-1', 'now')`); err != nil {
+		t.Fatal(err)
+	}
+	// Deleting the active profile is rejected by RESTRICT.
+	if _, err := db.Exec(ctx, `DELETE FROM analysis_pipeline_profile WHERE id = 'profile-1'`); err == nil {
+		t.Fatal("active profile deletion unexpectedly succeeded")
+	}
+	if _, err := db.Exec(ctx, `DELETE FROM analysis_pipeline_settings`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `DELETE FROM analysis_pipeline_profile WHERE id = 'profile-1'`); err != nil {
+		t.Fatalf("profile deletion failed: %v", err)
+	}
+	var bindings int
+	if err := db.QueryRow(ctx, `SELECT COUNT(*) FROM analysis_pipeline_binding WHERE profile_id = 'profile-1'`).Scan(&bindings); err != nil {
+		t.Fatal(err)
+	}
+	if bindings != 0 {
+		t.Errorf("bindings survived profile delete: %d", bindings)
+	}
+}
+
+// TestMigration008_UpgradeFrom007PreservesLegacyRows proves deterministic
+// upgrade behavior: legacy settings/runs/turns/caches and accepted
+// materializations survive, while old-format active jobs are canceled.
+func TestMigration008_UpgradeFrom007PreservesLegacyRows(t *testing.T) {
+	conn, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn.SetMaxOpenConns(1)
+	if _, err := conn.Exec("PRAGMA foreign_keys = ON"); err != nil {
+		conn.Close()
+		t.Fatal(err)
+	}
+	db := &DB{conn: conn}
+	t.Cleanup(func() { _ = db.Close() })
+
+	through007 := fstest.MapFS{}
+	for _, name := range []string{
+		"001_initial.sql", "002_library.sql", "003_media.sql", "004_reader_mvp.sql",
+		"005_audible_reader.sql", "006_analysis_reliability.sql", "007_progressive_reader.sql",
+	} {
+		through007["migrations/"+name] = &fstest.MapFile{Data: checkedInMigration(t, name)}
+	}
+	if err := migrateWithSource(db, through007); err != nil {
+		t.Fatalf("apply migrations through 007: %v", err)
+	}
+	ctx := context.Background()
+	if _, err := db.Exec(ctx, `INSERT INTO analysis_settings (id, model, effort, updated_at) VALUES (1, 'model-a', 'low', 'now')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO article (id, title, source_language, target_language, enrichment_status, content_hash, analysis_status, analysis_revision, analysis_model, analysis_effort, narration_status, sentence_revision) VALUES ('01J00000000000000000000008', 'T', 'nl', 'en', 'ready', 'hash', 'ready', 'reader.analysis.v3', 'model-a', 'low', 'not_requested', 'legacy.analysis')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO job (id, job_type, execution_target, owner_type, owner_id, idempotency_key, input_hash, payload_json, state) VALUES ('job-legacy-1', 'reader.analysis.v2', 'server', 'article', '01J00000000000000000000008', 'key-1', 'hash', '{"contract_version":"reader.analysis.v3"}', 'queued')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO analysis_cache (id, content_hash, source_language, target_language, contract_version, provider_id, provider_model, provider_effort, prompt_version, prepared_input_hash, validated_response_json, response_hash) VALUES ('cache-1', 'hash', 'nl', 'en', 'reader.analysis.v2', 'provider', '', '', 'reader-analysis-prompt.v5', '', '{}', 'h')`); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := migrateWithSource(db, migrationFS); err != nil {
+		t.Fatalf("upgrade through migration 008: %v", err)
+	}
+	assertMigration008Schema(t, db)
+	var model, effort string
+	if err := db.QueryRow(ctx, `SELECT model, effort FROM analysis_settings WHERE id = 1`).Scan(&model, &effort); err != nil || model != "model-a" || effort != "low" {
+		t.Fatalf("legacy settings lost: %q/%q err=%v", model, effort, err)
+	}
+	var cacheRows int
+	if err := db.QueryRow(ctx, `SELECT COUNT(*) FROM analysis_cache`).Scan(&cacheRows); err != nil || cacheRows != 1 {
+		t.Fatalf("legacy cache lost: %d err=%v", cacheRows, err)
+	}
+	var canceled int
+	if err := db.QueryRow(ctx, `SELECT COUNT(*) FROM job WHERE id = 'job-legacy-1' AND state = 'canceled' AND error_code = 'v1.analysis_pipeline_upgraded'`).Scan(&canceled); err != nil || canceled != 1 {
+		t.Fatalf("legacy job not canceled: %d err=%v", canceled, err)
+	}
+	var status string
+	if err := db.QueryRow(ctx, `SELECT analysis_status FROM article WHERE id = '01J00000000000000000000008'`).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "ready" {
+		t.Errorf("article status after upgrade = %q, want ready (accepted analysis remains readable)", status)
+	}
+}
+
 func TestMigration004ReaderConstraintsAndCascades(t *testing.T) {
 	db, err := OpenTest()
 	if err != nil {
@@ -619,8 +778,8 @@ func TestMigrationVersionRecorded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("version query: %v", err)
 	}
-	if version != 7 {
-		t.Errorf("expected version 7, got %d", version)
+	if version != 8 {
+		t.Errorf("expected version 8, got %d", version)
 	}
 }
 
@@ -644,8 +803,8 @@ func TestMigrationFreshInMemoryAlwaysApplies(t *testing.T) {
 		t.Fatalf("version count: %v", err)
 	}
 	// Each in-memory OpenTest starts fresh — all migrations run once per open.
-	if count != 7 {
-		t.Errorf("expected 7 migration records, got %d", count)
+	if count != 8 {
+		t.Errorf("expected 8 migration records, got %d", count)
 	}
 }
 
@@ -831,8 +990,8 @@ func TestFileBasedDBDoesNotReapplyMigrations(t *testing.T) {
 	if err := db2.QueryRow(context.Background(), "SELECT COUNT(*) FROM schema_version").Scan(&count); err != nil {
 		t.Fatalf("count: %v", err)
 	}
-	if count != 7 {
-		t.Errorf("expected 7 migration records, got %d (migrations should not reapply)", count)
+	if count != 8 {
+		t.Errorf("expected 8 migration records, got %d (migrations should not reapply)", count)
 	}
 }
 
@@ -1138,7 +1297,8 @@ func TestMigration002_UpgradeFromV1ToV2(t *testing.T) {
 	assertMigration005Schema(t, db)
 	assertMigration006Schema(t, db)
 	assertMigration007Schema(t, db)
-	assertMigrationVersion(t, db, 7)
+	assertMigration008Schema(t, db)
+	assertMigrationVersion(t, db, 8)
 }
 
 func TestMetadataStoreCRUDOnCleanAndUpgradedDatabases(t *testing.T) {
@@ -1321,7 +1481,8 @@ func TestMigration002_RollbackLeavesNoLibraryTables(t *testing.T) {
 	assertMigration005Schema(t, db)
 	assertMigration006Schema(t, db)
 	assertMigration007Schema(t, db)
-	assertMigrationVersion(t, db, 7)
+	assertMigration008Schema(t, db)
+	assertMigrationVersion(t, db, 8)
 }
 
 func TestFileDatabaseUsesWALForeignKeysBusyTimeoutAndCurrentVersion(t *testing.T) {
@@ -1345,7 +1506,7 @@ func TestFileDatabaseUsesWALForeignKeysBusyTimeoutAndCurrentVersion(t *testing.T
 	if err := db.QueryRow(ctx, "SELECT MAX(version) FROM schema_version").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if journal != "wal" || foreignKeys != 1 || busyTimeout != 5000 || version != 7 {
+	if journal != "wal" || foreignKeys != 1 || busyTimeout != 5000 || version != 8 {
 		t.Fatalf("journal=%q foreign_keys=%d busy_timeout=%d version=%d", journal, foreignKeys, busyTimeout, version)
 	}
 }

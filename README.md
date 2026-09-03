@@ -73,6 +73,53 @@ The API contract is in [`contracts/openapi.yaml`](contracts/openapi.yaml).
 See [`ARCHITECTURE.md`](ARCHITECTURE.md) for system details and
 [`DEVLOG.md`](DEVLOG.md) for implementation history.
 
+## Configurable analysis provider pipeline
+
+The progressive reader analysis runs as a two-stage pipeline:
+`linguistic_analysis` then `translation` per paragraph, each bound to a
+configured provider in a profile.
+
+- **Configuration file** (`DOUBLANGU_PROVIDER_CONFIG`): a strict, trusted JSON
+  file owned by root or the service user, not group/world-writable, not
+  world-readable, and not a symlink. See
+  [`config/provider.example.json`](config/provider.example.json) for a
+  service-owned template with placeholder model ids and an environment
+  variable name for the secret — never put a credential or endpoint secret in
+  the file or the browser. Secrets are referenced as `api_key_env` names that
+  must match `^[A-Z_][A-Z0-9_]*$`.
+- **Provider types**: `codex_app_server` (local Codex app server) and
+  `openai_compatible`. HTTP base URLs are allowed only for literal loopback or
+  the Tailscale CGNAT range when `allow_insecure_tailscale_http` is set. The
+  server never returns, stores, or logs `base_url` or secrets; the owner API
+  exposes only ids, labels, types, health, and model catalogs.
+- **Compatibility mode**: without the config file the legacy
+  `DOUBLANGU_ANNOTATOR` / `DOUBLANGU_CODEX_MODEL` / `DOUBLANGU_CODEX_EFFORT`
+  single-provider path runs unchanged. The config file and legacy variables
+  cannot be mixed.
+- **Profiles and snapshots**: a profile binds each stage to a provider, model,
+  and provider-specific options (codex `reasoning_effort`; omlx
+  `temperature_milli` and `max_output_tokens`). Articles capture an immutable
+  snapshot of the profile (id, name, bindings, and a domain-separated hash).
+  New articles queue through the active profile; explicit fresh reanalysis may
+  name another profile; normal retries reuse the stored snapshot — settings
+  changes never mutate queued or running work, and a profile absent from a
+  snapshot is never invoked.
+- **Stage caches**: exact validated stage outputs are cached per paragraph on
+  the identity `(stage, input hash, upstream artifact hash, contract, prompt,
+  provider, model, options)`. Fresh runs bypass both caches; normal retries
+  reuse only exact revalidated artifacts.
+- **Failure and retry**: a failed article keeps its last accepted paragraphs
+  readable; retry from the reader reuses the stored snapshot. Provider
+  fingerprint changes fail closed (`v1.analysis_provider_changed`); offline or
+  missing providers surface `v1.analysis_provider_unavailable`, and stage
+  validation failures surface `v1.analysis_stage_failed` with the failed
+  stage/provider recorded on the run.
+- **Diagnostics and rollback**: run detail shows stage attempts with stable
+  codes and truncated excerpts only; no prompts from failed pipeline stages
+  are retained beyond per-turn artifacts. Rollback keeps migration 008
+  additive: stop the server, remove the config file, and start again in
+  compatibility mode against the same database.
+
 ## Progressive reader analysis (analysis contract v3)
 
 New articles store deterministic source sentences at creation, queue narration

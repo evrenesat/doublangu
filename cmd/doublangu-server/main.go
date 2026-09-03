@@ -27,6 +27,7 @@ import (
 	"doublangu/internal/jobs"
 	"doublangu/internal/library"
 	"doublangu/internal/media"
+	"doublangu/internal/pipeline"
 	manifest "doublangu/internal/plugins"
 	"doublangu/internal/reader"
 	"doublangu/internal/speech"
@@ -130,6 +131,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "article enrichment recovery: %v\n", err)
 		return 1
 	}
+	historyStore := analysis.NewHistoryStore(db)
+	if err := historyStore.RecoverInterruptedStageAttempts(context.Background()); err != nil {
+		fmt.Fprintf(stderr, "stage attempt recovery: %v\n", err)
+		return 1
+	}
 	var articleAnnotator annotator.Annotator
 	if cfg.Annotator == "disabled" {
 		articleAnnotator = annotator.Disabled{}
@@ -145,12 +151,27 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "WARNING: schema not available: %v\n", err)
 	}
 	registry := manifest.NewRegistry()
-	semanticProvider, _ := articleAnnotator.(annotator.SemanticAnnotator)
-	analysisRunner := analysis.NewRunnerWithMedia(db, semanticProvider, mediaStore)
+	providerRegistry, configErr := loadProviderRegistry(db)
+	if configErr != nil {
+		fmt.Fprintf(stderr, "provider config: %v\n", configErr)
+		return 1
+	}
 	analysisContext, stopAnalysis := context.WithCancel(context.Background())
-	go analysisRunner.Run(analysisContext)
 	defer stopAnalysis()
-	if err := serve(cfg.Listen, registry, schema, db, newHandlerWithMedia(registry, schema, authHandler, healthHandler, cfg, db, mediaStore, articleAnnotator), stdout); err != nil {
+	if providerRegistry != nil {
+		// Pipeline mode: the two-stage pipeline runner owns every analysis
+		// job queued in this mode. The legacy runner must not claim pipeline
+		// payloads.
+		pipelineRunner := analysis.NewPipelineRunner(db, providerRegistry)
+		go pipelineRunner.Run(analysisContext)
+	} else {
+		// Compatibility mode: no provider config file, so the legacy
+		// single-provider runner owns analysis jobs as before.
+		semanticProvider, _ := articleAnnotator.(annotator.SemanticAnnotator)
+		analysisRunner := analysis.NewRunnerWithMedia(db, semanticProvider, mediaStore)
+		go analysisRunner.Run(analysisContext)
+	}
+	if err := serve(cfg.Listen, registry, schema, db, newHandlerWithMedia(registry, schema, authHandler, healthHandler, cfg, db, mediaStore, providerRegistry, articleAnnotator), stdout); err != nil {
 		fmt.Fprintf(stderr, "server: %v\n", err)
 		return 1
 	}
@@ -174,7 +195,7 @@ func newHandler(
 	db *store.DB,
 	providers ...annotator.Annotator,
 ) http.Handler {
-	return newHandlerWithMedia(registry, schema, authHandler, health, cfg, db, nil, providers...)
+	return newHandlerWithMedia(registry, schema, authHandler, health, cfg, db, nil, nil, providers...)
 }
 
 func newHandlerWithMedia(
@@ -185,6 +206,7 @@ func newHandlerWithMedia(
 	cfg *config.Config,
 	db *store.DB,
 	mediaStore *media.Store,
+	providerRegistry httpapiProviderRegistry,
 	providers ...annotator.Annotator,
 ) http.Handler {
 	mux := http.NewServeMux()
@@ -254,6 +276,12 @@ func newHandlerWithMedia(
 		articleAnnotator = providers[0]
 	}
 	articleHandler := httpapi.NewArticleHandler(db, authHandler.CSRF, articleAnnotator, mediaStore)
+	if providerRegistry != nil {
+		articleHandler.ConfigurePipeline(db, providerRegistry)
+	} else {
+		providerRegistry = &emptyProviderRegistry{}
+	}
+	pipelineAnalysisHandler := httpapi.NewPipelineAnalysisHandler(db, authHandler.CSRF, providerRegistry)
 	articleRoutes := authHandler.RequireAuth(articleMux(articleHandler))
 	mux.Handle("/api/v1/articles", articleRoutes)
 	mux.Handle("/api/v1/articles/", articleRoutes)
@@ -263,7 +291,7 @@ func newHandlerWithMedia(
 		modelCatalog = provider
 	}
 	analysisHandler := httpapi.NewAnalysisHandler(db, authHandler.CSRF, modelCatalog)
-	analysisProtected := authHandler.RequireAuth(analysisMux(analysisHandler))
+	analysisProtected := authHandler.RequireAuth(analysisMux(analysisHandler, pipelineAnalysisHandler))
 	analysisRoutes := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		analysisProtected.ServeHTTP(w, r)
@@ -360,6 +388,95 @@ func articleMux(h *httpapi.ArticleHandler) http.Handler {
 	return mux
 }
 
+// loadProviderRegistry builds the configured provider registry from the
+// trusted provider configuration file when DOUBLANGU_PROVIDER_CONFIG is set,
+// then seeds the bootstrap profile. Without the file it returns (nil, nil):
+// the caller keeps compatibility mode. Any configured-file failure is
+// returned as an error so startup aborts instead of silently switching to the
+// legacy single-provider path.
+func loadProviderRegistry(db *store.DB) (httpapiProviderRegistry, error) {
+	pathValue := os.Getenv("DOUBLANGU_PROVIDER_CONFIG")
+	if pathValue == "" {
+		return nil, nil
+	}
+	file, err := config.LoadProviderConfigFile(pathValue, os.Getenv)
+	if err != nil {
+		return nil, fmt.Errorf("load %q: %w", pathValue, err)
+	}
+	registry, err := annotator.NewRegistry(file, "codex", 10*time.Minute, func(name string) (string, error) {
+		return os.Getenv(name), nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	seedBootstrapProfile(db, file, registry)
+	return registry, nil
+}
+
+// httpapiProviderRegistry narrows the registry interface used by the mux.
+type httpapiProviderRegistry interface {
+	Provider(id string) (annotator.Provider, bool)
+	Descriptors() []annotator.ProviderDescriptor
+}
+
+type emptyProviderRegistry struct{}
+
+func (e *emptyProviderRegistry) Provider(string) (annotator.Provider, bool)  { return nil, false }
+func (e *emptyProviderRegistry) Descriptors() []annotator.ProviderDescriptor { return nil }
+
+// seedBootstrapProfile inserts the configured bootstrap profile once, when no
+// profiles exist. Discovery failures log provider ids and stable codes only
+// and never leave an invalid active profile behind.
+func seedBootstrapProfile(db *store.DB, file *config.ProviderConfigFile, registry *annotator.Registry) {
+	if file.BootstrapProfile == nil {
+		return
+	}
+	profiles := analysis.NewProfileStore(db)
+	count, err := profiles.Count(context.Background())
+	if err != nil || count > 0 {
+		return
+	}
+	types := make(map[string]string)
+	fingerprints := make(map[string]string)
+	for _, entry := range file.Providers {
+		types[entry.ID] = entry.Type
+		fingerprints[entry.ID] = config.ProviderConfigFingerprint(entry)
+	}
+	bindings := make([]pipeline.BindingSnapshot, 0, 2)
+	valid := true
+	for _, stage := range pipeline.RegisteredStages() {
+		bindingConfig, ok := file.BootstrapProfile.Bindings[stage]
+		if !ok {
+			valid = false
+			continue
+		}
+		options, err := config.CanonicalizeProviderOptions(types[bindingConfig.ProviderID], bindingConfig.Options)
+		if err != nil {
+			valid = false
+			continue
+		}
+		optionsHash, err := pipeline.OptionsHashOf(options)
+		if err != nil {
+			valid = false
+			continue
+		}
+		contract, prompt, _ := pipeline.StageContracts(stage)
+		bindings = append(bindings, pipeline.BindingSnapshot{
+			StageID: stage, ProviderID: bindingConfig.ProviderID, ProviderType: types[bindingConfig.ProviderID],
+			ProviderConfigFingerprint: fingerprints[bindingConfig.ProviderID], ModelID: bindingConfig.ModelID,
+			Options: options, OptionsHash: optionsHash, ContractVersion: contract, PromptVersion: prompt,
+		})
+	}
+	if !valid || len(bindings) != 2 {
+		return
+	}
+	if _, err := profiles.Seed(context.Background(), []analysis.SeedProfile{{
+		Name: file.BootstrapProfile.Name, Bindings: bindings,
+	}}); err != nil {
+		fmt.Fprintf(os.Stderr, "provider bootstrap seed: %v\n", err)
+	}
+}
+
 func readerSettingsMux(h *httpapi.ReaderSettingsHandler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/reader/settings", h.ServeSettings)
@@ -367,13 +484,24 @@ func readerSettingsMux(h *httpapi.ReaderSettingsHandler) http.Handler {
 	return mux
 }
 
-func analysisMux(h *httpapi.AnalysisHandler) http.Handler {
+func analysisMux(h *httpapi.AnalysisHandler, pipelineHandler *httpapi.PipelineAnalysisHandler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/analysis/models", h.ServeModels)
 	mux.HandleFunc("GET /api/v1/analysis/settings", h.ServeSettings)
 	mux.HandleFunc("PUT /api/v1/analysis/settings", h.ServeSettings)
 	mux.HandleFunc("GET /api/v1/analysis/runs", h.ServeRuns)
 	mux.HandleFunc("GET /api/v1/analysis/runs/{id}", h.ServeRun)
+	if pipelineHandler != nil {
+		mux.HandleFunc("GET /api/v1/analysis/providers", pipelineHandler.ServeProviders)
+		mux.HandleFunc("POST /api/v1/analysis/providers/{id}/test", pipelineHandler.ServeProviderTest)
+		mux.HandleFunc("GET /api/v1/analysis/profiles", pipelineHandler.ServeProfiles)
+		mux.HandleFunc("POST /api/v1/analysis/profiles", pipelineHandler.ServeProfiles)
+		mux.HandleFunc("GET /api/v1/analysis/profiles/{id}", pipelineHandler.ServeProfile)
+		mux.HandleFunc("PUT /api/v1/analysis/profiles/{id}", pipelineHandler.ServeProfile)
+		mux.HandleFunc("DELETE /api/v1/analysis/profiles/{id}", pipelineHandler.ServeProfile)
+		mux.HandleFunc("GET /api/v1/analysis/pipeline-settings", pipelineHandler.ServeProfileSettings)
+		mux.HandleFunc("PUT /api/v1/analysis/pipeline-settings", pipelineHandler.ServeProfileSettings)
+	}
 	return mux
 }
 

@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "providers": [
+    {
+      "id": "codex-local",
+      "type": "codex_app_server",
+      "model": "PLACEHOLDER_MODEL_ID",
+      "reasoning_effort": "low"
+    },
+    {
+      "id": "omlx-local",
+      "type": "openai_compatible",
+      "base_url": "http://127.0.0.1:9000/v1",
+      "model": "PLACEHOLDER_OMLX_MODEL_ID",
+      "api_key_env": "DOUBLANGU_OMLX_API_KEY"
+    }
+  ],
+  "bootstrap_profile": {
+    "name": "Local mixed",
+    "bindings": {
+      "linguistic_analysis": { "provider_id": "codex-local", "model_id": "PLACEHOLDER_MODEL_ID" },
+      "translation": { "provider_id": "omlx-local", "model_id": "PLACEHOLDER_OMLX_MODEL_ID" }
+    }
+  }
+}
