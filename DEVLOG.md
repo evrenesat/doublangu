@@ -1,5 +1,38 @@
 # Development Log
 
+## 2026-09-03 — Settings UI: mac_relay now uses the numeric stage-option schema
+
+Fixed a frontend provider-type bug that survived the settings restructure:
+the UI keyed the stage-option schema on `openai_compatible` only, so a
+`mac_relay` provider was treated like Codex — the editor and test forms
+offered a reasoning effort, and profile saves / tuple tests posted
+`{"reasoning_effort":"low"}` which the server's strict option codec rejects
+(`v1.validation_error`, shown as "Options are invalid for this provider.").
+The backend (`internal/config/providers.go` `CanonicalizeProviderOptions`)
+requires exactly `temperature_milli` + `max_output_tokens` for both
+`openai_compatible` and `mac_relay`.
+
+- Added `usesNumericStageOptions()` to `web/src/lib/settings/analysisProfiles.ts`
+  as the single source for the numeric schema set and replaced all six
+  hardcoded comparisons there (defaults, wire canonicalization, options
+  validation, effort-error skip, blank/retested test tuples) plus the four
+  in `AnalysisPipelinePanel.svelte` (assign-provider/model-change option
+  resets, test-form fields, binding-editor fields).
+- `mac_relay` bindings now default to `{temperature_milli: 0,
+  max_output_tokens: 16384}`, render numeric controls in both the profile
+  editor and the per-stage test area, and post numeric options to
+  `/api/v1/analysis/providers/{id}/test`.
+- Tests: `analysisProfiles.test.ts` grew a `mac_relay` provider fixture and
+  coverage for the grouping helper, defaults, canonical wire options,
+  range/non-integer errors, effort-free test tuples, and the tuple wire
+  request; `AnalysisPipelinePanel.test.ts` gained an end-to-end case that
+  expands a `mac_relay` provider, asserts numeric controls with no effort
+  field, runs a tuple test posting numeric options, and checks the profile
+  editor renders numeric binding fields.
+
+Verification: `npm run check` (0 errors/warnings), `npm run test:unit`
+(130/130), `npm run build`, `git diff --check` — all clean.
+
 ## 2026-09-03 — Settings restructure, analysis-runs pages, speech workers UI
 
 Implemented `plans/in-progress/redesign.md` on `main`: Settings is now a

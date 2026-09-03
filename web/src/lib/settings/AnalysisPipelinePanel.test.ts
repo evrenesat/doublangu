@@ -133,6 +133,69 @@ it('expands a provider to run a stage conformance test and refresh its catalog',
 	expect(posts).toHaveLength(1);
 });
 
+it('treats mac_relay like openai_compatible for numeric stage options', async () => {
+	document.cookie = 'csrf_token=test-csrf-token; Path=/';
+	const relayProvider = {
+		id: 'mac-relay',
+		label: 'Mac relay',
+		type: 'mac_relay',
+		enabled: true,
+		stale: false,
+		health: 'healthy',
+		models: [{ id: 'qwen-mlx', display_name: 'Qwen MLX' }]
+	};
+	const fetchMock = vi.fn(async (input: string, init: RequestInit = {}): Promise<Response> => {
+		const method = init.method ?? 'GET';
+		if (input === '/api/v1/analysis/providers' && method === 'GET') return json(200, { providers: [relayProvider] });
+		if (input === '/api/v1/analysis/providers/mac-relay/test' && method === 'POST') {
+			expect(JSON.parse(String(init.body))).toEqual({
+				stage_id: 'translation',
+				model_id: 'qwen-mlx',
+				options: { temperature_milli: 0, max_output_tokens: 16384 }
+			});
+			return json(200, { status: 'healthy', duration_ms: 90 });
+		}
+		if (input === '/api/v1/analysis/profiles' && method === 'GET') return json(200, { profiles: [] });
+		if (input === '/api/v1/analysis/settings' && method === 'GET') return json(200, { active_profile_id: '' });
+		throw new Error(`unexpected request ${method} ${input}`);
+	});
+	vi.stubGlobal('fetch', fetchMock);
+
+	render(AnalysisPipelinePanel);
+	await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh catalog' })).toBeTruthy());
+
+	// The collapsed test area exposes numeric controls for mac_relay.
+	const details = document.querySelector('details.provider-test') as HTMLDetailsElement;
+	await fireEvent.click(screen.getByText('Test provider'));
+	details.open = true;
+	expect((await screen.findAllByText('Temperature (milli)')).length).toBe(2); // one per stage
+	expect(screen.getAllByText('Max output tokens')).toHaveLength(2);
+	expect(screen.queryByText('Reasoning effort')).toBeNull();
+
+	// Running a tuple test posts the numeric options the server requires.
+	await fireEvent.click(await screen.findByRole('button', { name: 'Test Translation' }));
+	await waitFor(() => expect(screen.getByText(/Conformance fixture passed in 90 ms/)).toBeTruthy());
+	const posts = fetchMock.mock.calls.filter(([url, init]) => url === '/api/v1/analysis/providers/mac-relay/test' && (init?.method ?? 'GET') === 'POST');
+	expect(posts).toHaveLength(1);
+
+	// The profile editor renders numeric binding fields for mac_relay too.
+	await fireEvent.click(screen.getByRole('button', { name: 'New profile' }));
+	await fireEvent.input(screen.getByPlaceholderText('e.g. Mixed codex + omlx'), { target: { value: 'Relay only' } });
+	const providerSelects = screen
+		.getAllByRole('combobox')
+		.filter((select) => select.querySelector('option')?.textContent === 'Select a provider');
+	expect(providerSelects).toHaveLength(2);
+	for (const select of providerSelects) {
+		await fireEvent.change(select, { target: { value: 'mac-relay' } });
+	}
+	const editor = document.querySelector('.profile-editor');
+	expect(editor).toBeTruthy();
+	// Two stages x (temperature + max tokens), and no effort control.
+	expect(editor!.querySelectorAll('input[type="number"]')).toHaveLength(4);
+	expect(editor!.textContent).not.toContain('Reasoning effort');
+	await waitFor(() => expect(screen.getByRole('button', { name: 'Create profile' }).hasAttribute('disabled')).toBe(false));
+});
+
 it('creating a profile does not activate it, and manual activation saves explicitly', async () => {
 	document.cookie = 'csrf_token=test-csrf-token; Path=/';
 	const stored: unknown[] = [];

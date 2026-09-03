@@ -21,7 +21,8 @@ import {
 	stageLabel,
 	supportedEfforts,
 	testFormKey,
-	testTupleFingerprint
+	testTupleFingerprint,
+	usesNumericStageOptions
 } from './analysisProfiles';
 
 const codexProvider: AnalysisProvider = {
@@ -41,6 +42,16 @@ const codexProvider: AnalysisProvider = {
 	]
 };
 
+const relayProvider: AnalysisProvider = {
+	id: 'mac-relay',
+	label: 'Mac relay',
+	type: 'mac_relay',
+	enabled: true,
+	stale: false,
+	health: 'healthy',
+	models: [{ id: 'qwen-mlx', display_name: 'Qwen MLX' }]
+};
+
 describe('stage metadata', () => {
 	it('keeps both stages in registered order', () => {
 		expect(STAGES).toEqual(['linguistic_analysis', 'translation']);
@@ -53,8 +64,15 @@ describe('stage metadata', () => {
 });
 
 describe('options defaults and canonicalization', () => {
+	it('groups provider types by option schema like the server codecs', () => {
+		expect(usesNumericStageOptions('openai_compatible')).toBe(true);
+		expect(usesNumericStageOptions('mac_relay')).toBe(true);
+		expect(usesNumericStageOptions('codex_app_server')).toBe(false);
+		expect(usesNumericStageOptions('unknown')).toBe(false);
+	});
 	it('defaults options per provider type', () => {
 		expect(defaultStageOptions('openai_compatible')).toEqual({ temperature_milli: 0, max_output_tokens: 16384 });
+		expect(defaultStageOptions('mac_relay')).toEqual({ temperature_milli: 0, max_output_tokens: 16384 });
 		expect(defaultStageOptions('codex_app_server')).toEqual({ reasoning_effort: 'low' });
 	});
 	it('preserves exact omlx values instead of clamping them', () => {
@@ -69,13 +87,30 @@ describe('options defaults and canonicalization', () => {
 		expect(result.temperature_milli).toBe(9000);
 		expect(result.max_output_tokens).toBe(5);
 	});
+	it('sends mac_relay numeric options as configured without injecting an effort', () => {
+		const draft = {
+			stage_id: 'translation' as const,
+			provider_id: 'mac-relay',
+			provider_type: 'mac_relay',
+			model_id: 'qwen-mlx',
+			options: { temperature_milli: 700, max_output_tokens: 8192 }
+		};
+		const result = canonicalWireOptions(draft);
+		expect(result.temperature_milli).toBe(700);
+		expect(result.max_output_tokens).toBe(8192);
+		expect(result.reasoning_effort).toBeUndefined();
+	});
 	it('rejects non-integer and out-of-range options with explicit errors', () => {
-		expect(stageOptionsError('openai_compatible', { temperature_milli: 0, max_output_tokens: 16384 })).toBe('');
-		expect(stageOptionsError('openai_compatible', { temperature_milli: 9000, max_output_tokens: 16384 })).toContain('0 to 2000');
-		expect(stageOptionsError('openai_compatible', { temperature_milli: 0, max_output_tokens: 5 })).toContain('1024 to 65536');
-		expect(stageOptionsError('openai_compatible', { temperature_milli: 1.5, max_output_tokens: 16384 })).toContain('whole number');
-		expect(stageOptionsError('openai_compatible', { temperature_milli: null, max_output_tokens: 16384 })).toContain('whole number');
-		expect(stageOptionsError('openai_compatible', {})).toContain('whole number');
+		for (const numericType of ['openai_compatible', 'mac_relay']) {
+			expect(stageOptionsError(numericType, { temperature_milli: 0, max_output_tokens: 16384 })).toBe('');
+			expect(stageOptionsError(numericType, { temperature_milli: 9000, max_output_tokens: 16384 })).toContain('0 to 2000');
+			expect(stageOptionsError(numericType, { temperature_milli: 0, max_output_tokens: 5 })).toContain('1024 to 65536');
+			expect(stageOptionsError(numericType, { temperature_milli: 1.5, max_output_tokens: 16384 })).toContain('whole number');
+			expect(stageOptionsError(numericType, { temperature_milli: null, max_output_tokens: 16384 })).toContain('whole number');
+			expect(stageOptionsError(numericType, {})).toContain('whole number');
+		}
+		// A codex-style effort object is not a valid numeric-options payload.
+		expect(stageOptionsError('mac_relay', { reasoning_effort: 'low' })).toContain('whole number');
 		expect(stageOptionsError('codex_app_server', { reasoning_effort: 'low' })).toBe('');
 		expect(stageOptionsError('codex_app_server', {})).toContain('required');
 	});
@@ -189,6 +224,25 @@ describe('conformance test tuples', () => {
 		expect(form.model_id).toBe('model-a');
 		expect(form.options.reasoning_effort).toBe('minimal');
 	});
+	it('defaults a mac_relay tuple to numeric options without an effort', () => {
+		const form = blankTestForm(relayProvider, 'translation');
+		expect(form.model_id).toBe('qwen-mlx');
+		expect(form.options).toEqual({ temperature_milli: 0, max_output_tokens: 16384 });
+	});
+	it('keeps mac_relay options numeric when the tested model changes', () => {
+		const form = blankTestForm(relayProvider, 'translation');
+		const next = retestModelChoice(relayProvider, form, 'qwen-mlx');
+		expect(next.options).toEqual({ temperature_milli: 0, max_output_tokens: 16384 });
+	});
+	it('builds a mac_relay tuple wire request with numeric options', () => {
+		const request = providerTestRequest(relayProvider, 'translation', {
+			model_id: 'qwen-mlx',
+			options: { temperature_milli: 250, max_output_tokens: 2048 }
+		});
+		expect(request.stage_id).toBe('translation');
+		expect(request.model_id).toBe('qwen-mlx');
+		expect(request.options).toEqual({ temperature_milli: 250, max_output_tokens: 2048 });
+	});
 	it('resets an effort the newly chosen model does not advertise', () => {
 		const form = blankTestForm(codexProvider, 'linguistic_analysis');
 		const next = retestModelChoice(codexProvider, form, 'model-b');
@@ -247,6 +301,8 @@ describe('conformance test tuples', () => {
 		expect(
 			bindingEffortError(codexProvider, entry('model-a', 'anything', 'openai_compatible'))
 		).toBe('');
+		// A mac_relay binding never carries an effort, so it never reports here.
+		expect(bindingEffortError(relayProvider, entry('qwen-mlx', '', 'mac_relay'))).toBe('');
 	});
 	it('filters retained summaries per stage and labels tuples', () => {
 		const options = { reasoning_effort: 'minimal' } as unknown as Record<string, never>;

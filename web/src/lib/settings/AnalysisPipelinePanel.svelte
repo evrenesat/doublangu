@@ -36,6 +36,7 @@
 		stageConformance,
 		stageLabel,
 		supportedEfforts,
+		usesNumericStageOptions,
 		testFormKey,
 		testTupleFingerprint,
 		type ProfileDraft,
@@ -168,7 +169,7 @@
 		stageDraft.options = defaultStageOptions(provider?.type ?? stageDraft.provider_type);
 		const choices = provider ? modelChoices(provider) : [];
 		stageDraft.model_id = choices[0] ?? stageDraft.model_id;
-		if (stageDraft.provider_type !== 'openai_compatible') {
+		if (!usesNumericStageOptions(stageDraft.provider_type)) {
 			// A new binding starts on an effort its model actually offers;
 			// '' (no advertised efforts) blocks Save with an explanation.
 			stageDraft.options.reasoning_effort = firstAdvertisedEffort(provider, stageDraft.model_id);
@@ -179,7 +180,7 @@
 		const stageDraft = draft.stages[stage];
 		const provider = providersByID.get(stageDraft.provider_id);
 		stageDraft.model_id = modelId;
-		if (stageDraft.provider_type !== 'openai_compatible') {
+		if (!usesNumericStageOptions(stageDraft.provider_type)) {
 			const current = String(stageDraft.options.reasoning_effort ?? '');
 			if (!supportedEfforts(provider, modelId).includes(current)) {
 				stageDraft.options.reasoning_effort = firstAdvertisedEffort(provider, modelId);
@@ -436,7 +437,7 @@
 										{#each STAGES as stage (stage)}
 											{@const form = tupleForm(provider, stage)}
 											{@const tupleKey = testFormKey(provider.id, stage)}
-											{@const testEfforts = provider.type === 'openai_compatible' ? [] : supportedEfforts(provider, form.model_id)}
+											{@const testEfforts = usesNumericStageOptions(provider.type) ? [] : supportedEfforts(provider, form.model_id)}
 											{@const retained = stageConformance(provider, stage)}
 											{@const justRun = tupleResults[tupleKey]}
 											{@const optionsError = stageOptionsError(provider.type, form.options)}
@@ -455,15 +456,15 @@
 															<input type="text" bind:value={form.model_id} placeholder="Type a model id…" />
 														{/if}
 													</label>
-													{#if provider.type === 'openai_compatible'}
-														<label class="field">
-															<span>Temperature (milli)</span>
-															<input type="number" min="0" max="2000" bind:value={form.options.temperature_milli} />
-														</label>
-														<label class="field">
-															<span>Max output tokens</span>
-															<input type="number" min="1024" max="65536" bind:value={form.options.max_output_tokens} />
-														</label>
+												{#if usesNumericStageOptions(provider.type)}
+													<label class="field">
+														<span>Temperature (milli)</span>
+														<input type="number" min="0" max="2000" bind:value={form.options.temperature_milli} />
+													</label>
+													<label class="field">
+														<span>Max output tokens</span>
+														<input type="number" min="1024" max="65536" bind:value={form.options.max_output_tokens} />
+													</label>
 													{:else}
 														<label class="field">
 															<span>Reasoning effort</span>
@@ -565,7 +566,7 @@
 								{/if}
 							</label>
 						</div>
-						{#if stageDraft.provider_type === 'openai_compatible'}
+						{#if usesNumericStageOptions(stageDraft.provider_type)}
 							<div class="binding-fields">
 								<label class="field">
 									<span>Temperature (milli)</span>

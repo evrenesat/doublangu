@@ -39,9 +39,18 @@ export function isStageId(value: string): value is StageID {
 	return STAGES.includes(value as StageID);
 }
 
+/**
+ * Provider types whose stage options are the numeric temperature/token pair.
+ * Mirrors the server's option codecs: openai_compatible and mac_relay share
+ * the numeric schema; only codex_app_server carries a reasoning effort.
+ */
+export function usesNumericStageOptions(providerType: string): boolean {
+	return providerType === 'openai_compatible' || providerType === 'mac_relay';
+}
+
 /** Default options for a provider type when the editor opens a new binding. */
 export function defaultStageOptions(providerType: string): Record<string, unknown> {
-	if (providerType === 'openai_compatible') {
+	if (usesNumericStageOptions(providerType)) {
 		return { temperature_milli: 0, max_output_tokens: 16384 };
 	}
 	return { reasoning_effort: 'low' };
@@ -112,7 +121,7 @@ export function profileRequestFromDraft(draft: ProfileDraft): AnalysisProfileInp
 
 export function canonicalWireOptions(entry: StageDraft): Record<string, never> {
 	const options = { ...entry.options };
-	if (entry.provider_type !== 'openai_compatible') {
+	if (!usesNumericStageOptions(entry.provider_type)) {
 		// The chosen effort is sent exactly as configured: the server
 		// validates the model/effort pair against the provider catalog, so
 		// the wire must never silently coerce an unsupported value into a
@@ -120,19 +129,20 @@ export function canonicalWireOptions(entry: StageDraft): Record<string, never> {
 		const effort = String(options.reasoning_effort ?? 'low').trim();
 		options.reasoning_effort = effort || 'low';
 	}
-	// Numeric OMLX values travel exactly as configured: stageOptionsError
+	// Numeric values travel exactly as configured: stageOptionsError
 	// blocks invalid tuples client-side and the server strictly validates.
 	return options as Record<string, never>;
 }
 
 /**
  * Issue blocking a stage's options object, or '' when the tuple is well
- * formed. OMLX temperature and max tokens must be integers in the server
- * ranges; a Codex binding needs an explicit effort (membership against the
- * model catalog is checked by bindingEffortError and the server).
+ * formed. Numeric-option providers (openai_compatible, mac_relay) need
+ * integer temperature and max tokens in the server ranges; a Codex binding
+ * needs an explicit effort (membership against the model catalog is checked
+ * by bindingEffortError and the server).
  */
 export function stageOptionsError(providerType: string, options: Record<string, unknown>): string {
-	if (providerType === 'openai_compatible') {
+	if (usesNumericStageOptions(providerType)) {
 		const temperature: unknown = options.temperature_milli;
 		if (!Number.isInteger(temperature) || (temperature as number) < 0 || (temperature as number) > 2000) {
 			return 'Temperature must be a whole number from 0 to 2000.';
@@ -170,13 +180,14 @@ export function firstAdvertisedEffort(provider: AnalysisProvider | undefined, mo
 
 /**
  * Issue blocking a codex binding's effort, or '' when the binding is savable.
- * Incomplete bindings (no provider/model yet) and openai_compatible bindings
- * never report here; an effort the model does not advertise — including the
- * default when the catalog lists no efforts — must be fixed before saving.
+ * Incomplete bindings (no provider/model yet) and numeric-option bindings
+ * (openai_compatible, mac_relay) never report here; an effort the model does
+ * not advertise — including the default when the catalog lists no efforts —
+ * must be fixed before saving.
  */
 export function bindingEffortError(provider: AnalysisProvider | undefined, entry: StageDraft): string {
 	if (!entry.provider_id || !entry.model_id) return '';
-	if (entry.provider_type === 'openai_compatible') return '';
+	if (usesNumericStageOptions(entry.provider_type)) return '';
 	const efforts = supportedEfforts(provider, entry.model_id);
 	const current = String(entry.options.reasoning_effort ?? '');
 	if (efforts.length === 0) return `Model ${entry.model_id} advertises no reasoning efforts.`;
@@ -188,7 +199,7 @@ export function bindingEffortError(provider: AnalysisProvider | undefined, entry
 export function blankTestForm(provider: AnalysisProvider, stage: StageID): TestForm {
 	const model_id = modelChoices(provider)[0] ?? '';
 	const options = defaultStageOptions(provider.type);
-	if (provider.type !== 'openai_compatible') {
+	if (!usesNumericStageOptions(provider.type)) {
 		options.reasoning_effort = firstAdvertisedEffort(provider, model_id) || 'low';
 	}
 	return { model_id, options };
@@ -197,7 +208,7 @@ export function blankTestForm(provider: AnalysisProvider, stage: StageID): TestF
 /** Keep a test tuple valid when the model changes: reset an effort the new model does not advertise. */
 export function retestModelChoice(provider: AnalysisProvider, form: TestForm, modelId: string): TestForm {
 	const next: TestForm = { model_id: modelId, options: { ...form.options } };
-	if (provider.type !== 'openai_compatible') {
+	if (!usesNumericStageOptions(provider.type)) {
 		const efforts = supportedEfforts(provider, modelId);
 		const current = String(next.options.reasoning_effort ?? '');
 		if (!efforts.includes(current)) next.options.reasoning_effort = efforts[0] ?? 'low';
