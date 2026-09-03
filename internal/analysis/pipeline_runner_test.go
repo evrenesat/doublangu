@@ -880,7 +880,7 @@ func TestPipelineRunnerTransportFailureHidesEndpointURL(t *testing.T) {
 	}
 	registry, err := annotator.NewRegistry(&config.ProviderConfigFile{
 		Version: config.ProviderConfigVersion, Providers: []config.ProviderEntry{entry},
-	}, "codex", time.Minute, func(string) (string, error) { return "test-secret", nil })
+	}, "codex", func(string) (string, error) { return "test-secret", nil })
 	if err != nil {
 		t.Fatalf("registry: %v", err)
 	}

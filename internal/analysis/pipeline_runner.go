@@ -232,6 +232,10 @@ func (r *PipelineRunner) process(ctx context.Context, lease *jobs.Lease) error {
 		if err != nil {
 			return failRun("v1.analysis_prepare_failed", err, blockIndex, "", "")
 		}
+		translationInputHash, err := TranslationChunkInputHash(chunk)
+		if err != nil {
+			return failRun("v1.analysis_prepare_failed", err, blockIndex, "", "")
+		}
 		linguisticBinding := profileBinding(payload, pipeline.StageLinguisticAnalysis)
 		translationBinding := profileBinding(payload, pipeline.StageTranslation)
 
@@ -239,8 +243,9 @@ func (r *PipelineRunner) process(ctx context.Context, lease *jobs.Lease) error {
 		linguisticSpec := StageCacheSpec{
 			StageID: pipeline.StageLinguisticAnalysis, InputHash: inputHash,
 			ContractVersion: linguisticBinding.ContractVersion, PromptVersion: linguisticBinding.PromptVersion,
-			ProviderID: linguisticBinding.ProviderID, ModelID: linguisticBinding.ModelID,
-			OptionsHash: linguisticBinding.OptionsHash,
+			ProviderID: linguisticBinding.ProviderID, ProviderType: linguisticBinding.ProviderType,
+			ConfigFingerprint: linguisticBinding.ProviderConfigFingerprint,
+			ModelID:           linguisticBinding.ModelID, OptionsHash: linguisticBinding.OptionsHash,
 		}
 		attempt, _, err := r.startAttempt(ctx, run.ID.String(), blockIndex, linguisticBinding, linguisticSpec)
 		if err != nil {
@@ -273,10 +278,11 @@ func (r *PipelineRunner) process(ctx context.Context, lease *jobs.Lease) error {
 
 		// --- Translation stage ---
 		translationSpec := StageCacheSpec{
-			StageID: pipeline.StageTranslation, InputHash: inputHash, UpstreamHash: artifactHash,
+			StageID: pipeline.StageTranslation, InputHash: translationInputHash, UpstreamHash: artifactHash,
 			ContractVersion: translationBinding.ContractVersion, PromptVersion: translationBinding.PromptVersion,
-			ProviderID: translationBinding.ProviderID, ModelID: translationBinding.ModelID,
-			OptionsHash: translationBinding.OptionsHash,
+			ProviderID: translationBinding.ProviderID, ProviderType: translationBinding.ProviderType,
+			ConfigFingerprint: translationBinding.ProviderConfigFingerprint,
+			ModelID:           translationBinding.ModelID, OptionsHash: translationBinding.OptionsHash,
 		}
 		attempt, _, err = r.startAttempt(ctx, run.ID.String(), blockIndex, translationBinding, translationSpec)
 		if err != nil {

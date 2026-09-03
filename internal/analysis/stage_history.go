@@ -13,6 +13,7 @@ import (
 // limits; only metadata and excerpts are truncated with explicit flags.
 const (
 	stagePromptLimitBytes   = 1 << 20
+	stageSchemaLimitBytes   = 1 << 20
 	stageResponseLimitBytes = 1 << 20
 	stageMetadataLimitBytes = 64 << 10
 	stageExcerptLimitBytes  = 16 << 10
@@ -83,6 +84,23 @@ func boundField(value string, limit int) (string, bool) {
 	return value[:limit], true
 }
 
+// boundJSONField bounds a structured JSON diagnostic to limit bytes while
+// keeping it valid JSON: an oversized value is replaced by a small sentinel
+// object recording the original size instead of being sliced mid-syntax.
+func boundJSONField(value string, limit int) (string, bool) {
+	if len(value) <= limit {
+		return value, false
+	}
+	return fmt.Sprintf(`{"truncated":true,"original_bytes":%d}`, len(value)), true
+}
+
+func flagValue(truncated bool) int {
+	if truncated {
+		return 1
+	}
+	return 0
+}
+
 // StartStageAttempt records one stage attempt as running.
 func (s *HistoryStore) StartStageAttempt(ctx context.Context, attempt StageAttempt) (StageAttempt, error) {
 	if s == nil || s.db == nil {
@@ -141,20 +159,25 @@ func (s *HistoryStore) FinishStageAttempt(ctx context.Context, attemptID string,
 	if finish.CompletedAt == "" {
 		finish.CompletedAt = store.NowUTC()
 	}
-	metadata, metadataTruncated := boundField(finish.MetadataJSON, stageMetadataLimitBytes)
-	_ = metadataTruncated
-	stderr, _ := boundField(finish.StderrExcerpt, stageExcerptLimitBytes)
-	detail, _ := boundField(finish.ErrorDetail, stageExcerptLimitBytes)
+	usage, usageTruncated := boundJSONField(finish.UsageJSON, stageMetadataLimitBytes)
+	timing, timingTruncated := boundJSONField(finish.TimingJSON, stageMetadataLimitBytes)
+	metadata, metadataTruncated := boundJSONField(finish.MetadataJSON, stageMetadataLimitBytes)
+	stderr, stderrTruncated := boundField(finish.StderrExcerpt, stageExcerptLimitBytes)
+	detail, detailTruncated := boundField(finish.ErrorDetail, stageExcerptLimitBytes)
 	_, err := s.db.Exec(ctx, `
 		UPDATE analysis_stage_attempt SET
 			status = ?, reported_model = ?, request_id = ?, finish_reason = ?,
 			usage_json = ?, timing_json = ?, metadata_json = ?,
 			provider_stderr_excerpt = ?, error_code = ?, error_detail = ?,
+			usage_truncated = ?, timing_truncated = ?, metadata_truncated = ?,
+			stderr_truncated = ?, error_detail_truncated = ?,
 			completed_at = ?, duration_ms = ?
 		WHERE id = ?
 	`, finish.Status, finish.ReportedModel, finish.RequestID, finish.FinishReason,
-		finish.UsageJSON, finish.TimingJSON, metadata, stderr, finish.ErrorCode,
-		detail, finish.CompletedAt, finish.DurationMS, attemptID)
+		usage, timing, metadata, stderr, finish.ErrorCode, detail,
+		flagValue(usageTruncated), flagValue(timingTruncated), flagValue(metadataTruncated),
+		flagValue(stderrTruncated), flagValue(detailTruncated),
+		finish.CompletedAt, finish.DurationMS, attemptID)
 	return err
 }
 
@@ -172,7 +195,8 @@ func (s *HistoryStore) AppendStageTurn(ctx context.Context, turn StageTurn) erro
 	if turn.Prompt == "" || turn.OutputSchema == "" {
 		return errors.New("analysis history: stage turn prompt and schema are required")
 	}
-	if len(turn.Prompt) > stagePromptLimitBytes || len(turn.CompletedResponse) > stageResponseLimitBytes {
+	if len(turn.Prompt) > stagePromptLimitBytes || len(turn.OutputSchema) > stageSchemaLimitBytes ||
+		len(turn.CompletedResponse) > stageResponseLimitBytes {
 		return errors.New("analysis history: stage turn content exceeds the retention bound")
 	}
 	if turn.Status == "" {
@@ -184,16 +208,11 @@ func (s *HistoryStore) AppendStageTurn(ctx context.Context, turn StageTurn) erro
 	if turn.CompletionMetadata == "" {
 		turn.CompletionMetadata = "{}"
 	}
-	metadata, metadataTruncated := boundField(turn.CompletionMetadata, stageMetadataLimitBytes)
+	metadata, metadataTruncated := boundJSONField(turn.CompletionMetadata, stageMetadataLimitBytes)
 	stderr, stderrTruncated := boundField(turn.ProviderStderrExcerpt, stageExcerptLimitBytes)
 	validation, validationTruncated := boundField(turn.ValidationError, stageExcerptLimitBytes)
 	providerError, providerErrorTruncated := boundField(turn.ProviderError, stageExcerptLimitBytes)
-	flag := func(truncated bool) int {
-		if truncated {
-			return 1
-		}
-		return 0
-	}
+	flag := flagValue
 	_, err := s.db.Exec(ctx, `
 		INSERT INTO analysis_stage_turn (
 			id, stage_attempt_id, turn_index, turn_kind, prompt, output_schema,

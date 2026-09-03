@@ -335,6 +335,8 @@
 					<div class="provider-main">
 						<strong>{provider.label ?? provider.id}</strong>
 						<span class="muted">{provider.type} · {provider.health}{provider.stale ? ' · stale catalog' : ''}</span>
+						{#if provider.endpoint_label}<span class="muted">Endpoint: {provider.endpoint_label}</span>{/if}
+						{#if provider.retrieved_at}<span class="muted">Catalog retrieved: {provider.retrieved_at}</span>{/if}
 						{#if provider.last_error}<span class="muted">{provider.last_error}</span>{/if}
 					</div>
 					{#if provider.enabled}

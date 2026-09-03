@@ -110,8 +110,9 @@ func TestPipelineAnalysisProfilesAndSettings(t *testing.T) {
 	}
 
 	// Provider and profile responses carry exactly the schema-declared
-	// fields: no endpoint label, config fingerprint, request timeout, or
-	// snapshot-only binding fields reach the browser.
+	// fields: the sanitized endpoint label is owner-visible, but config
+	// fingerprint, request timeout, and snapshot-only binding fields never
+	// reach the browser.
 	providers := httptest.NewRecorder()
 	h.ServeProviders(providers, authedRequest(http.MethodGet, "/api/v1/analysis/providers", ""))
 	if providers.Code != http.StatusOK {
@@ -124,10 +125,13 @@ func TestPipelineAnalysisProfilesAndSettings(t *testing.T) {
 	if len(providerBody.Providers) != 1 {
 		t.Fatalf("provider count = %d", len(providerBody.Providers))
 	}
-	for _, forbidden := range []string{"endpoint_label", "config_fingerprint", "request_timeout_ms"} {
+	for _, forbidden := range []string{"config_fingerprint", "request_timeout_ms"} {
 		if _, present := providerBody.Providers[0][forbidden]; present {
 			t.Fatalf("provider response leaked %q", forbidden)
 		}
+	}
+	if providerBody.Providers[0]["endpoint_label"] != "Local Codex" {
+		t.Fatalf("provider endpoint_label = %v", providerBody.Providers[0]["endpoint_label"])
 	}
 	models := providerBody.Providers[0]["models"].([]any)
 	model := models[0].(map[string]any)
@@ -817,7 +821,7 @@ func TestPipelineProvidersRedactEchoedKey(t *testing.T) {
 			Type: config.ProviderTypeOpenAICompatible, Enabled: true,
 			RequestTimeoutSeconds: 30, BaseURL: server.URL, APIKeyEnv: "DOUBLANGU_TEST_OMLX_KEY",
 		}},
-	}, "codex", time.Minute, func(string) (string, error) { return secret, nil })
+	}, "codex", func(string) (string, error) { return secret, nil })
 	if err != nil {
 		t.Fatalf("registry: %v", err)
 	}
@@ -846,5 +850,113 @@ func TestPipelineProvidersRedactEchoedKey(t *testing.T) {
 		if strings.Contains(entry.LastError, leaked) {
 			t.Fatalf("last_error leaked %q: %q", leaked, entry.LastError)
 		}
+	}
+}
+
+// TestPipelineProvidersExposeEndpointLabelAndRetrievedAt proves the provider
+// card carries the sanitized endpoint label and the catalog retrieval time
+// without leaking the endpoint URL, fingerprint, timeout, or secret.
+func TestPipelineProvidersExposeEndpointLabelAndRetrievedAt(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"data":[{"id":"model-a","owned_by":"test"}]}`))
+	}))
+	defer server.Close()
+	db, err := store.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	registry, err := annotator.NewRegistry(&config.ProviderConfigFile{
+		Version: config.ProviderConfigVersion,
+		Providers: []config.ProviderEntry{{
+			ID: "mac-omlx", Label: "OMLX", EndpointLabel: "Test endpoint",
+			Type: config.ProviderTypeOpenAICompatible, Enabled: true,
+			RequestTimeoutSeconds: 30, BaseURL: server.URL, APIKeyEnv: "DOUBLANGU_TEST_OMLX_KEY",
+		}},
+	}, "codex", func(string) (string, error) { return "super-secret-value", nil })
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	h := httpapi.NewPipelineAnalysisHandler(db, allowArticleCSRF{}, registry)
+	rec := httptest.NewRecorder()
+	h.ServeProviders(rec, authedRequest(http.MethodGet, "/api/v1/analysis/providers", ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("providers = %d body=%s", rec.Code, rec.Body.String())
+	}
+	raw := rec.Body.String()
+	var listing struct {
+		Providers []struct {
+			ID            string `json:"id"`
+			EndpointLabel string `json:"endpoint_label"`
+			RetrievedAt   string `json:"retrieved_at"`
+		} `json:"providers"`
+	}
+	decodeJSONBody(t, raw, &listing)
+	if len(listing.Providers) != 1 {
+		t.Fatalf("providers = %v", listing.Providers)
+	}
+	entry := listing.Providers[0]
+	if entry.EndpointLabel != "Test endpoint" {
+		t.Fatalf("endpoint_label = %q, want the sanitized label", entry.EndpointLabel)
+	}
+	if entry.RetrievedAt == "" {
+		t.Fatal("retrieved_at missing from healthy provider card")
+	}
+	for _, leaked := range []string{server.URL, "super-secret-value", "DOUBLANGU_TEST_OMLX_KEY", "config_fingerprint", "request_timeout"} {
+		if strings.Contains(raw, leaked) {
+			t.Fatalf("providers listing leaked %q: %s", leaked, raw)
+		}
+	}
+}
+
+// TestPipelineProvidersExcludeResponseBodies proves a 5xx catalog body
+// carrying a hostname, filesystem path, and third-party secret never reaches
+// the providers listing: last_error carries only the stable classification.
+func TestPipelineProvidersExcludeResponseBodies(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte("panic db.internal.example.com:/var/lib/secret password=hunter2-third-party"))
+	}))
+	defer server.Close()
+	db, err := store.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	registry, err := annotator.NewRegistry(&config.ProviderConfigFile{
+		Version: config.ProviderConfigVersion,
+		Providers: []config.ProviderEntry{{
+			ID: "mac-omlx", Label: "OMLX", EndpointLabel: "Test",
+			Type: config.ProviderTypeOpenAICompatible, Enabled: true,
+			RequestTimeoutSeconds: 30, BaseURL: server.URL, APIKeyEnv: "DOUBLANGU_TEST_OMLX_KEY",
+		}},
+	}, "codex", func(string) (string, error) { return "super-secret-value", nil })
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	h := httpapi.NewPipelineAnalysisHandler(db, allowArticleCSRF{}, registry)
+	rec := httptest.NewRecorder()
+	h.ServeProviders(rec, authedRequest(http.MethodGet, "/api/v1/analysis/providers", ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("providers = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var listing struct {
+		Providers []struct {
+			ID        string `json:"id"`
+			LastError string `json:"last_error"`
+		} `json:"providers"`
+	}
+	decodeJSONBody(t, rec.Body.String(), &listing)
+	if len(listing.Providers) != 1 {
+		t.Fatalf("providers = %v", listing.Providers)
+	}
+	entry := listing.Providers[0]
+	for _, leaked := range []string{"db.internal.example.com", "/var/lib/secret", "hunter2-third-party", "panic"} {
+		if strings.Contains(entry.LastError, leaked) {
+			t.Fatalf("last_error leaked %q: %q", leaked, entry.LastError)
+		}
+	}
+	if !strings.Contains(entry.LastError, "500") {
+		t.Fatalf("last_error lost the stable classification: %q", entry.LastError)
 	}
 }

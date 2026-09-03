@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"testing/fstest"
 
@@ -532,6 +533,34 @@ func assertMigration008Schema(t *testing.T, db *DB) {
 	}
 }
 
+func assertMigration009Schema(t *testing.T, db *DB) {
+	t.Helper()
+	ctx := context.Background()
+	var sql string
+	if err := db.QueryRow(ctx, `SELECT sql FROM sqlite_master WHERE name = 'idx_stage_cache_identity'`).Scan(&sql); err != nil {
+		t.Fatalf("read stage cache index: %v", err)
+	}
+	for _, column := range []string{"provider_type", "provider_config_fingerprint"} {
+		if !strings.Contains(sql, column) {
+			t.Errorf("stage cache identity index missing %s: %s", column, sql)
+		}
+	}
+}
+
+func assertMigration010Schema(t *testing.T, db *DB) {
+	t.Helper()
+	ctx := context.Background()
+	for _, column := range []string{
+		"usage_truncated", "timing_truncated", "metadata_truncated",
+		"stderr_truncated", "error_detail_truncated",
+	} {
+		var count int
+		if err := db.QueryRow(ctx, `SELECT COUNT(*) FROM pragma_table_info('analysis_stage_attempt') WHERE name = ?`, column).Scan(&count); err != nil || count != 1 {
+			t.Errorf("analysis_stage_attempt column %s count = %d err=%v", column, count, err)
+		}
+	}
+}
+
 // TestMigration008_ProfileCascadeAndLegacyPreservation proves profiles
 // cascade through bindings/settings correctly and that a full 007->008
 // upgrade preserves legacy analysis rows.
@@ -543,6 +572,8 @@ func TestMigration008_ProfileCascadeAndLegacyPreservation(t *testing.T) {
 	defer db.Close()
 	ctx := context.Background()
 	assertMigration008Schema(t, db)
+	assertMigration009Schema(t, db)
+	assertMigration010Schema(t, db)
 
 	if _, err := db.Exec(ctx, `INSERT INTO analysis_pipeline_profile (id, name) VALUES ('profile-1', 'Codex Only')`); err != nil {
 		t.Fatal(err)
@@ -619,6 +650,8 @@ func TestMigration008_UpgradeFrom007PreservesLegacyRows(t *testing.T) {
 		t.Fatalf("upgrade through migration 008: %v", err)
 	}
 	assertMigration008Schema(t, db)
+	assertMigration009Schema(t, db)
+	assertMigration010Schema(t, db)
 	var model, effort string
 	if err := db.QueryRow(ctx, `SELECT model, effort FROM analysis_settings WHERE id = 1`).Scan(&model, &effort); err != nil || model != "model-a" || effort != "low" {
 		t.Fatalf("legacy settings lost: %q/%q err=%v", model, effort, err)
@@ -778,8 +811,8 @@ func TestMigrationVersionRecorded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("version query: %v", err)
 	}
-	if version != 8 {
-		t.Errorf("expected version 8, got %d", version)
+	if version != 10 {
+		t.Errorf("expected version 10, got %d", version)
 	}
 }
 
@@ -803,8 +836,8 @@ func TestMigrationFreshInMemoryAlwaysApplies(t *testing.T) {
 		t.Fatalf("version count: %v", err)
 	}
 	// Each in-memory OpenTest starts fresh — all migrations run once per open.
-	if count != 8 {
-		t.Errorf("expected 8 migration records, got %d", count)
+	if count != 10 {
+		t.Errorf("expected 10 migration records, got %d", count)
 	}
 }
 
@@ -990,8 +1023,8 @@ func TestFileBasedDBDoesNotReapplyMigrations(t *testing.T) {
 	if err := db2.QueryRow(context.Background(), "SELECT COUNT(*) FROM schema_version").Scan(&count); err != nil {
 		t.Fatalf("count: %v", err)
 	}
-	if count != 8 {
-		t.Errorf("expected 8 migration records, got %d (migrations should not reapply)", count)
+	if count != 10 {
+		t.Errorf("expected 10 migration records, got %d (migrations should not reapply)", count)
 	}
 }
 
@@ -1298,7 +1331,9 @@ func TestMigration002_UpgradeFromV1ToV2(t *testing.T) {
 	assertMigration006Schema(t, db)
 	assertMigration007Schema(t, db)
 	assertMigration008Schema(t, db)
-	assertMigrationVersion(t, db, 8)
+	assertMigration009Schema(t, db)
+	assertMigration010Schema(t, db)
+	assertMigrationVersion(t, db, 10)
 }
 
 func TestMetadataStoreCRUDOnCleanAndUpgradedDatabases(t *testing.T) {
@@ -1482,7 +1517,9 @@ func TestMigration002_RollbackLeavesNoLibraryTables(t *testing.T) {
 	assertMigration006Schema(t, db)
 	assertMigration007Schema(t, db)
 	assertMigration008Schema(t, db)
-	assertMigrationVersion(t, db, 8)
+	assertMigration009Schema(t, db)
+	assertMigration010Schema(t, db)
+	assertMigrationVersion(t, db, 10)
 }
 
 func TestFileDatabaseUsesWALForeignKeysBusyTimeoutAndCurrentVersion(t *testing.T) {
@@ -1506,7 +1543,7 @@ func TestFileDatabaseUsesWALForeignKeysBusyTimeoutAndCurrentVersion(t *testing.T
 	if err := db.QueryRow(ctx, "SELECT MAX(version) FROM schema_version").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if journal != "wal" || foreignKeys != 1 || busyTimeout != 5000 || version != 8 {
+	if journal != "wal" || foreignKeys != 1 || busyTimeout != 5000 || version != 10 {
 		t.Fatalf("journal=%q foreign_keys=%d busy_timeout=%d version=%d", journal, foreignKeys, busyTimeout, version)
 	}
 }

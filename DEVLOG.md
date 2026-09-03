@@ -1303,3 +1303,82 @@ Verification: gofmt clean; `go test ./... -count=1 -buildvcs=false` all pass;
 catalog race tests pass; `make verify` passes; `validate:openapi` passes;
 `npm --prefix web run check` 0/0; vitest 16 files / 98 tests pass;
 `git diff --check` clean. Reader E2E and live provider tests unrunnable here.
+
+## 2026-09-03 — Latest-review 10-finding implementation pass (commit 2cda0e2)
+
+Fixed all ten findings in `plans/reviews/latest_review.md`:
+
+- F1 (P1 cache identity): `StageCacheSpec` carries provider type + config
+  fingerprint end to end (spec, INSERT/SELECT/conflict, runner bindings);
+  migration 009 recreates the unique index with the extra columns so
+  pre-migration empty-fingerprint rows naturally miss. Tests: fingerprint-only
+  change misses both stages, type change misses, legacy rows miss.
+- F2 (P1 translation hash): split `ChunkInputHash` (linguistic, source-only
+  priors) from `TranslationChunkInputHash` (exact full prior senses) with a
+  stage-domain separator; runner uses each for its stage. Test: English-only
+  prior edit keeps the linguistic hash, changes the translation hash.
+- F3 (P1 error bodies): `classifyHTTPStatus` emits allowlisted
+  status/classification text only; response bodies never enter errors.
+  Removed `redactAPIKey`/`sanitizeExcerpt`. Tests: 4xx/5xx hostile bodies
+  absent from catalog + turn errors, API `last_error`, and stored history.
+- F4 (P2 size limits): executor materializes the schema once per turn and
+  rejects oversized prompt/schema (1 MiB) before `session.Turn` as a local
+  input error; `AppendStageTurn` enforces the schema bound as a storage
+  invariant. Tests: zero provider turns for both fixtures, retention rejects.
+- F5 (P2 Codex timeout): dropped the constructor-wide timeout; Codex and
+  OMLX instances derive from `ResolveTimeoutSeconds(entry)` (default 600s
+  preserves old behavior). Test: 30s entry observed on instance + descriptor.
+- F6 (P2 leader cancellation): refresh runs as an async service operation
+  bounded by the advertised provider timeout; every waiter including the
+  creator selects on its own context. Test: canceled leader returns promptly,
+  joiner still receives the shared single-call result (race-clean).
+- F7 (P2 fresh profile): reader lists only usable profiles, defaults fresh
+  to the usable active profile (never the stored snapshot), discloses the
+  selector behind "Fresh analysis…", and shows a Settings link instead of Run
+  when none usable or loading failed. Component tests for all four cases.
+- F8 (P2 provider card): `endpoint_label` + `retrieved_at` added to the DTO,
+  OpenAPI, generated client, and provider card; URL/fingerprint/timeout/
+  secret stay excluded. API test asserts presence + absence.
+- F9 (P2 run detail): `GetRun` returns the decoded `profile_snapshot` plus
+  `failed_stage_id`/`failed_provider_id`; OpenAPI gains the snapshot schema;
+  detail page renders bindings + failed binding. Round-trip test included.
+- F10 (P2 truncation flags): migration 010 adds five attempt flag columns;
+  usage/timing/metadata bound as valid-JSON sentinels (64 KiB), stderr/detail
+  as excerpts (16 KiB); attempt + turn flags flow through GetRun/OpenAPI and
+  render as "(truncated)" markers. Boundary + round-trip tests included.
+- Incidental: migration pins in store tests updated 8 → 10 with 009/010
+  schema assertions; stale `pipeline-settings` test URLs renamed; a providers
+  test now asserts the intended `endpoint_label` presence.
+
+Verification: `go test ./... -count=1 -buildvcs=false` all pass; race suite
+(annotator/analysis/httpapi) passes; `go mod tidy -diff` clean; gofmt clean;
+`validate:openapi` passes; API generation byte-stable across runs;
+`npm --prefix web run check` 0/0; vitest 17 files / 101 tests pass;
+`make verify` passes; reader E2E 8/8 passes; `git diff --check` clean.
+Opt-in live Codex/OMLX/pipeline tests not run (no credentials/endpoints).
+
+## 2026-09-03 — Follow-up review: 3 remaining findings fixed
+
+Against base `2cda0e2`, fixing the three defects left from the prior pass:
+
+- F1 (pre-session size check): `executeStage` materializes and validates the
+  initial prompt/schema via `checkInvocationSize` before `OpenSession`, so an
+  oversized input never launches a provider process; corrective turns keep
+  the in-loop check. The stub provider counts opens; the regression test now
+  asserts opens and turns both stay zero.
+- F2 (on-demand profiles): the reader no longer fetches profiles on article
+  open. `openFreshOptions` loads on first workflow open; an article counts as
+  loaded only after success, failures keep an explicit Retry button, and
+  navigation resets without fetching. Tests assert zero profile requests
+  before opening and a second request on retry after a transient 500.
+- F3 (explicit usable profile): one fresh-run workflow serves pipeline and
+  migrated legacy articles; the empty fallback option is gone and Run stays
+  disabled without a selected usable ID, so every fresh request carries
+  `{fresh:true, profile_id}`. Tests cover invalid-active fallback, deliberate
+  selection changes, and legacy articles.
+
+Verification: `go test ./...` passes; prescribed race suite (semantics,
+annotator, analysis, reader, httpapi) passes; gofmt/tidy/vet/diff clean;
+`validate:openapi` passes; API generation byte-stable; `check` 0/0; vitest
+17 files / 103 tests pass; reader E2E 8/8; `make verify` passes. Live
+provider tests not run (no credentials/endpoints).

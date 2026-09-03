@@ -10,7 +10,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -20,7 +19,6 @@ const (
 	maxResponseEnvelopeBytes = 2 << 20  // 2 MiB
 	maxAssistantContentBytes = 1 << 20  // 1 MiB
 	maxMetadataBytes         = 64 << 10 // 64 KiB
-	maxDiagnosticBytes       = 16 << 10 // 16 KiB
 )
 
 // openAICompatibleProvider is the bounded synchronous Chat Completions
@@ -60,7 +58,9 @@ func (p *openAICompatibleProvider) ListModels(ctx context.Context) ([]Model, err
 		return nil, &Error{Code: CodeProtocol, Err: err}
 	}
 	if response.StatusCode != http.StatusOK {
-		return nil, classifyHTTPStatus(response.StatusCode, redactAPIKey(sanitizeExcerpt(body), p.apiKey))
+		// The response body is never copied into the error: remote bodies
+		// may carry hostnames, paths, traces, or third-party secrets.
+		return nil, classifyHTTPStatus(response.StatusCode)
 	}
 	var envelope struct {
 		Data []struct {
@@ -135,14 +135,26 @@ func newOpenAIHTTPClient(timeout time.Duration) *http.Client {
 	}
 }
 
-// redactAPIKey replaces the whole excerpt when it contains the resolved API
-// key, so a provider echo can never carry the credential into an error. An
-// empty key redacts nothing: strings.Contains would match everything.
-func redactAPIKey(excerpt []byte, apiKey string) []byte {
-	if apiKey != "" && bytes.Contains(excerpt, []byte(apiKey)) {
-		return []byte("[redacted]")
+// providerStatusPhrase is the allowlisted human phrase for one HTTP failure
+// class. Error text carries only this phrase and the numeric status: response
+// bodies never reach errors, persistence, or browser state.
+func providerStatusPhrase(status int) string {
+	switch status {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return "authentication failed"
+	case http.StatusNotFound:
+		return "resource not found"
+	case http.StatusRequestTimeout, http.StatusGatewayTimeout:
+		return "request timed out"
+	case http.StatusBadRequest:
+		return "request rejected"
+	case http.StatusTooManyRequests:
+		return "rate limited"
 	}
-	return excerpt
+	if status >= 500 {
+		return "server error"
+	}
+	return "request failed"
 }
 
 // openAICompatibleSession preserves the message history across separate HTTP
@@ -260,7 +272,7 @@ func (s *openAICompatibleSession) complete(ctx context.Context, prompt string, s
 		return chatCompletionResult{}, &Error{Code: CodeProtocol, Err: err}
 	}
 	if response.StatusCode != http.StatusOK {
-		return chatCompletionResult{}, classifyHTTPStatus(response.StatusCode, redactAPIKey(sanitizeExcerpt(raw), s.provider.apiKey))
+		return chatCompletionResult{}, classifyHTTPStatus(response.StatusCode)
 	}
 	var envelope struct {
 		ID      string `json:"id"`
@@ -370,20 +382,6 @@ func readBounded(reader io.Reader, limit int) ([]byte, error) {
 	return data, nil
 }
 
-func sanitizeExcerpt(data []byte) []byte {
-	if len(data) > maxDiagnosticBytes {
-		data = data[:maxDiagnosticBytes]
-	}
-	var buffer bytes.Buffer
-	for _, r := range string(data) {
-		if r < 0x20 && r != '\n' && r != '\t' {
-			continue
-		}
-		buffer.WriteRune(r)
-	}
-	return buffer.Bytes()
-}
-
 func classifyHTTPTransport(ctx context.Context, err error) error {
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return &Error{Code: CodeTimeout, Err: errors.New("provider request timed out")}
@@ -405,7 +403,7 @@ func classifyHTTPTransport(ctx context.Context, err error) error {
 	return &Error{Code: CodeProviderFailure, Err: err}
 }
 
-func classifyHTTPStatus(status int, excerpt []byte) error {
+func classifyHTTPStatus(status int) error {
 	code := CodeProviderFailure
 	switch status {
 	case http.StatusUnauthorized, http.StatusForbidden:
@@ -417,12 +415,5 @@ func classifyHTTPStatus(status int, excerpt []byte) error {
 	case http.StatusBadRequest:
 		code = CodeInvalidOutput
 	}
-	detail := strings.TrimSpace(string(excerpt))
-	if len(detail) > maxDiagnosticBytes {
-		detail = detail[:maxDiagnosticBytes]
-	}
-	if detail == "" {
-		detail = strconv.Itoa(status)
-	}
-	return &Error{Code: code, Err: fmt.Errorf("provider returned HTTP %d: %s", status, detail)}
+	return &Error{Code: code, Err: fmt.Errorf("provider returned HTTP %d: %s", status, providerStatusPhrase(status))}
 }

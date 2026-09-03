@@ -361,6 +361,142 @@ func TestOpenAICatalogRedactsEchoedKey(t *testing.T) {
 	}
 }
 
+// TestOpenAIStatusErrorsExcludeResponseBodies proves 4xx/5xx response
+// bodies never reach returned errors on either path: neither the catalog nor
+// a stage turn may carry hostnames, paths, traces, or third-party secrets,
+// even though the bodies are fully read for successful responses.
+func TestOpenAIStatusErrorsExcludeResponseBodies(t *testing.T) {
+	const hostileBody = "Traceback device db.internal.example.com:/var/lib/secret\n" +
+		"password=hunter2-third-party-secret stack=0xdeadbeef"
+	cases := []struct {
+		name   string
+		status int
+		code   string
+	}{
+		{"bad request", http.StatusBadRequest, CodeInvalidOutput},
+		{"forbidden", http.StatusForbidden, CodeNotAuthenticated},
+		{"not found", http.StatusNotFound, CodeUnavailable},
+		{"rate limited", http.StatusTooManyRequests, CodeProviderFailure},
+		{"server error", http.StatusInternalServerError, CodeProviderFailure},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(hostileBody))
+			}))
+			defer server.Close()
+			provider := omlxProvider(server.URL, 5*time.Second)
+
+			_, err := provider.ListModels(context.Background())
+			if err == nil {
+				t.Fatal("catalog failure not surfaced")
+			}
+			var typed *Error
+			if !errors.As(err, &typed) || typed.Code != tc.code {
+				t.Fatalf("catalog error = %v, want code %v", err, tc.code)
+			}
+			for _, leaked := range []string{"db.internal.example.com", "/var/lib/secret", "hunter2-third-party-secret", "Traceback"} {
+				if strings.Contains(err.Error(), leaked) {
+					t.Fatalf("catalog error leaked body %q: %v", leaked, err)
+				}
+			}
+
+			session, err := provider.OpenSession(context.Background(), omlxBinding(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = session.Turn(context.Background(), TurnRequest{Prompt: "x", OutputSchema: json.RawMessage(`{"type":"object"}`)})
+			if err == nil {
+				t.Fatal("stage failure not surfaced")
+			}
+			if !errors.As(err, &typed) || typed.Code != tc.code {
+				t.Fatalf("stage error = %v, want code %v", err, tc.code)
+			}
+			for _, leaked := range []string{"db.internal.example.com", "/var/lib/secret", "hunter2-third-party-secret", "Traceback"} {
+				if strings.Contains(err.Error(), leaked) {
+					t.Fatalf("stage error leaked body %q: %v", leaked, err)
+				}
+			}
+		})
+	}
+}
+
+// countingStubSession records invocations without contacting any provider.
+type countingStubSession struct {
+	turns int
+}
+
+func (s *countingStubSession) Turn(context.Context, TurnRequest) (Completion, error) {
+	s.turns++
+	return Completion{Text: `{"ok":true}`}, nil
+}
+
+func (s *countingStubSession) Close() error { return nil }
+
+type countingStubProvider struct {
+	session *countingStubSession
+	opens   int
+}
+
+func (p *countingStubProvider) Descriptor() ProviderDescriptor {
+	return ProviderDescriptor{ID: "stub", Type: ProviderTypeOpenAICompatible, Enabled: true}
+}
+
+func (p *countingStubProvider) ListModels(context.Context) ([]Model, error) { return nil, nil }
+
+func (p *countingStubProvider) OpenSession(context.Context, ResolvedBinding) (Session, error) {
+	p.opens++
+	return p.session, nil
+}
+
+type oversizedStubAdapter struct {
+	prompt string
+	schema json.RawMessage
+}
+
+func (a oversizedStubAdapter) StageID() pipeline.StageID { return pipeline.StageTranslation }
+func (a oversizedStubAdapter) Prompt() string            { return a.prompt }
+func (a oversizedStubAdapter) OutputSchema() json.RawMessage {
+	return a.schema
+}
+func (a oversizedStubAdapter) Validate(string) error { return nil }
+
+// TestExecuteStageRejectsOversizedPromptAndSchema proves prompt/schema values
+// over 1 MiB fail locally before invocation: the provider records zero turns
+// and the error is a stable local input error.
+func TestExecuteStageRejectsOversizedPromptAndSchema(t *testing.T) {
+	big := strings.Repeat("x", maxStagePromptSchemaBytes+1)
+	cases := []struct {
+		name   string
+		prompt string
+		schema json.RawMessage
+	}{
+		{"oversized prompt", big, json.RawMessage(`{"type":"object"}`)},
+		{"oversized schema", "prompt", json.RawMessage(big)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			session := &countingStubSession{}
+			provider := &countingStubProvider{session: session}
+			_, _, err := executeStage(context.Background(), provider, ResolvedBinding{StageID: pipeline.StageTranslation}, oversizedStubAdapter{prompt: tc.prompt, schema: tc.schema})
+			if err == nil {
+				t.Fatal("oversized stage accepted")
+			}
+			var stageErr *StageError
+			if !errors.As(err, &stageErr) || stageErr.Code != CodeInvalidInput {
+				t.Fatalf("error = %v, want local input StageError", err)
+			}
+			if session.turns != 0 {
+				t.Fatalf("provider turns = %d, want 0", session.turns)
+			}
+			if provider.opens != 0 {
+				t.Fatalf("provider sessions opened = %d, want 0", provider.opens)
+			}
+		})
+	}
+}
+
 func closedPortURL(t *testing.T) string {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")

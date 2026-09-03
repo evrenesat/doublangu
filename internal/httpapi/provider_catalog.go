@@ -138,26 +138,47 @@ func (c *ProviderCatalogService) cached(providerID string, refresh bool) (Provid
 	return ProviderCatalogSnapshot{}, errors.New(entry.lastErr), true
 }
 
-// refreshCoalesced runs one ListModels call per provider under a
-// service-owned context detached from any single waiter, so one canceled
-// request cannot fail the refresh for the others: provider timeouts alone
-// bound the call. Concurrent refreshes join the in-flight call, and each
-// waiter selects between shared completion and its own cancellation.
+// refreshCoalesced runs one ListModels call per provider as a service-owned
+// operation detached from any single waiter, so one canceled request cannot
+// fail the refresh for the others. The provider call runs asynchronously and
+// every waiter — including the refresh's creator — selects between shared
+// completion and its own cancellation. The operation is explicitly bounded by
+// the provider's advertised request timeout; provider implementations enforce
+// their own entry-derived timeouts beneath it.
 func (c *ProviderCatalogService) refreshCoalesced(ctx context.Context, provider annotator.Provider, providerID string) (refreshOutcome, bool) {
 	c.mu.Lock()
 	if in, ok := c.inflight[providerID]; ok {
 		c.mu.Unlock()
-		select {
-		case <-in.done:
-			return in.outcome, true
-		case <-ctx.Done():
-			return refreshOutcome{}, false
-		}
+		return waitRefresh(in, ctx)
 	}
 	in := &inflightRefresh{done: make(chan struct{})}
 	c.inflight[providerID] = in
 	c.mu.Unlock()
-	models, err := provider.ListModels(context.WithoutCancel(ctx))
+	go c.runRefresh(provider, providerID, in)
+	return waitRefresh(in, ctx)
+}
+
+// waitRefresh selects between the shared refresh completion and the
+// caller's own cancellation.
+func waitRefresh(in *inflightRefresh, ctx context.Context) (refreshOutcome, bool) {
+	select {
+	case <-in.done:
+		return in.outcome, true
+	case <-ctx.Done():
+		return refreshOutcome{}, false
+	}
+}
+
+// runRefresh executes the single coalesced provider call, commits it under
+// the catalog mutex, then publishes to all waiters.
+func (c *ProviderCatalogService) runRefresh(provider annotator.Provider, providerID string, in *inflightRefresh) {
+	ctx := context.Background()
+	cancel := context.CancelFunc(func() {})
+	if timeoutMS := provider.Descriptor().RequestTimeoutMS; timeoutMS > 0 {
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeoutMS)*time.Millisecond)
+	}
+	defer cancel()
+	models, err := provider.ListModels(ctx)
 	outcome := refreshOutcome{models: models, err: err, attemptedAt: time.Now()}
 	c.mu.Lock()
 	// Commit before publishing: the entry carries this refresh before any
@@ -169,7 +190,6 @@ func (c *ProviderCatalogService) refreshCoalesced(ctx context.Context, provider 
 	delete(c.inflight, providerID)
 	close(in.done)
 	c.mu.Unlock()
-	return outcome, true
 }
 
 // storeRefreshLocked records one refresh outcome. Success replaces the

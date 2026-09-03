@@ -107,19 +107,22 @@ type PipelineAnalysisHandler = pipelineAnalysisHandler
 
 // providerListEntry is the explicit owner-visible provider card. It exposes
 // only fields declared by the AnalysisProvider OpenAPI schema: the sanitized
-// descriptor (id/label/type/enabled) plus live catalog/health state. Provider
-// connection identity (endpoint_label, config_fingerprint, request timeout)
-// is never serialized to the browser.
+// descriptor (id/label/endpoint label/type/enabled), the catalog retrieval
+// timestamp, plus live catalog/health state. Secret connection identity
+// (endpoint URL, config fingerprint, request timeout, environment name, and
+// secret) is never serialized to the browser.
 type providerListEntry struct {
-	ID          string               `json:"id"`
-	Label       string               `json:"label"`
-	Type        string               `json:"type"`
-	Enabled     bool                 `json:"enabled"`
-	Models      []providerModelEntry `json:"models,omitempty"`
-	Stale       bool                 `json:"stale"`
-	LastError   string               `json:"last_error,omitempty"`
-	Health      string               `json:"health"`
-	Conformance []conformanceResult  `json:"conformance,omitempty"`
+	ID            string               `json:"id"`
+	Label         string               `json:"label"`
+	EndpointLabel string               `json:"endpoint_label,omitempty"`
+	Type          string               `json:"type"`
+	Enabled       bool                 `json:"enabled"`
+	Models        []providerModelEntry `json:"models,omitempty"`
+	Stale         bool                 `json:"stale"`
+	RetrievedAt   string               `json:"retrieved_at,omitempty"`
+	LastError     string               `json:"last_error,omitempty"`
+	Health        string               `json:"health"`
+	Conformance   []conformanceResult  `json:"conformance,omitempty"`
 }
 
 // providerModelEntry matches the AnalysisProviderModel schema exactly:
@@ -425,10 +428,11 @@ func usableProfileBindings(ctx context.Context, registry providerRegistry, catal
 	return pipeline.SortBindings(enriched)
 }
 
-func providerEntry(descriptor annotator.ProviderDescriptor, models []annotator.Model, stale bool, lastError, health string) providerListEntry {
+func providerEntry(descriptor annotator.ProviderDescriptor, models []annotator.Model, stale bool, lastError, health, retrievedAt string) providerListEntry {
 	entry := providerListEntry{
-		ID: descriptor.ID, Label: descriptor.Label, Type: descriptor.Type,
-		Enabled: descriptor.Enabled, Stale: stale, LastError: lastError, Health: health,
+		ID: descriptor.ID, Label: descriptor.Label, EndpointLabel: descriptor.EndpointLabel,
+		Type: descriptor.Type, Enabled: descriptor.Enabled, Stale: stale,
+		RetrievedAt: retrievedAt, LastError: lastError, Health: health,
 	}
 	for _, model := range models {
 		entry.Models = append(entry.Models, providerModelEntry{
@@ -470,16 +474,16 @@ func (h *PipelineAnalysisHandler) ServeProviders(w http.ResponseWriter, r *http.
 	entries := make([]providerListEntry, 0)
 	for _, descriptor := range h.registry.Descriptors() {
 		if !descriptor.Enabled {
-			entries = append(entries, providerEntry(descriptor, nil, false, "", "disabled"))
+			entries = append(entries, providerEntry(descriptor, nil, false, "", "disabled", ""))
 			continue
 		}
 		if _, ok := h.registry.Provider(descriptor.ID); !ok {
-			entries = append(entries, providerEntry(descriptor, nil, false, "", "unknown"))
+			entries = append(entries, providerEntry(descriptor, nil, false, "", "unknown", ""))
 			continue
 		}
 		snapshot, err := h.catalog.Snapshot(r.Context(), descriptor.ID, refresh && descriptor.ID == providerID)
 		if err != nil {
-			failed := providerEntry(descriptor, nil, false, sanitizedProviderError(err), "unhealthy")
+			failed := providerEntry(descriptor, nil, false, sanitizedProviderError(err), "unhealthy", "")
 			failed.Conformance = h.conformanceFor(descriptor.ID)
 			entries = append(entries, failed)
 			continue
@@ -488,7 +492,7 @@ func (h *PipelineAnalysisHandler) ServeProviders(w http.ResponseWriter, r *http.
 		if snapshot.LastError != "" {
 			health = "unhealthy"
 		}
-		entry := providerEntry(descriptor, snapshot.Models, snapshot.Stale, snapshot.LastError, health)
+		entry := providerEntry(descriptor, snapshot.Models, snapshot.Stale, snapshot.LastError, health, snapshot.RetrievedAt)
 		entry.Conformance = h.conformanceFor(descriptor.ID)
 		entries = append(entries, entry)
 	}

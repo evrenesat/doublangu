@@ -77,10 +77,33 @@ type stageAdapter interface {
 	Validate(raw string) error
 }
 
+// maxStagePromptSchemaBytes is the hard pre-invocation bound for one turn's
+// prompt and generated schema (handoff §8.4). It mirrors
+// analysis.stagePromptLimitBytes: oversized stages fail locally before any
+// provider call instead of incurring cost and failing at retention time.
+const maxStagePromptSchemaBytes = 1 << 20
+
+// checkInvocationSize rejects an oversized turn prompt or schema as a local
+// input error before any provider invocation.
+func checkInvocationSize(stage pipeline.StageID, prompt string, schema json.RawMessage) error {
+	if len(prompt) > maxStagePromptSchemaBytes || len(schema) > maxStagePromptSchemaBytes {
+		return &StageError{Stage: stage, Phase: "provider", Code: CodeInvalidInput,
+			Err: fmt.Errorf("stage prompt or schema exceeds the %d-byte invocation bound", maxStagePromptSchemaBytes)}
+	}
+	return nil
+}
+
 // executeStage runs one stage through a session with at most two corrective
 // turns. It always records every turn artifact, including provider failures,
 // and returns the raw text of the first validated artifact.
 func executeStage(ctx context.Context, provider Provider, binding ResolvedBinding, adapter stageAdapter) (string, StageAttemptResult, error) {
+	// Validate the initial prompt and schema before opening the provider
+	// session: session startup can launch real provider processes, so an
+	// input that must be rejected locally must never reach OpenSession.
+	// Corrective prompts are created later and rechecked inside the loop.
+	if err := checkInvocationSize(binding.StageID, adapter.Prompt(), adapter.OutputSchema()); err != nil {
+		return "", StageAttemptResult{}, err
+	}
 	session, err := provider.OpenSession(ctx, binding)
 	if err != nil {
 		return "", StageAttemptResult{}, &StageError{Stage: binding.StageID, Phase: "provider", Code: codeOf(err), Err: err}
@@ -95,17 +118,24 @@ func executeStage(ctx context.Context, provider Provider, binding ResolvedBindin
 		if correctiveUsed > 0 {
 			prompt = BuildStageCorrectionPrompt(validationErr.Error(), raw)
 		}
+		// Materialize the schema once per turn and enforce the size bound
+		// before invoking the provider: an oversized prompt or schema is a
+		// local input error, never a provider call.
+		schema := adapter.OutputSchema()
+		if err := checkInvocationSize(binding.StageID, prompt, schema); err != nil {
+			return "", result, err
+		}
 		startedAt := time.Now().UTC()
 		started := startedAt.Format(time.RFC3339Nano)
 		completedAt := started
 		record := StageTurnRecord{
 			TurnIndex: correctiveUsed, TurnKind: "initial", Prompt: prompt,
-			OutputSchema: string(adapter.OutputSchema()), StartedAt: started, Status: "completed",
+			OutputSchema: string(schema), StartedAt: started, Status: "completed",
 		}
 		if correctiveUsed > 0 {
 			record.TurnKind = "corrective"
 		}
-		turnRequest := TurnRequest{StageID: binding.StageID, Prompt: prompt, OutputSchema: adapter.OutputSchema()}
+		turnRequest := TurnRequest{StageID: binding.StageID, Prompt: prompt, OutputSchema: schema}
 		completion, turnErr := session.Turn(ctx, turnRequest)
 		completedAt = time.Now().UTC().Format(time.RFC3339Nano)
 		record.CompletedAt = completedAt

@@ -14,21 +14,31 @@ import (
 	"doublangu/internal/semantics"
 )
 
-// StageCacheSpec is the exact cache identity for one stage artifact.
+// StageCacheSpec is the exact cache identity for one stage artifact. The
+// provider type and configuration fingerprint are part of the identity so a
+// provider reconfiguration (same ID, new endpoint/secret/timeout) cannot
+// reuse artifacts produced under the old connection identity.
 type StageCacheSpec struct {
-	StageID         pipeline.StageID
-	InputHash       string
-	UpstreamHash    string
-	ContractVersion string
-	PromptVersion   string
-	ProviderID      string
-	ModelID         string
-	OptionsHash     string
+	StageID           pipeline.StageID
+	InputHash         string
+	UpstreamHash      string
+	ContractVersion   string
+	PromptVersion     string
+	ProviderID        string
+	ProviderType      string
+	ConfigFingerprint string
+	ModelID           string
+	OptionsHash       string
 }
 
 // inputIdentity carries the deterministic paragraph-level inputs that define
-// stage input hashes. Prior senses are stripped to their source-side fields.
+// stage input hashes. The stage domain separates the linguistic encoding
+// (prior senses stripped to source-side fields) from the translation encoding
+// (exact full prior merged senses, English fields included), so a change to
+// prior English invalidates translation cache rows without touching the
+// linguistic identity.
 type inputIdentity struct {
+	Stage          string
 	SourceLanguage string
 	TargetLanguage string
 	ContentHash    string
@@ -38,6 +48,7 @@ type inputIdentity struct {
 	Tokens         []tokenIdentity
 	Candidates     []semantics.SenseCandidate
 	Prior          []priorSenseIdentity
+	FullPrior      []semantics.NewSense
 }
 
 type sentenceIdentity struct {
@@ -77,12 +88,25 @@ func canonicalHash(payload any) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
-// ChunkInputHash computes the exact stage input identity for one prepared
-// paragraph: source/context/tokens/candidates and prior senses stripped to
-// linguistic fields. The same hash defines both stage inputs; the translation
-// stage additionally carries the linguistic artifact hash as its upstream.
+// ChunkInputHash computes the linguistic stage input identity for one
+// prepared paragraph: source/context/tokens/candidates and prior senses
+// stripped to source-side fields. Prior English never affects it.
 func ChunkInputHash(chunk semantics.PreparedChunk) (string, error) {
+	return canonicalHash(baseInputIdentity(string(pipeline.StageLinguisticAnalysis), chunk, false))
+}
+
+// TranslationChunkInputHash computes the translation stage input identity
+// for one prepared paragraph: the same source-side base, but prior merged
+// senses hashed exactly, English fields included, because the translation
+// prompt serializes each full prior sense value. The translation stage
+// additionally carries the linguistic artifact hash as its upstream.
+func TranslationChunkInputHash(chunk semantics.PreparedChunk) (string, error) {
+	return canonicalHash(baseInputIdentity(string(pipeline.StageTranslation), chunk, true))
+}
+
+func baseInputIdentity(stage string, chunk semantics.PreparedChunk, fullPrior bool) inputIdentity {
 	identity := inputIdentity{
+		Stage:          stage,
 		SourceLanguage: chunk.SourceLanguage,
 		TargetLanguage: chunk.TargetLanguage,
 		ContentHash:    chunk.ContentHash,
@@ -103,6 +127,10 @@ func ChunkInputHash(chunk semantics.PreparedChunk) (string, error) {
 		})
 	}
 	identity.Candidates = append([]semantics.SenseCandidate(nil), chunk.Candidates...)
+	if fullPrior {
+		identity.FullPrior = append([]semantics.NewSense(nil), chunk.PriorValidatedSenses...)
+		return identity
+	}
 	for _, sense := range chunk.PriorValidatedSenses {
 		identity.Prior = append(identity.Prior, priorSenseIdentity{
 			Ref: sense.Ref, Kind: string(sense.Kind), CanonicalForm: sense.CanonicalForm,
@@ -111,7 +139,7 @@ func ChunkInputHash(chunk semantics.PreparedChunk) (string, error) {
 			CanonicalPronunciationText: sense.CanonicalPronunciationText,
 		})
 	}
-	return canonicalHash(identity)
+	return identity
 }
 
 // ArtifactHashOf returns the deterministic artifact hash for cache validation.
@@ -126,7 +154,8 @@ func (s *HistoryStore) SaveStageCache(ctx context.Context, spec StageCacheSpec, 
 		return errors.New("analysis history: nil database")
 	}
 	if spec.StageID == "" || spec.InputHash == "" || spec.ContractVersion == "" ||
-		spec.PromptVersion == "" || spec.ProviderID == "" || spec.ModelID == "" || spec.OptionsHash == "" {
+		spec.PromptVersion == "" || spec.ProviderID == "" || spec.ProviderType == "" ||
+		spec.ConfigFingerprint == "" || spec.ModelID == "" || spec.OptionsHash == "" {
 		return errors.New("analysis history: invalid stage cache spec")
 	}
 	if artifactJSON == "" || artifactHash == "" {
@@ -137,15 +166,16 @@ func (s *HistoryStore) SaveStageCache(ctx context.Context, spec StageCacheSpec, 
 			id, stage_id, input_hash, upstream_artifact_hash, contract_version,
 			prompt_version, provider_id, provider_type, provider_config_fingerprint,
 			model_id, options_hash, validated_artifact_json, artifact_hash, source_run_id
-		) VALUES (?, ?, ?, ?, ?, ?, ?, '', '', ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(stage_id, input_hash, upstream_artifact_hash, contract_version,
-			prompt_version, provider_id, model_id, options_hash)
+			prompt_version, provider_id, provider_type, provider_config_fingerprint,
+			model_id, options_hash)
 		DO UPDATE SET validated_artifact_json = excluded.validated_artifact_json,
 			artifact_hash = excluded.artifact_hash, source_run_id = excluded.source_run_id,
 			created_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
 	`, library.NewULID().String(), spec.StageID, spec.InputHash, spec.UpstreamHash,
-		spec.ContractVersion, spec.PromptVersion, spec.ProviderID, spec.ModelID,
-		spec.OptionsHash, artifactJSON, artifactHash, sourceRunID)
+		spec.ContractVersion, spec.PromptVersion, spec.ProviderID, spec.ProviderType,
+		spec.ConfigFingerprint, spec.ModelID, spec.OptionsHash, artifactJSON, artifactHash, sourceRunID)
 	if err != nil {
 		return fmt.Errorf("save stage cache: %w", err)
 	}
@@ -172,9 +202,11 @@ func (s *HistoryStore) ReadStageCache(ctx context.Context, spec StageCacheSpec) 
 		FROM analysis_stage_cache
 		WHERE stage_id = ? AND input_hash = ? AND upstream_artifact_hash = ?
 		  AND contract_version = ? AND prompt_version = ?
-		  AND provider_id = ? AND model_id = ? AND options_hash = ?
+		  AND provider_id = ? AND provider_type = ? AND provider_config_fingerprint = ?
+		  AND model_id = ? AND options_hash = ?
 	`, spec.StageID, spec.InputHash, spec.UpstreamHash, spec.ContractVersion,
-		spec.PromptVersion, spec.ProviderID, spec.ModelID, spec.OptionsHash).
+		spec.PromptVersion, spec.ProviderID, spec.ProviderType, spec.ConfigFingerprint,
+		spec.ModelID, spec.OptionsHash).
 		Scan(&hit.CacheID, &hit.ArtifactJSON, &hit.ArtifactHash, &hit.SourceRunID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil

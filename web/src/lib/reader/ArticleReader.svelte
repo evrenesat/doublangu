@@ -30,6 +30,7 @@
 	import SemanticPopover from './SemanticPopover.svelte';
 	import AnalysisProgressBar from './AnalysisProgressBar.svelte';
 	import { waitStateProgress } from './progressText';
+	import { profileUsable } from '$lib/settings/analysisProfiles';
 
 	type Props = {
 		article: Article;
@@ -81,6 +82,11 @@
 	let pipelineSelectedProfileID = $state('');
 	let pipelineProfilesLoadedFor = '';
 	let pipelineOptionsError = $state('');
+	let pipelineProfilesReady = $state(false);
+	let showFreshOptions = $state(false);
+	// Fresh runs only offer usable profiles: any binding the server reports
+	// as invalid disqualifies the whole profile.
+	const usablePipelineProfiles = $derived(pipelineProfiles.filter((profile) => profileUsable(profile)));
 
 	const hoverAudio = new HoverAudioController({ onBlocked: () => (hoverActivationHint = true) });
 
@@ -167,24 +173,61 @@
 	);
 	const pipelineConfigured = $derived(Boolean(current.analysis_pipeline?.profile_id));
 
-	$effect(() => {
+	// Fresh-run profiles load on demand: opening the workflow fetches them,
+	// so normal reading never triggers binding validation or provider
+	// discovery. An article counts as loaded only after a successful fetch;
+	// a failure stays retryable instead of memoizing an empty list.
+	async function loadFreshProfiles(): Promise<void> {
 		const id = current.id;
-		if (!pipelineConfigured || pipelineProfilesLoadedFor === id) return;
-		pipelineProfilesLoadedFor = id;
 		pipelineOptionsError = '';
-		void (async () => {
-			try {
-				const result = await listAnalysisProfiles();
-				pipelineProfiles = result.profiles;
-				const stored = current.analysis_pipeline?.profile_id ?? '';
-				pipelineSelectedProfileID =
-					result.profiles.some((profile) => profile.id === stored) ? stored :
-					(result.profiles.find((profile) => profile.is_active)?.id ?? '');
-			} catch (cause) {
-				pipelineOptionsError = errorMessage(cause, 'Could not load analysis profiles.');
-			}
-		})();
+		pipelineProfilesReady = false;
+		try {
+			const result = await listAnalysisProfiles();
+			if (current.id !== id) return;
+			pipelineProfiles = result.profiles;
+			// A fresh run defaults to the usable active profile, never to
+			// the stored snapshot's (possibly stale) profile: retry keeps
+			// using the immutable snapshot while fresh compares against
+			// the current active configuration.
+			const usable = result.profiles.filter((profile) => profileUsable(profile));
+			pipelineSelectedProfileID =
+				usable.find((profile) => profile.is_active)?.id ?? usable[0]?.id ?? '';
+			pipelineProfilesLoadedFor = id;
+		} catch (cause) {
+			if (current.id !== id) return;
+			pipelineOptionsError = errorMessage(cause, 'Could not load analysis profiles.');
+		} finally {
+			if (current.id === id) pipelineProfilesReady = true;
+		}
+	}
+
+	async function openFreshOptions(): Promise<void> {
+		showFreshOptions = true;
+		if (pipelineProfilesLoadedFor !== current.id) await loadFreshProfiles();
+	}
+
+	let freshResetFor = '';
+	$effect(() => {
+		// Navigating resets the fresh workflow without fetching anything.
+		const id = current.id;
+		if (freshResetFor === id) return;
+		freshResetFor = id;
+		showFreshOptions = false;
+		pipelineProfiles = [];
+		pipelineSelectedProfileID = '';
+		pipelineProfilesLoadedFor = '';
+		pipelineOptionsError = '';
+		pipelineProfilesReady = false;
 	});
+
+	// One fresh-run workflow serves pipeline and migrated legacy articles:
+	// legacy rows carry no stored snapshot, so they select from the same
+	// usable profiles and always submit an explicit profile id.
+	const freshAvailable = $derived(
+		pipelineConfigured ||
+			current.analysis_status === 'ready' ||
+			(current.analysis_status === 'failed' && current.analysis_revision !== '')
+	);
 
 	const speechLabel = $derived.by(() => {
 		switch (current.narration_status) {
@@ -648,30 +691,39 @@
 						<button type="button" class="status-action" disabled={reanalyzing} onclick={() => void retryAnalysis()}>{reanalyzing ? 'Retrying…' : 'Retry with saved profile'}</button>
 						<a class="status-action secondary-action" href={appPath('/settings')}>Change in Settings</a>
 					{/if}
-					<span class="fresh-run">
-						<select
-							aria-label="Profile for a fresh analysis run"
-							bind:value={pipelineSelectedProfileID}
-							disabled={pipelineProfiles.length === 0}
-						>
-							<option value="">Use the active profile</option>
-							{#each pipelineProfiles as profile (profile.id)}
-								<option value={profile.id}>{profile.name}{profile.is_active ? ' (active)' : ''}</option>
-							{/each}
-						</select>
-						<button type="button" class="status-action secondary-action" disabled={reanalyzing} onclick={() => void retryAnalysis(true)}>
-							{reanalyzing ? 'Running…' : 'Run fresh analysis'}
-						</button>
-					</span>
-					{#if pipelineOptionsError}<span class="reader-error" role="alert">{pipelineOptionsError}</span>{/if}
 				{:else if current.analysis_status === 'failed'}
 					<button type="button" class="status-action" disabled={reanalyzing} onclick={() => void retryAnalysis()}>{reanalyzing ? 'Retrying…' : `Retry with ${analysisSelectionLabel}`}</button>
 					<a class="status-action secondary-action" href={appPath('/settings')}>Change in Settings</a>
-					{#if current.analysis_revision}
-						<button type="button" class="status-action secondary-action" disabled={reanalyzing} onclick={() => void retryAnalysis(true)}>Run fresh analysis</button>
-					{/if}
-				{:else if current.analysis_status === 'ready'}
-					<button type="button" class="status-action secondary-action" disabled={reanalyzing} onclick={() => void retryAnalysis(true)}>{reanalyzing ? 'Running…' : 'Run fresh analysis'}</button>
+				{/if}
+				{#if freshAvailable}
+					<span class="fresh-run">
+						{#if !showFreshOptions}
+							<button type="button" class="status-action secondary-action" onclick={() => void openFreshOptions()}>Fresh analysis…</button>
+						{:else}
+							<select
+								aria-label="Profile for a fresh analysis run"
+								bind:value={pipelineSelectedProfileID}
+								disabled={usablePipelineProfiles.length === 0}
+							>
+								{#each usablePipelineProfiles as profile (profile.id)}
+									<option value={profile.id}>{profile.name}{profile.is_active ? ' (active)' : ''}</option>
+								{/each}
+							</select>
+							{#if pipelineOptionsError}
+								<button type="button" class="status-action secondary-action" onclick={() => void loadFreshProfiles()}>Retry loading profiles</button>
+								<a class="status-action secondary-action" href={appPath('/settings')}>Choose a usable profile in Settings</a>
+							{:else if !pipelineProfilesReady}
+								<span class="muted" role="status">Loading profiles…</span>
+							{:else if usablePipelineProfiles.length === 0}
+								<a class="status-action secondary-action" href={appPath('/settings')}>Choose a usable profile in Settings</a>
+							{:else}
+								<button type="button" class="status-action secondary-action" disabled={reanalyzing || pipelineSelectedProfileID === ''} onclick={() => void retryAnalysis(true)}>
+									{reanalyzing ? 'Running…' : 'Run fresh analysis'}
+								</button>
+							{/if}
+						{/if}
+					</span>
+					{#if pipelineOptionsError}<span class="reader-error" role="alert">{pipelineOptionsError}</span>{/if}
 				{/if}
 		</div>
 		<div class="status-item">

@@ -86,6 +86,14 @@
 				{#if run.profile_name}
 					<div><dt>Profile</dt><dd>{run.profile_name}</dd></div>
 					<div><dt>Profile snapshot</dt><dd><code>{run.profile_snapshot_hash || '—'}</code></dd></div>
+					{#if run.profile_snapshot}
+						{#each run.profile_snapshot.bindings ?? [] as binding (binding.stage_id)}
+							<div><dt>{binding.stage_id}</dt><dd>{binding.provider_id} · {binding.model_id}</dd></div>
+						{/each}
+					{/if}
+					{#if run.failed_stage_id}
+						<div><dt>Failed binding</dt><dd>{run.failed_stage_id} · {run.failed_provider_id || '—'}</dd></div>
+					{/if}
 				{/if}
 			</dl>
 			{#if run.error_code}
@@ -117,13 +125,13 @@
 									<div><dt>Models</dt><dd>requested {attempt.requested_model || '—'} · reported {attempt.reported_model || '—'}</dd></div>
 									{#if attempt.request_id}<div><dt>Request id</dt><dd>{attempt.request_id}</dd></div>{/if}
 									{#if attempt.finish_reason}<div><dt>Finish reason</dt><dd>{attempt.finish_reason}</dd></div>{/if}
-									{#if attempt.usage_json}<div><dt>Usage</dt><dd>{attempt.usage_json}</dd></div>{/if}
-									{#if attempt.timing_json}<div><dt>Timing</dt><dd>{attempt.timing_json}</dd></div>{/if}
-									{#if attempt.metadata_json}<div><dt>Metadata</dt><dd>{attempt.metadata_json}</dd></div>{/if}
+									{#if attempt.usage_json}<div><dt>Usage</dt><dd>{attempt.usage_json}{#if attempt.usage_truncated} <span class="muted">(truncated)</span>{/if}</dd></div>{/if}
+									{#if attempt.timing_json}<div><dt>Timing</dt><dd>{attempt.timing_json}{#if attempt.timing_truncated} <span class="muted">(truncated)</span>{/if}</dd></div>{/if}
+									{#if attempt.metadata_json}<div><dt>Metadata</dt><dd>{attempt.metadata_json}{#if attempt.metadata_truncated} <span class="muted">(truncated)</span>{/if}</dd></div>{/if}
 									<div><dt>Started</dt><dd>{attempt.started_at}{attempt.completed_at ? ` → ${attempt.completed_at}` : ''}</dd></div>
 								</dl>
-								{#if attempt.error_detail}<p class="failed">Error: {attempt.error_detail}</p>{/if}
-								{#if attempt.provider_stderr_excerpt}<h3>Provider stderr excerpt</h3><pre>{attempt.provider_stderr_excerpt}</pre>{/if}
+								{#if attempt.error_detail}<p class="failed">Error: {attempt.error_detail}{#if attempt.error_detail_truncated} <span class="muted">(truncated)</span>{/if}</p>{/if}
+								{#if attempt.provider_stderr_excerpt}<h3>Provider stderr excerpt{#if attempt.stderr_truncated} <span class="muted">(truncated)</span>{/if}</h3><pre>{attempt.provider_stderr_excerpt}</pre>{/if}
 								{#if attempt.turns.length === 0}
 									<p class="muted">No provider turns were needed; the accepted artifact came from the exact cache.</p>
 								{:else}
@@ -142,11 +150,11 @@
 													<pre>{turn.output_schema}</pre>
 													<h3>Completed response</h3>
 													<pre>{turn.completed_response || '—'}</pre>
-													{#if turn.validation_error}<h3>Validation error</h3><pre>{turn.validation_error}</pre>{/if}
-													{#if turn.provider_error}<h3>Provider error</h3><pre>{turn.provider_error}</pre>{/if}
-													<h3>Completion metadata</h3>
+													{#if turn.validation_error}<h3>Validation error{#if turn.validation_truncated} <span class="muted">(truncated)</span>{/if}</h3><pre>{turn.validation_error}</pre>{/if}
+													{#if turn.provider_error}<h3>Provider error{#if turn.provider_error_truncated} <span class="muted">(truncated)</span>{/if}</h3><pre>{turn.provider_error}</pre>{/if}
+													<h3>Completion metadata{#if turn.metadata_truncated} <span class="muted">(truncated)</span>{/if}</h3>
 													<pre>{turn.completion_metadata_json}</pre>
-													{#if turn.provider_stderr_excerpt}<h3>Provider stderr excerpt</h3><pre>{turn.provider_stderr_excerpt}</pre>{/if}
+													{#if turn.provider_stderr_excerpt}<h3>Provider stderr excerpt{#if turn.stderr_truncated} <span class="muted">(truncated)</span>{/if}</h3><pre>{turn.provider_stderr_excerpt}</pre>{/if}
 												</div>
 											</details>
 										{/each}

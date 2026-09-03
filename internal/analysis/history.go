@@ -22,34 +22,41 @@ var ErrInvalidRunQuery = errors.New("invalid analysis run query")
 // ErrorDetail is intentionally available only from owner-authenticated
 // diagnostics handlers; public article responses expose only ErrorCode.
 type Run struct {
-	ID                  library.ULID          `json:"id"`
-	ArticleID           library.ULID          `json:"article_id"`
-	ArticleTitle        string                `json:"article_title"`
-	JobID               library.ULID          `json:"job_id"`
-	AttemptCount        int                   `json:"attempt_count"`
-	ContentHash         string                `json:"content_hash"`
-	ContractVersion     string                `json:"contract_version"`
-	PromptVersion       string                `json:"prompt_version"`
-	RequestedModel      string                `json:"requested_model"`
-	RequestedEffort     string                `json:"requested_effort"`
-	ProviderID          string                `json:"provider_id"`
-	CodexCLIVersion     string                `json:"codex_cli_version"`
-	ReportedModel       string                `json:"reported_model"`
-	StartedAt           string                `json:"started_at"`
-	CompletedAt         string                `json:"completed_at"`
-	DurationMS          int64                 `json:"duration_ms"`
-	Status              string                `json:"status"`
-	TotalParagraphs     int                   `json:"total_paragraphs"`
-	CompletedParagraphs int                   `json:"completed_paragraphs"`
-	FailedBlockIndex    int                   `json:"failed_block_index"`
-	ErrorCode           string                `json:"error_code"`
-	ErrorDetail         string                `json:"error_detail,omitempty"`
-	StderrExcerpt       string                `json:"stderr_excerpt,omitempty"`
-	Turns               []Turn                `json:"turns"`
-	ProfileID           string                `json:"profile_id,omitempty"`
-	ProfileName         string                `json:"profile_name,omitempty"`
-	ProfileSnapshotHash string                `json:"profile_snapshot_hash,omitempty"`
-	StageAttempts       []StageAttemptSummary `json:"stage_attempts,omitempty"`
+	ID                  library.ULID `json:"id"`
+	ArticleID           library.ULID `json:"article_id"`
+	ArticleTitle        string       `json:"article_title"`
+	JobID               library.ULID `json:"job_id"`
+	AttemptCount        int          `json:"attempt_count"`
+	ContentHash         string       `json:"content_hash"`
+	ContractVersion     string       `json:"contract_version"`
+	PromptVersion       string       `json:"prompt_version"`
+	RequestedModel      string       `json:"requested_model"`
+	RequestedEffort     string       `json:"requested_effort"`
+	ProviderID          string       `json:"provider_id"`
+	CodexCLIVersion     string       `json:"codex_cli_version"`
+	ReportedModel       string       `json:"reported_model"`
+	StartedAt           string       `json:"started_at"`
+	CompletedAt         string       `json:"completed_at"`
+	DurationMS          int64        `json:"duration_ms"`
+	Status              string       `json:"status"`
+	TotalParagraphs     int          `json:"total_paragraphs"`
+	CompletedParagraphs int          `json:"completed_paragraphs"`
+	FailedBlockIndex    int          `json:"failed_block_index"`
+	ErrorCode           string       `json:"error_code"`
+	ErrorDetail         string       `json:"error_detail,omitempty"`
+	StderrExcerpt       string       `json:"stderr_excerpt,omitempty"`
+	Turns               []Turn       `json:"turns"`
+	ProfileID           string       `json:"profile_id,omitempty"`
+	ProfileName         string       `json:"profile_name,omitempty"`
+	ProfileSnapshotHash string       `json:"profile_snapshot_hash,omitempty"`
+	// ProfileSnapshot is the exact immutable profile used by the run,
+	// decoded from the stored canonical JSON. FailedStageID and
+	// FailedProviderID name the authoritative failure binding, including
+	// failures that left no complete attempt sequence.
+	ProfileSnapshot  *pipeline.ProfileSnapshot `json:"profile_snapshot,omitempty"`
+	FailedStageID    string                    `json:"failed_stage_id,omitempty"`
+	FailedProviderID string                    `json:"failed_provider_id,omitempty"`
+	StageAttempts    []StageAttemptSummary     `json:"stage_attempts,omitempty"`
 }
 
 // RunSummary deliberately uses the same safe fields as Run without turn
@@ -184,6 +191,11 @@ type StageAttemptSummary struct {
 	ProviderStderrExcerpt     string             `json:"provider_stderr_excerpt,omitempty"`
 	ErrorCode                 string             `json:"error_code"`
 	ErrorDetail               string             `json:"error_detail,omitempty"`
+	UsageTruncated            bool               `json:"usage_truncated"`
+	TimingTruncated           bool               `json:"timing_truncated"`
+	MetadataTruncated         bool               `json:"metadata_truncated"`
+	StderrTruncated           bool               `json:"stderr_truncated"`
+	ErrorDetailTruncated      bool               `json:"error_detail_truncated"`
 	StartedAt                 string             `json:"started_at"`
 	CompletedAt               string             `json:"completed_at,omitempty"`
 	DurationMS                int64              `json:"duration_ms"`
@@ -203,6 +215,10 @@ type StageTurnSummary struct {
 	ProviderError          string `json:"provider_error,omitempty"`
 	CompletionMetadataJSON string `json:"completion_metadata_json"`
 	ProviderStderrExcerpt  string `json:"provider_stderr_excerpt,omitempty"`
+	ValidationTruncated    bool   `json:"validation_truncated"`
+	ProviderErrorTruncated bool   `json:"provider_error_truncated"`
+	MetadataTruncated      bool   `json:"metadata_truncated"`
+	StderrTruncated        bool   `json:"stderr_truncated"`
 	StartedAt              string `json:"started_at"`
 	CompletedAt            string `json:"completed_at,omitempty"`
 	DurationMS             int64  `json:"duration_ms"`
@@ -395,6 +411,7 @@ func (s *HistoryStore) GetRun(ctx context.Context, id library.ULID) (Run, error)
 	}
 	var run Run
 	var rawID, rawArticleID, rawJobID string
+	var snapshotJSON, failedStageID, failedProviderID string
 	err := s.db.QueryRow(ctx, `
 		SELECT r.id, r.article_id, a.title, r.job_id, r.attempt_count,
 		       r.content_hash, r.contract_version, r.prompt_version,
@@ -403,12 +420,22 @@ func (s *HistoryStore) GetRun(ctx context.Context, id library.ULID) (Run, error)
 		       r.completed_at, r.duration_ms, r.status, r.total_paragraphs,
 		       r.completed_paragraphs, r.failed_block_index, r.error_code,
 		       r.error_detail, r.stderr_excerpt,
-		       r.profile_id, r.profile_name, r.profile_snapshot_hash
+		       r.profile_id, r.profile_name, r.profile_snapshot_hash,
+		       r.profile_snapshot_json, r.failed_stage_id, r.failed_provider_id
 		FROM analysis_run r JOIN article a ON a.id = r.article_id WHERE r.id = ?
-	`, id.String()).Scan(&rawID, &rawArticleID, &run.ArticleTitle, &rawJobID, &run.AttemptCount, &run.ContentHash, &run.ContractVersion, &run.PromptVersion, &run.RequestedModel, &run.RequestedEffort, &run.ProviderID, &run.CodexCLIVersion, &run.ReportedModel, &run.StartedAt, &run.CompletedAt, &run.DurationMS, &run.Status, &run.TotalParagraphs, &run.CompletedParagraphs, &run.FailedBlockIndex, &run.ErrorCode, &run.ErrorDetail, &run.StderrExcerpt, &run.ProfileID, &run.ProfileName, &run.ProfileSnapshotHash)
+	`, id.String()).Scan(&rawID, &rawArticleID, &run.ArticleTitle, &rawJobID, &run.AttemptCount, &run.ContentHash, &run.ContractVersion, &run.PromptVersion, &run.RequestedModel, &run.RequestedEffort, &run.ProviderID, &run.CodexCLIVersion, &run.ReportedModel, &run.StartedAt, &run.CompletedAt, &run.DurationMS, &run.Status, &run.TotalParagraphs, &run.CompletedParagraphs, &run.FailedBlockIndex, &run.ErrorCode, &run.ErrorDetail, &run.StderrExcerpt, &run.ProfileID, &run.ProfileName, &run.ProfileSnapshotHash, &snapshotJSON, &failedStageID, &failedProviderID)
 	if err != nil {
 		return Run{}, err
 	}
+	if snapshotJSON != "" {
+		var snapshot pipeline.ProfileSnapshot
+		if err := json.Unmarshal([]byte(snapshotJSON), &snapshot); err != nil {
+			return Run{}, fmt.Errorf("analysis history: invalid stored profile snapshot: %w", err)
+		}
+		run.ProfileSnapshot = &snapshot
+	}
+	run.FailedStageID = failedStageID
+	run.FailedProviderID = failedProviderID
 	run.ID = library.ULID(rawID)
 	run.ArticleID = library.ULID(rawArticleID)
 	run.JobID = library.ULID(rawJobID)
@@ -420,7 +447,9 @@ func (s *HistoryStore) GetRun(ctx context.Context, id library.ULID) (Run, error)
 		       cache_disposition, source_cache_id, requested_model,
 		       reported_model, request_id, finish_reason, usage_json,
 		       timing_json, metadata_json, provider_stderr_excerpt,
-		       error_code, error_detail, started_at, completed_at, duration_ms
+		       error_code, error_detail, usage_truncated, timing_truncated,
+		       metadata_truncated, stderr_truncated, error_detail_truncated,
+		       started_at, completed_at, duration_ms
 		FROM analysis_stage_attempt WHERE run_id = ?
 		ORDER BY block_index, stage_id
 	`, id.String())
@@ -432,9 +461,15 @@ func (s *HistoryStore) GetRun(ctx context.Context, id library.ULID) (Run, error)
 	for attemptRows.Next() {
 		var attempt StageAttemptSummary
 		var optionsText string
-		if err := attemptRows.Scan(&attempt.ID, &attempt.StageID, &attempt.BlockIndex, &attempt.Status, &attempt.ProviderID, &attempt.ProviderType, &attempt.ProviderConfigFingerprint, &attempt.ModelID, &optionsText, &attempt.ContractVersion, &attempt.PromptVersion, &attempt.InputHash, &attempt.UpstreamArtifactHash, &attempt.OptionsHash, &attempt.CacheDisposition, &attempt.SourceCacheID, &attempt.RequestedModel, &attempt.ReportedModel, &attempt.RequestID, &attempt.FinishReason, &attempt.UsageJSON, &attempt.TimingJSON, &attempt.MetadataJSON, &attempt.ProviderStderrExcerpt, &attempt.ErrorCode, &attempt.ErrorDetail, &attempt.StartedAt, &attempt.CompletedAt, &attempt.DurationMS); err != nil {
+		var usageTruncated, timingTruncated, metadataTruncated, stderrTruncated, detailTruncated int
+		if err := attemptRows.Scan(&attempt.ID, &attempt.StageID, &attempt.BlockIndex, &attempt.Status, &attempt.ProviderID, &attempt.ProviderType, &attempt.ProviderConfigFingerprint, &attempt.ModelID, &optionsText, &attempt.ContractVersion, &attempt.PromptVersion, &attempt.InputHash, &attempt.UpstreamArtifactHash, &attempt.OptionsHash, &attempt.CacheDisposition, &attempt.SourceCacheID, &attempt.RequestedModel, &attempt.ReportedModel, &attempt.RequestID, &attempt.FinishReason, &attempt.UsageJSON, &attempt.TimingJSON, &attempt.MetadataJSON, &attempt.ProviderStderrExcerpt, &attempt.ErrorCode, &attempt.ErrorDetail, &usageTruncated, &timingTruncated, &metadataTruncated, &stderrTruncated, &detailTruncated, &attempt.StartedAt, &attempt.CompletedAt, &attempt.DurationMS); err != nil {
 			return Run{}, err
 		}
+		attempt.UsageTruncated = usageTruncated == 1
+		attempt.TimingTruncated = timingTruncated == 1
+		attempt.MetadataTruncated = metadataTruncated == 1
+		attempt.StderrTruncated = stderrTruncated == 1
+		attempt.ErrorDetailTruncated = detailTruncated == 1
 		if optionsText != "" {
 			attempt.Options = json.RawMessage(optionsText)
 		}
@@ -450,6 +485,8 @@ func (s *HistoryStore) GetRun(ctx context.Context, id library.ULID) (Run, error)
 			       t.prompt, t.output_schema, t.completed_response,
 			       t.response_hash, t.validation_error, t.provider_error,
 			       t.completion_metadata_json, t.provider_stderr_excerpt,
+			       t.validation_truncated, t.provider_error_truncated,
+			       t.metadata_truncated, t.stderr_truncated,
 			       t.started_at, t.completed_at, t.duration_ms, t.status
 			FROM analysis_stage_turn t
 			JOIN analysis_stage_attempt a ON a.id = t.stage_attempt_id
@@ -466,10 +503,15 @@ func (s *HistoryStore) GetRun(ctx context.Context, id library.ULID) (Run, error)
 		for turnRows.Next() {
 			var rawAttemptID, rawTurnID string
 			var turn StageTurnSummary
-			if err := turnRows.Scan(&rawAttemptID, &rawTurnID, &turn.TurnIndex, &turn.TurnKind, &turn.Prompt, &turn.OutputSchema, &turn.CompletedResponse, &turn.ResponseHash, &turn.ValidationError, &turn.ProviderError, &turn.CompletionMetadataJSON, &turn.ProviderStderrExcerpt, &turn.StartedAt, &turn.CompletedAt, &turn.DurationMS, &turn.Status); err != nil {
+			var validationTruncated, providerErrorTruncated, metadataTruncated, stderrTruncated int
+			if err := turnRows.Scan(&rawAttemptID, &rawTurnID, &turn.TurnIndex, &turn.TurnKind, &turn.Prompt, &turn.OutputSchema, &turn.CompletedResponse, &turn.ResponseHash, &turn.ValidationError, &turn.ProviderError, &turn.CompletionMetadataJSON, &turn.ProviderStderrExcerpt, &validationTruncated, &providerErrorTruncated, &metadataTruncated, &stderrTruncated, &turn.StartedAt, &turn.CompletedAt, &turn.DurationMS, &turn.Status); err != nil {
 				return Run{}, err
 			}
 			turn.ID = rawTurnID
+			turn.ValidationTruncated = validationTruncated == 1
+			turn.ProviderErrorTruncated = providerErrorTruncated == 1
+			turn.MetadataTruncated = metadataTruncated == 1
+			turn.StderrTruncated = stderrTruncated == 1
 			if index, ok := byAttempt[rawAttemptID]; ok {
 				run.StageAttempts[index].Turns = append(run.StageAttempts[index].Turns, turn)
 			}

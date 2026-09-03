@@ -3085,9 +3085,11 @@ export interface components {
         AnalysisProvider: {
             id: string;
             label?: string;
+            endpoint_label?: string;
             type: string;
             enabled: boolean;
             stale: boolean;
+            retrieved_at?: string;
             last_error?: string;
             /** @enum {string} */
             health: "disabled" | "healthy" | "unhealthy" | "unknown";
@@ -3134,6 +3136,24 @@ export interface components {
             provider_id: string;
             model_id: string;
             options: Record<string, never>;
+        };
+        /** @description The exact immutable provider profile used by a run. */
+        AnalysisProfileSnapshot: {
+            id: string;
+            name: string;
+            bindings: components["schemas"]["AnalysisProfileSnapshotBinding"][];
+        };
+        AnalysisProfileSnapshotBinding: {
+            /** @enum {string} */
+            stage_id: "linguistic_analysis" | "translation";
+            provider_id: string;
+            provider_type: string;
+            provider_config_fingerprint: string;
+            model_id: string;
+            options: Record<string, never>;
+            options_hash: string;
+            contract_version: string;
+            prompt_version: string;
         };
         AnalysisProfileBinding: {
             /** @enum {string} */
@@ -3229,6 +3249,9 @@ export interface components {
             profile_id?: string;
             profile_name?: string;
             profile_snapshot_hash?: string;
+            profile_snapshot?: components["schemas"]["AnalysisProfileSnapshot"];
+            failed_stage_id?: string;
+            failed_provider_id?: string;
             started_at: string;
             completed_at: string;
             /** Format: int64 */
@@ -3274,6 +3297,11 @@ export interface components {
             provider_stderr_excerpt?: string;
             error_code: string;
             error_detail?: string;
+            usage_truncated?: boolean;
+            timing_truncated?: boolean;
+            metadata_truncated?: boolean;
+            stderr_truncated?: boolean;
+            error_detail_truncated?: boolean;
             started_at: string;
             completed_at: string;
             /** Format: int64 */
@@ -3293,6 +3321,10 @@ export interface components {
             provider_error?: string;
             completion_metadata_json: string;
             provider_stderr_excerpt?: string;
+            validation_truncated?: boolean;
+            provider_error_truncated?: boolean;
+            metadata_truncated?: boolean;
+            stderr_truncated?: boolean;
             started_at: string;
             completed_at: string;
             /** Format: int64 */

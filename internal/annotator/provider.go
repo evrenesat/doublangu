@@ -122,8 +122,10 @@ type Registry struct {
 // NewRegistry builds the provider registry from the strict configuration.
 // secrets resolves the referenced environment values for enabled
 // openai-compatible providers; the resolved secret lives only inside the
-// provider instance and is never serialized.
-func NewRegistry(file *config.ProviderConfigFile, codexCodexBinary string, codexTimeout time.Duration, secrets func(string) (string, error)) (*Registry, error) {
+// provider instance and is never serialized. Every instance derives its
+// request timeout from its own entry, so the owner-visible configuration and
+// fingerprint always describe runtime behavior.
+func NewRegistry(file *config.ProviderConfigFile, codexCodexBinary string, secrets func(string) (string, error)) (*Registry, error) {
 	if file == nil {
 		return nil, errors.New("provider config is required")
 	}
@@ -145,8 +147,9 @@ func NewRegistry(file *config.ProviderConfigFile, codexCodexBinary string, codex
 		}
 		switch entry.Type {
 		case ProviderTypeCodexAppServer:
+			timeout := time.Duration(config.ResolveTimeoutSeconds(entry)) * time.Second
 			registry.instances[entry.ID] = &codexStageProvider{
-				descriptor: descriptor, binary: codexCodexBinary, timeout: codexTimeout,
+				descriptor: descriptor, binary: codexCodexBinary, timeout: timeout,
 			}
 		case ProviderTypeOpenAICompatible:
 			if secrets == nil {

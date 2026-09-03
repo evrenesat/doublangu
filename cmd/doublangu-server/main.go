@@ -465,7 +465,7 @@ func compatibilityProviderFile(db *store.DB, cfg *config.Config) (*config.Provid
 }
 
 func registryFromFile(db *store.DB, file *config.ProviderConfigFile) (httpapiProviderRegistry, error) {
-	registry, err := annotator.NewRegistry(file, "codex", 10*time.Minute, func(name string) (string, error) {
+	registry, err := annotator.NewRegistry(file, "codex", func(name string) (string, error) {
 		return os.Getenv(name), nil
 	})
 	if err != nil {

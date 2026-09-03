@@ -221,6 +221,53 @@ func TestProviderCatalogCanceledJoinerKeepsSharedRefresh(t *testing.T) {
 	}
 }
 
+// TestProviderCatalogCanceledLeaderReturnsPromptly proves the refresh creator
+// observes its own cancellation: canceling the first caller returns promptly
+// with its cancellation while the detached service refresh still completes,
+// and a second waiter receives the shared result from the single call.
+func TestProviderCatalogCanceledLeaderReturnsPromptly(t *testing.T) {
+	provider := &countingCatalogProvider{descriptor: codexDescriptor(), delay: 400 * time.Millisecond}
+	catalog := httpapi.NewProviderCatalogService(countingCatalogRegistry(provider))
+
+	leaderCtx, leaderCancel := context.WithCancel(context.Background())
+	leaderDone := make(chan error, 1)
+	go func() {
+		_, err := catalog.Snapshot(leaderCtx, "codex-app-server", true)
+		leaderDone <- err
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for provider.calls.Load() < 1 {
+		if time.Now().After(deadline) {
+			t.Fatal("refresh did not start")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	joinerDone := make(chan error, 1)
+	go func() {
+		_, err := catalog.Snapshot(context.Background(), "codex-app-server", true)
+		joinerDone <- err
+	}()
+	time.Sleep(100 * time.Millisecond)
+	start := time.Now()
+	leaderCancel()
+	if err := <-leaderDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("leader = %v, want context.Canceled", err)
+	}
+	if elapsed := time.Since(start); elapsed >= 400*time.Millisecond {
+		t.Fatalf("leader blocked %v after cancel, want a prompt return", elapsed)
+	}
+	if err := <-joinerDone; err != nil {
+		t.Fatalf("joiner = %v, want shared success", err)
+	}
+	if got := provider.calls.Load(); got != 1 {
+		t.Fatalf("calls = %d, want 1", got)
+	}
+	snapshot, err := catalog.Snapshot(context.Background(), "codex-app-server", false)
+	if err != nil || len(snapshot.Models) != 1 {
+		t.Fatalf("retained snapshot = %+v err=%v", snapshot, err)
+	}
+}
+
 // TestProviderCatalogOverlappingRefreshesShareOneResult proves a second
 // refresh started while the first is in flight joins it instead of storing a
 // newer result the first could overwrite: both waiters observe the same

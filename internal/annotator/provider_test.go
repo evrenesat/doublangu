@@ -35,7 +35,7 @@ func sampleProviderFile(t *testing.T) *config.ProviderConfigFile {
 
 func TestRegistryBuildsEnabledInstancesAndSanitizedDescriptors(t *testing.T) {
 	file := sampleProviderFile(t)
-	registry, err := NewRegistry(file, "codex", time.Minute, func(key string) (string, error) {
+	registry, err := NewRegistry(file, "codex", func(key string) (string, error) {
 		if key != "DOUBLANGU_OMLX_API_KEY" {
 			return "", errors.New("missing")
 		}
@@ -70,9 +70,42 @@ func TestRegistryBuildsEnabledInstancesAndSanitizedDescriptors(t *testing.T) {
 	}
 }
 
+// TestRegistryDerivesCodexTimeoutFromEntry proves a Codex provider instance
+// observes its own configured request_timeout_seconds instead of a
+// constructor-wide value: the instance deadline and the descriptor's
+// advertised timeout agree with the entry.
+func TestRegistryDerivesCodexTimeoutFromEntry(t *testing.T) {
+	file := sampleProviderFile(t)
+	for i := range file.Providers {
+		if file.Providers[i].ID == "codex-app-server" {
+			file.Providers[i].RequestTimeoutSeconds = 30
+		}
+	}
+	registry, err := NewRegistry(file, "codex", func(string) (string, error) { return "secret", nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance, ok := registry.Provider("codex-app-server")
+	if !ok {
+		t.Fatal("codex provider missing")
+	}
+	codex, ok := instance.(*codexStageProvider)
+	if !ok {
+		t.Fatalf("codex provider type = %T", instance)
+	}
+	if codex.timeout != 30*time.Second {
+		t.Fatalf("codex timeout = %v, want 30s", codex.timeout)
+	}
+	for _, descriptor := range registry.Descriptors() {
+		if descriptor.ID == "codex-app-server" && descriptor.RequestTimeoutMS != 30_000 {
+			t.Fatalf("descriptor timeout = %d, want 30000", descriptor.RequestTimeoutMS)
+		}
+	}
+}
+
 func TestRegistryRejectsMissingSecret(t *testing.T) {
 	file := sampleProviderFile(t)
-	_, err := NewRegistry(file, "codex", time.Minute, func(string) (string, error) { return "", nil })
+	_, err := NewRegistry(file, "codex", func(string) (string, error) { return "", nil })
 	if err == nil || !strings.Contains(err.Error(), "secret resolution failed") {
 		t.Fatalf("missing secret error = %v", err)
 	}

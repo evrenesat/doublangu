@@ -2122,9 +2122,11 @@ components:
       properties:
         id: { type: string }
         label: { type: string }
+        endpoint_label: { type: string }
         type: { type: string }
         enabled: { type: boolean }
         stale: { type: boolean }
+        retrieved_at: { type: string }
         last_error: { type: string }
         health:
           type: string
@@ -2201,6 +2203,34 @@ components:
         provider_id: { type: string }
         model_id: { type: string }
         options: { type: object }
+    AnalysisProfileSnapshot:
+      type: object
+      additionalProperties: false
+      required: [id, name, bindings]
+      description: The exact immutable provider profile used by a run.
+      properties:
+        id: { type: string }
+        name: { type: string }
+        bindings:
+          type: array
+          items: { $ref: "#/components/schemas/AnalysisProfileSnapshotBinding" }
+    AnalysisProfileSnapshotBinding:
+      type: object
+      additionalProperties: false
+      required: [stage_id, provider_id, provider_type, provider_config_fingerprint,
+        model_id, options, options_hash, contract_version, prompt_version]
+      properties:
+        stage_id:
+          type: string
+          enum: [linguistic_analysis, translation]
+        provider_id: { type: string }
+        provider_type: { type: string }
+        provider_config_fingerprint: { type: string }
+        model_id: { type: string }
+        options: { type: object }
+        options_hash: { type: string }
+        contract_version: { type: string }
+        prompt_version: { type: string }
     AnalysisProfileBinding:
       type: object
       additionalProperties: false
@@ -2342,6 +2372,9 @@ components:
         profile_id: { type: string }
         profile_name: { type: string }
         profile_snapshot_hash: { type: string }
+        profile_snapshot: { $ref: "#/components/schemas/AnalysisProfileSnapshot" }
+        failed_stage_id: { type: string }
+        failed_provider_id: { type: string }
         started_at: { type: string }
         completed_at: { type: string }
         duration_ms: { type: integer, format: int64, minimum: 0 }
@@ -2393,6 +2426,11 @@ components:
         provider_stderr_excerpt: { type: string }
         error_code: { type: string }
         error_detail: { type: string }
+        usage_truncated: { type: boolean }
+        timing_truncated: { type: boolean }
+        metadata_truncated: { type: boolean }
+        stderr_truncated: { type: boolean }
+        error_detail_truncated: { type: boolean }
         started_at: { type: string }
         completed_at: { type: string }
         duration_ms: { type: integer, format: int64, minimum: 0 }
@@ -2417,6 +2455,10 @@ components:
         provider_error: { type: string }
         completion_metadata_json: { type: string }
         provider_stderr_excerpt: { type: string }
+        validation_truncated: { type: boolean }
+        provider_error_truncated: { type: boolean }
+        metadata_truncated: { type: boolean }
+        stderr_truncated: { type: boolean }
         started_at: { type: string }
         completed_at: { type: string }
         duration_ms: { type: integer, format: int64, minimum: 0 }
