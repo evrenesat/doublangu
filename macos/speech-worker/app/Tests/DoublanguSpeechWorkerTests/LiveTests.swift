@@ -106,7 +106,53 @@ final class ServerIntegrationLiveTests: XCTestCase {
     try secrets.write(workerToken, account: KeychainAccount.workerToken)
     let client = WorkerClient(secrets: secrets)
     _ = try await client.lease(
-      capabilities: SpeechWorkerConfiguration.default(paths: AppPaths()).capabilities())
+      LeaseRequest(
+        lane: .speech(SpeechWorkerConfiguration.default(paths: AppPaths()).capabilities())))
+  }
+}
+
+final class RelayOMLXLiveTests: XCTestCase {
+  private func makeClient() -> RelayHTTPClient {
+    RelayHTTPClient(
+      target: RelayTarget(
+        baseURL: WorkerConstants.relayDefaultBaseURL,
+        timeout: TimeInterval(WorkerConstants.relayDefaultTimeoutSeconds)))
+  }
+
+  /// The local server may not require a credential, but the client refuses to
+  /// send without one, so an unset environment falls back to a placeholder.
+  private func apiKey() -> String {
+    ProcessInfo.processInfo.environment["DOUBLANGU_TEST_RELAY_API_KEY"] ?? "local"
+  }
+
+  /// Opt-in proof for the beta rollout: the real local Test button path against
+  /// OMLX on this Mac. Set DOUBLANGU_TEST_RELAY_LIVE=1 and, if the local server
+  /// requires a key, DOUBLANGU_TEST_RELAY_API_KEY.
+  func testLocalOMLXListsPinnedModels() async throws {
+    try requireEnvironment("DOUBLANGU_TEST_RELAY_LIVE")
+
+    let models = try await makeClient().listModels(apiKey: apiKey())
+
+    XCTAssertTrue(models.contains("Qwen3.5-2B-MLX-8bit"))
+    XCTAssertTrue(models.contains("Qwen3.6-35B-A3B-UD-MLX-4bit"))
+  }
+
+  /// Opt-in proof that a real OMLX chat completion satisfies the §5.9/§5.10
+  /// request and response contract end to end (json_schema response format,
+  /// single choice, bounded content, known timing keys only).
+  func testLocalOMLXChatCompletionParity() async throws {
+    try requireEnvironment("DOUBLANGU_TEST_RELAY_LIVE")
+    let lease = testRelayChatLease().relay!
+    guard case .chat(let chat) = lease else { return XCTFail("expected chat lease") }
+
+    let completion = try await makeClient().chatCompletion(chat, apiKey: apiKey())
+
+    XCTAssertFalse(completion.content.isEmpty)
+    XCTAssertLessThanOrEqual(completion.content.utf8.count, RelayLimits.maxContentBytes)
+    XCTAssertTrue(
+      ["stop", ""].contains(completion.finishReason), "finish_reason \(completion.finishReason)")
+    XCTAssertLessThanOrEqual(completion.reportedModel.utf8.count, RelayLimits.maxModelBytes)
+    XCTAssertTrue(completion.usage.totalTokens >= 0)
   }
 }
 

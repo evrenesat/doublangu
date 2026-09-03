@@ -65,12 +65,15 @@ public enum WorkerClientError: Error, Equatable, LocalizedError, Sendable {
 
 public protocol WorkerClienting: AnyObject, Sendable {
   func enroll(
-    name: String, capabilities: [WorkerCapability], softwareVersion: String, enrollmentToken: String
+    name: String, capabilities: [WorkerCapability], softwareVersion: String,
+    enrollmentToken: String,
+    llmRelayCapabilities: [LLMRelayCapability]?
   ) async throws -> EnrollmentResponse
-  func lease(capabilities: [WorkerCapability]) async throws -> LeaseResponse?
+  func lease(_ request: LeaseRequest) async throws -> LeaseResponse?
   func heartbeat(jobID: String, leaseToken: String, attempt: Int, progressPercent: Int) async throws
     -> HeartbeatResponse
-  func complete(jobID: String, metadata: CompletionMetadata, audioURL: URL) async throws
+  func completeSpeech(jobID: String, metadata: CompletionMetadata, audioURL: URL) async throws
+  func completeRelay(jobID: String, attempt: Int, leaseToken: String, result: Data) async throws
   func fail(jobID: String, leaseToken: String, attempt: Int, errorCode: String, retry: Bool)
     async throws
 }
@@ -90,25 +93,30 @@ public final class WorkerClient: WorkerClienting, @unchecked Sendable {
   }
 
   public func enroll(
-    name: String, capabilities: [WorkerCapability], softwareVersion: String, enrollmentToken: String
+    name: String, capabilities: [WorkerCapability], softwareVersion: String,
+    enrollmentToken: String,
+    llmRelayCapabilities: [LLMRelayCapability]? = nil
   ) async throws -> EnrollmentResponse {
     var request = try makeRequest(
       path: "api/v1/speech-worker/enroll", method: "POST",
       body: StrictJSON.encode(
-        EnrollRequest(name: name, capabilities: capabilities, softwareVersion: softwareVersion)))
+        EnrollRequest(
+          name: name, capabilities: capabilities, softwareVersion: softwareVersion,
+          llmRelayCapabilities: llmRelayCapabilities)))
     request.setValue(enrollmentToken, forHTTPHeaderField: "X-Doublangu-Enrollment-Token")
     let response = try await send(request, accepted: [201])
     return try StrictJSON.decode(EnrollmentResponse.self, from: response.body)
   }
 
-  public func lease(capabilities: [WorkerCapability]) async throws -> LeaseResponse? {
-    let body = try StrictJSON.encode(LeaseRequest(capabilities: capabilities))
+  public func lease(_ request: LeaseRequest) async throws -> LeaseResponse? {
+    let body = try StrictJSON.encode(request)
     let response = try await send(
       try makeRequest(
         path: "api/v1/speech-worker/lease", method: "POST", body: body, workerToken: true),
       accepted: [200, 204])
     if response.statusCode == 204 { return nil }
-    return try StrictJSON.decode(LeaseResponse.self, from: response.body)
+    return try StrictJSON.decode(
+      LeaseResponse.self, from: response.body, limit: LeaseResponse.maxEncodedBytes)
   }
 
   public func heartbeat(jobID: String, leaseToken: String, attempt: Int, progressPercent: Int)
@@ -123,12 +131,15 @@ public final class WorkerClient: WorkerClienting, @unchecked Sendable {
       HeartbeatResponse.self, from: try await send(request, accepted: [200]).body)
   }
 
-  public func complete(jobID: String, metadata: CompletionMetadata, audioURL: URL) async throws {
+  public func completeSpeech(jobID: String, metadata: CompletionMetadata, audioURL: URL)
+    async throws
+  {
     let audio = try Data(contentsOf: audioURL, options: [.mappedIfSafe])
-    try await complete(jobID: jobID, metadata: metadata, audio: audio)
+    try await completeSpeech(jobID: jobID, metadata: metadata, audio: audio)
   }
 
-  public func complete(jobID: String, metadata: CompletionMetadata, audio: Data) async throws {
+  public func completeSpeech(jobID: String, metadata: CompletionMetadata, audio: Data) async throws
+  {
     let boundary = "DoublanguBoundary-\(UUID().uuidString)"
     var body = Data()
     body.appendUTF8("--\(boundary)\r\nContent-Disposition: form-data; name=\"metadata\"\r\n\r\n")
@@ -139,6 +150,32 @@ public final class WorkerClient: WorkerClienting, @unchecked Sendable {
     )
     body.append(audio)
     body.appendUTF8("\r\n--\(boundary)--\r\n")
+    try await sendCompletion(body: body, boundary: boundary, jobID: jobID)
+  }
+
+  /// Relay uploads are exactly `metadata` + `result`; the 2 MiB hard bound is
+  /// enforced before any network I/O.
+  public func completeRelay(jobID: String, attempt: Int, leaseToken: String, result: Data)
+    async throws
+  {
+    guard result.count <= RelayLimits.maxPayloadBytes else {
+      throw WorkerClientError.invalidPayload
+    }
+    let metadata = CompletionMetadata(attempt: attempt, leaseToken: leaseToken, artifact: nil)
+    let boundary = "DoublanguBoundary-\(UUID().uuidString)"
+    var body = Data()
+    body.appendUTF8("--\(boundary)\r\nContent-Disposition: form-data; name=\"metadata\"\r\n\r\n")
+    body.append(try StrictJSON.encode(metadata))
+    body.appendUTF8("\r\n")
+    body.appendUTF8(
+      "--\(boundary)\r\nContent-Disposition: form-data; name=\"result\"; filename=\"result.json\"\r\nContent-Type: application/json\r\n\r\n"
+    )
+    body.append(result)
+    body.appendUTF8("\r\n--\(boundary)--\r\n")
+    try await sendCompletion(body: body, boundary: boundary, jobID: jobID)
+  }
+
+  private func sendCompletion(body: Data, boundary: String, jobID: String) async throws {
     var request = try makeRequest(
       path: "api/v1/speech-worker/jobs/\(jobID)/complete", method: "POST", body: body,
       workerToken: true)

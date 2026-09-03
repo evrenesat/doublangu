@@ -89,23 +89,24 @@ final class LeaseLoopTests: XCTestCase {
     try paths.ensureDirectories()
     let configuration = SpeechWorkerConfiguration.default(paths: paths)
     let lease = testLease(configuration: configuration)
+    let speech = try XCTUnwrap(lease.speech)
     let journal = JobJournalStore(paths: paths)
     try journal.save(
       JobJournalEntry(
         jobID: lease.jobID,
         attempt: lease.attempt,
         leaseToken: lease.leaseToken,
-        renderID: lease.renderID,
-        requestHash: lease.requestHash,
+        renderID: speech.renderID,
+        requestHash: speech.requestHash,
         jobType: lease.jobType,
-        speechUnitID: lease.speechUnitID,
-        language: lease.language,
-        unitKind: lease.unitKind,
-        spokenText: lease.spokenText,
-        contextPronunciationKey: lease.contextPronunciationKey,
+        speechUnitID: speech.speechUnitID,
+        language: speech.language,
+        unitKind: speech.unitKind,
+        spokenText: speech.spokenText,
+        contextPronunciationKey: speech.contextPronunciationKey,
         leaseExpiresAt: lease.leaseExpiresAt,
-        limits: lease.limits,
-        profile: lease.profile,
+        limits: speech.limits,
+        profile: speech.profile,
         partialPath: paths.partialURL(jobID: lease.jobID).path,
         readyPath: paths.readyURL(jobID: lease.jobID).path,
         phase: .rendering
@@ -177,12 +178,12 @@ private final class RecordingWorkerClient: WorkerClienting, @unchecked Sendable 
 
   func enroll(
     name _: String, capabilities _: [WorkerCapability], softwareVersion _: String,
-    enrollmentToken _: String
+    enrollmentToken _: String, llmRelayCapabilities _: [LLMRelayCapability]?
   ) async throws -> EnrollmentResponse {
     throw WorkerClientError.invalidResponse
   }
 
-  func lease(capabilities _: [WorkerCapability]) async throws -> LeaseResponse? {
+  func lease(_: LeaseRequest) async throws -> LeaseResponse? {
     lock.withLock { leases += 1 }
     return nil
   }
@@ -200,12 +201,20 @@ private final class RecordingWorkerClient: WorkerClienting, @unchecked Sendable 
     )
   }
 
-  func complete(jobID _: String, metadata _: CompletionMetadata, audioURL _: URL) async throws {
+  func completeSpeech(
+    jobID _: String, metadata _: CompletionMetadata, audioURL _: URL
+  ) async throws {
     let call = lock.withLock {
       completions += 1
       return completions
     }
     if call <= transientCompletionFailures { throw WorkerClientError.transport }
+  }
+
+  func completeRelay(jobID _: String, attempt _: Int, leaseToken _: String, result _: Data)
+    async throws
+  {
+    throw WorkerClientError.invalidResponse
   }
 
   func fail(

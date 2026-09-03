@@ -9,7 +9,9 @@ public struct MenuContentView: View {
   public var body: some View {
     VStack(alignment: .leading, spacing: 10) {
       Text(WorkerConstants.productName).font(.headline)
-      Text(appState.status.label).foregroundStyle(color(for: appState.status))
+      Text("Speech: \(appState.status.label)").foregroundStyle(color(for: appState.status))
+      Text("Relay: \(appState.relayStatus.label)").foregroundStyle(
+        relayColor(for: appState.relayStatus))
       if let jobType = appState.currentJobType {
         Text(jobType).font(.caption).foregroundStyle(.secondary)
       }
@@ -43,6 +45,15 @@ public struct MenuContentView: View {
     case .ready: return .green
     case .offline, .failed, .profileMismatch: return .orange
     case .setupRequired, .enrollmentRequired: return .yellow
+    default: return .primary
+    }
+  }
+
+  private func relayColor(for status: RelayLoop.Status) -> Color {
+    switch status {
+    case .idle: return .green
+    case .offline, .failed, .misconfigured: return .orange
+    case .requiresReenrollment: return .yellow
     default: return .primary
     }
   }

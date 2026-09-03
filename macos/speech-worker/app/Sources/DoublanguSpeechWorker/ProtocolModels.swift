@@ -173,8 +173,10 @@ public enum JSONDuplicateKeyDetector {
 }
 
 public enum StrictJSON {
-  public static func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
-    guard data.count <= 1_048_576, !JSONDuplicateKeyDetector.containsDuplicateKeys(data) else {
+  public static func decode<T: Decodable>(
+    _ type: T.Type, from data: Data, limit: Int = 1_048_576
+  ) throws -> T {
+    guard data.count <= limit, !JSONDuplicateKeyDetector.containsDuplicateKeys(data) else {
       throw ProtocolError.invalidJSON
     }
     do {
@@ -351,6 +353,8 @@ public struct WorkerInfo: Codable, Equatable, Sendable {
   public let lastSeenAt: String
   public let capabilities: [WorkerCapability]
   public let softwareVersion: String
+  public let llmRelayCapabilities: [LLMRelayCapability]?
+  public let relayLastSeenAt: String?
   public let createdAt: String
   public let updatedAt: String
 
@@ -361,12 +365,15 @@ public struct WorkerInfo: Codable, Equatable, Sendable {
     case lastSeenAt = "last_seen_at"
     case capabilities
     case softwareVersion = "software_version"
+    case llmRelayCapabilities = "llm_relay_capabilities"
+    case relayLastSeenAt = "relay_last_seen_at"
     case createdAt = "created_at"
     case updatedAt = "updated_at"
   }
 
   public init(from decoder: Decoder) throws {
-    try StrictCoding.checkKeys(decoder, CodingKeys.self)
+    try StrictCoding.checkKeys(
+      decoder, CodingKeys.self, optional: ["llm_relay_capabilities", "relay_last_seen_at"])
     let c = try decoder.container(keyedBy: CodingKeys.self)
     id = try c.decode(String.self, forKey: .id)
     name = try c.decode(String.self, forKey: .name)
@@ -375,6 +382,9 @@ public struct WorkerInfo: Codable, Equatable, Sendable {
     lastSeenAt = try c.decode(String.self, forKey: .lastSeenAt)
     capabilities = try c.decode([WorkerCapability].self, forKey: .capabilities)
     softwareVersion = try c.decode(String.self, forKey: .softwareVersion)
+    llmRelayCapabilities = try c.decodeIfPresent(
+      [LLMRelayCapability].self, forKey: .llmRelayCapabilities)
+    relayLastSeenAt = try c.decodeIfPresent(String.self, forKey: .relayLastSeenAt)
     createdAt = try c.decode(String.self, forKey: .createdAt)
     updatedAt = try c.decode(String.self, forKey: .updatedAt)
   }
@@ -430,13 +440,7 @@ private func isLowercaseHexDigest(_ value: String, length: Int = 64) -> Bool {
   }
 }
 
-public struct LeaseResponse: Codable, Equatable, Sendable {
-  public let protocolVersion: String
-  public let jobID: String
-  public let attempt: Int
-  public let leaseToken: String
-  public let leaseExpiresAt: String
-  public let jobType: String
+public struct SpeechLeaseDetails: Equatable, Sendable {
   public let renderID: String
   public let requestHash: String
   public let speechUnitID: String
@@ -446,6 +450,38 @@ public struct LeaseResponse: Codable, Equatable, Sendable {
   public let contextPronunciationKey: String
   public let profile: SpeechProfile
   public let limits: AudioLimits
+
+  public init(
+    renderID: String, requestHash: String, speechUnitID: String, language: String,
+    unitKind: String, spokenText: String, contextPronunciationKey: String,
+    profile: SpeechProfile, limits: AudioLimits
+  ) {
+    self.renderID = renderID
+    self.requestHash = requestHash
+    self.speechUnitID = speechUnitID
+    self.language = language
+    self.unitKind = unitKind
+    self.spokenText = spokenText
+    self.contextPronunciationKey = contextPronunciationKey
+    self.profile = profile
+    self.limits = limits
+  }
+}
+
+public struct LeaseResponse: Codable, Equatable, Sendable {
+  /// Relay lease responses carry ~2 MiB payloads (JSON schema pass-through), so
+  /// the decode bound is the payload hard limit plus envelope slack.
+  public static let maxEncodedBytes = RelayLimits.maxPayloadBytes + 131_072
+
+  public let protocolVersion: String
+  public let jobID: String
+  public let attempt: Int
+  public let leaseToken: String
+  public let leaseExpiresAt: String
+  public let jobType: String
+  public let speech: SpeechLeaseDetails?
+  public let operation: String?
+  public let relay: RelayLease?
 
   private enum CodingKeys: String, CodingKey, CaseIterable {
     case protocolVersion = "protocol_version"
@@ -462,13 +498,19 @@ public struct LeaseResponse: Codable, Equatable, Sendable {
     case spokenText = "spoken_text"
     case contextPronunciationKey = "context_pronunciation_key"
     case profile, limits
+    case operation, relay
   }
+
+  static let speechKeyNames: Set<String> = [
+    "render_id", "request_hash", "speech_unit_id", "language", "unit_kind", "spoken_text",
+    "context_pronunciation_key", "profile", "limits",
+  ]
+  static let relayKeyNames: Set<String> = ["operation", "relay"]
 
   public init(
     protocolVersion: String, jobID: String, attempt: Int, leaseToken: String,
-    leaseExpiresAt: String, jobType: String, renderID: String, requestHash: String,
-    speechUnitID: String, language: String, unitKind: String, spokenText: String,
-    contextPronunciationKey: String, profile: SpeechProfile, limits: AudioLimits
+    leaseExpiresAt: String, jobType: String, speech: SpeechLeaseDetails? = nil,
+    operation: String? = nil, relay: RelayLease? = nil
   ) {
     self.protocolVersion = protocolVersion
     self.jobID = jobID
@@ -476,49 +518,111 @@ public struct LeaseResponse: Codable, Equatable, Sendable {
     self.leaseToken = leaseToken
     self.leaseExpiresAt = leaseExpiresAt
     self.jobType = jobType
-    self.renderID = renderID
-    self.requestHash = requestHash
-    self.speechUnitID = speechUnitID
-    self.language = language
-    self.unitKind = unitKind
-    self.spokenText = spokenText
-    self.contextPronunciationKey = contextPronunciationKey
-    self.profile = profile
-    self.limits = limits
+    self.speech = speech
+    self.operation = operation
+    self.relay = relay
   }
 
   public init(from decoder: Decoder) throws {
-    try StrictCoding.checkKeys(decoder, CodingKeys.self)
     let c = try decoder.container(keyedBy: CodingKeys.self)
+    jobType = try c.decode(String.self, forKey: .jobType)
+    let isRelay = jobType == "llm.relay.v1"
+    let isSpeech = ["tts.avspeech.v1", "tts.chatterbox.v3"].contains(jobType)
+    guard isRelay || isSpeech else { throw ProtocolError.invalidValue("lease_job_type") }
+    // Unknown keys are rejected in both branches; speech-only keys are tolerated
+    // (but ignored) on relay leases because the server emits them zero-valued.
+    var expected = Set(CodingKeys.allCases.map(\.stringValue))
+    var optional: Set<String> = []
+    if isRelay {
+      optional = Self.speechKeyNames
+    } else {
+      expected.subtract(Self.relayKeyNames)
+    }
+    try StrictCoding.checkKeys(
+      decoder, expected: expected, optional: optional.union(["worker_id"]))
     protocolVersion = try c.decode(String.self, forKey: .protocolVersion)
     jobID = try c.decode(String.self, forKey: .jobID)
     attempt = try c.decode(Int.self, forKey: .attempt)
     leaseToken = try c.decode(String.self, forKey: .leaseToken)
     leaseExpiresAt = try c.decode(String.self, forKey: .leaseExpiresAt)
-    jobType = try c.decode(String.self, forKey: .jobType)
-    renderID = try c.decode(String.self, forKey: .renderID)
-    requestHash = try c.decode(String.self, forKey: .requestHash)
-    speechUnitID = try c.decode(String.self, forKey: .speechUnitID)
-    language = try c.decode(String.self, forKey: .language)
-    unitKind = try c.decode(String.self, forKey: .unitKind)
-    spokenText = try c.decode(String.self, forKey: .spokenText)
-    contextPronunciationKey = try c.decode(String.self, forKey: .contextPronunciationKey)
-    profile = try c.decode(SpeechProfile.self, forKey: .profile)
-    limits = try c.decode(AudioLimits.self, forKey: .limits)
+    if isSpeech {
+      speech = SpeechLeaseDetails(
+        renderID: try c.decode(String.self, forKey: .renderID),
+        requestHash: try c.decode(String.self, forKey: .requestHash),
+        speechUnitID: try c.decode(String.self, forKey: .speechUnitID),
+        language: try c.decode(String.self, forKey: .language),
+        unitKind: try c.decode(String.self, forKey: .unitKind),
+        spokenText: try c.decode(String.self, forKey: .spokenText),
+        contextPronunciationKey: try c.decode(String.self, forKey: .contextPronunciationKey),
+        profile: try c.decode(SpeechProfile.self, forKey: .profile),
+        limits: try c.decode(AudioLimits.self, forKey: .limits))
+      operation = nil
+      relay = nil
+    } else {
+      speech = nil
+      operation = try c.decode(String.self, forKey: .operation)
+      switch operation {
+      case "chat_completion":
+        relay = try .chat(c.decode(RelayChatLease.self, forKey: .relay))
+      case "list_models":
+        relay = try .models(c.decode(RelayListModelsLease.self, forKey: .relay))
+      default:
+        throw ProtocolError.invalidValue("relay_operation")
+      }
+    }
     try validate()
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var c = encoder.container(keyedBy: CodingKeys.self)
+    try c.encode(protocolVersion, forKey: .protocolVersion)
+    try c.encode(jobID, forKey: .jobID)
+    try c.encode(attempt, forKey: .attempt)
+    try c.encode(leaseToken, forKey: .leaseToken)
+    try c.encode(leaseExpiresAt, forKey: .leaseExpiresAt)
+    try c.encode(jobType, forKey: .jobType)
+    if let speech {
+      try c.encode(speech.renderID, forKey: .renderID)
+      try c.encode(speech.requestHash, forKey: .requestHash)
+      try c.encode(speech.speechUnitID, forKey: .speechUnitID)
+      try c.encode(speech.language, forKey: .language)
+      try c.encode(speech.unitKind, forKey: .unitKind)
+      try c.encode(speech.spokenText, forKey: .spokenText)
+      try c.encode(speech.contextPronunciationKey, forKey: .contextPronunciationKey)
+      try c.encode(speech.profile, forKey: .profile)
+      try c.encode(speech.limits, forKey: .limits)
+    }
+    try c.encodeIfPresent(operation, forKey: .operation)
+    try c.encodeIfPresent(relay, forKey: .relay)
   }
 
   public func validate() throws {
     guard protocolVersion == WorkerConstants.protocolVersion, attempt >= 1 && attempt <= 3,
-      !leaseToken.isEmpty, !leaseExpiresAt.isEmpty,
-      ["tts.avspeech.v1", "tts.chatterbox.v3"].contains(jobType),
-      isLowercaseHexDigest(requestHash),
-      language == "nl", ["word", "phrase", "sentence"].contains(unitKind), !spokenText.isEmpty,
-      (jobType == "tts.avspeech.v1" && profile.engine == "avspeech" && unitKind != "sentence")
-        || (jobType == "tts.chatterbox.v3" && profile.engine == "chatterbox"
-          && unitKind == "sentence")
+      !leaseToken.isEmpty, !leaseExpiresAt.isEmpty
     else { throw ProtocolError.invalidValue("lease") }
-    try profile.validate()
+    switch jobType {
+    case "tts.avspeech.v1", "tts.chatterbox.v3":
+      guard let speech, operation == nil, relay == nil,
+        isLowercaseHexDigest(speech.requestHash),
+        speech.language == "nl", ["word", "phrase", "sentence"].contains(speech.unitKind),
+        !speech.spokenText.isEmpty,
+        (jobType == "tts.avspeech.v1" && speech.profile.engine == "avspeech"
+          && speech.unitKind != "sentence")
+          || (jobType == "tts.chatterbox.v3" && speech.profile.engine == "chatterbox"
+            && speech.unitKind == "sentence")
+      else { throw ProtocolError.invalidValue("lease") }
+      try speech.profile.validate()
+    case "llm.relay.v1":
+      guard speech == nil, let operation, let relay else {
+        throw ProtocolError.invalidValue("lease")
+      }
+      guard operation == relay.operation else {
+        throw ProtocolError.invalidValue("lease_operation")
+      }
+      if case .chat(let chat) = relay { try chat.validate() }
+    default:
+      throw ProtocolError.invalidValue("lease_job_type")
+    }
   }
 }
 
@@ -527,47 +631,87 @@ public struct EnrollRequest: Codable, Equatable, Sendable {
   public let protocolVersion: String
   public let capabilities: [WorkerCapability]
   public let softwareVersion: String
+  public let llmRelayCapabilities: [LLMRelayCapability]?
 
   private enum CodingKeys: String, CodingKey, CaseIterable {
     case name
     case protocolVersion = "protocol_version"
     case capabilities
     case softwareVersion = "software_version"
+    case llmRelayCapabilities = "llm_relay_capabilities"
   }
 
-  public init(name: String, capabilities: [WorkerCapability], softwareVersion: String) {
+  public init(
+    name: String, capabilities: [WorkerCapability], softwareVersion: String,
+    llmRelayCapabilities: [LLMRelayCapability]? = nil
+  ) {
     self.name = name
     protocolVersion = WorkerConstants.protocolVersion
     self.capabilities = capabilities
     self.softwareVersion = softwareVersion
+    self.llmRelayCapabilities = llmRelayCapabilities
   }
 
   public init(from decoder: Decoder) throws {
-    try StrictCoding.checkKeys(decoder, CodingKeys.self)
+    try StrictCoding.checkKeys(decoder, CodingKeys.self, optional: ["llm_relay_capabilities"])
     let c = try decoder.container(keyedBy: CodingKeys.self)
     name = try c.decode(String.self, forKey: .name)
     protocolVersion = try c.decode(String.self, forKey: .protocolVersion)
     capabilities = try c.decode([WorkerCapability].self, forKey: .capabilities)
     softwareVersion = try c.decode(String.self, forKey: .softwareVersion)
+    llmRelayCapabilities = try c.decodeIfPresent(
+      [LLMRelayCapability].self, forKey: .llmRelayCapabilities)
   }
+}
+
+/// Exactly one lane per lease request; the public initializer makes mixed-lane
+/// capability payloads unrepresentable.
+public enum LeaseLane: Equatable, Sendable {
+  case speech([WorkerCapability])
+  case relay(LLMRelayCapability)
 }
 
 public struct LeaseRequest: Codable, Equatable, Sendable {
   public let protocolVersion: String
-  public let capabilities: [WorkerCapability]
+  public let capabilities: [WorkerCapability]?
+  public let llmRelayCapabilities: [LLMRelayCapability]?
+
   private enum CodingKeys: String, CodingKey, CaseIterable {
     case protocolVersion = "protocol_version"
     case capabilities
+    case llmRelayCapabilities = "llm_relay_capabilities"
   }
-  public init(capabilities: [WorkerCapability]) {
+
+  public init(lane: LeaseLane) {
     protocolVersion = WorkerConstants.protocolVersion
-    self.capabilities = capabilities
+    switch lane {
+    case .speech(let capabilities):
+      self.capabilities = capabilities
+      llmRelayCapabilities = nil
+    case .relay(let capability):
+      capabilities = nil
+      llmRelayCapabilities = [capability]
+    }
   }
+
   public init(from decoder: Decoder) throws {
-    try StrictCoding.checkKeys(decoder, CodingKeys.self)
+    try StrictCoding.checkKeys(
+      decoder, CodingKeys.self, optional: ["capabilities", "llm_relay_capabilities"])
     let c = try decoder.container(keyedBy: CodingKeys.self)
     protocolVersion = try c.decode(String.self, forKey: .protocolVersion)
-    capabilities = try c.decode([WorkerCapability].self, forKey: .capabilities)
+    capabilities = try c.decodeIfPresent([WorkerCapability].self, forKey: .capabilities)
+    llmRelayCapabilities = try c.decodeIfPresent(
+      [LLMRelayCapability].self, forKey: .llmRelayCapabilities)
+    guard (capabilities?.isEmpty == false) != (llmRelayCapabilities?.isEmpty == false) else {
+      throw ProtocolError.invalidValue("lease_lane")
+    }
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var c = encoder.container(keyedBy: CodingKeys.self)
+    try c.encode(protocolVersion, forKey: .protocolVersion)
+    try c.encodeIfPresent(capabilities, forKey: .capabilities)
+    try c.encodeIfPresent(llmRelayCapabilities, forKey: .llmRelayCapabilities)
   }
 }
 
@@ -689,25 +833,27 @@ public struct CompletionMetadata: Codable, Equatable, Sendable {
   public let protocolVersion: String
   public let attempt: Int
   public let leaseToken: String
-  public let artifact: ArtifactMetadata
+  public let artifact: ArtifactMetadata?
   private enum CodingKeys: String, CodingKey, CaseIterable {
     case protocolVersion = "protocol_version"
     case attempt
     case leaseToken = "lease_token"
     case artifact
   }
-  public init(attempt: Int, leaseToken: String, artifact: ArtifactMetadata) {
+  public init(attempt: Int, leaseToken: String, artifact: ArtifactMetadata?) {
     protocolVersion = WorkerConstants.protocolVersion
     self.attempt = attempt
     self.leaseToken = leaseToken
     self.artifact = artifact
   }
   public init(from decoder: Decoder) throws {
-    try StrictCoding.checkKeys(decoder, CodingKeys.self)
+    // `artifact` is optional on the wire: relay completions carry a result part
+    // instead, and the job type decides whether it was actually required.
+    try StrictCoding.checkKeys(decoder, CodingKeys.self, optional: ["artifact"])
     let c = try decoder.container(keyedBy: CodingKeys.self)
     protocolVersion = try c.decode(String.self, forKey: .protocolVersion)
     attempt = try c.decode(Int.self, forKey: .attempt)
     leaseToken = try c.decode(String.self, forKey: .leaseToken)
-    artifact = try c.decode(ArtifactMetadata.self, forKey: .artifact)
+    artifact = try c.decodeIfPresent(ArtifactMetadata.self, forKey: .artifact)
   }
 }

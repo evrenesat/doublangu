@@ -35,15 +35,40 @@ public enum AppStatus: Equatable, Sendable {
   }
 }
 
+public enum RelayTestOutcome: Equatable, Sendable {
+  case success(models: [String])
+  case invalidConfig
+  case missingKey
+  case authFailure
+  case unreachable
+  case invalidResponse
+
+  public var label: String {
+    switch self {
+    case .success(let models):
+      let shown = models.prefix(8).joined(separator: ", ")
+      let more = models.count > 8 ? " …" : ""
+      return models.isEmpty ? "Reachable, no models" : "\(models.count) models: \(shown)\(more)"
+    case .invalidConfig: return "Relay configuration invalid"
+    case .missingKey: return "No API key stored"
+    case .authFailure: return "Authentication failed"
+    case .unreachable: return "Relay target unreachable"
+    case .invalidResponse: return "Invalid response"
+    }
+  }
+}
+
 @MainActor
 public final class AppState: ObservableObject {
   @Published public private(set) var status: AppStatus = .loading
+  @Published public private(set) var relayStatus: RelayLoop.Status = .off
   @Published public private(set) var configuration: SpeechWorkerConfiguration?
   @Published public private(set) var setupReceipt: SetupReceipt?
   @Published public private(set) var referenceReady = false
   @Published public private(set) var modelReady = false
   @Published public private(set) var hasWorkerToken = false
   @Published public private(set) var hasPerimeterCredentials = false
+  @Published public private(set) var hasRelayAPIKey = false
   @Published public private(set) var lastServerContact: Date?
   @Published public private(set) var currentJobType: String?
   @Published public private(set) var launchAtLogin = false
@@ -53,6 +78,7 @@ public final class AppState: ObservableObject {
   public let keychain: SecretStore
   private let loginItem: LoginItemManaging
   private var leaseLoop: LeaseLoop?
+  private var relayLoop: RelayLoop?
   private var chatterboxSupervisor: ChatterboxSupervisor?
   private var loadTask: Task<Void, Never>?
 
@@ -72,9 +98,9 @@ public final class AppState: ObservableObject {
     do {
       try paths.ensureDirectories()
       let config: SpeechWorkerConfiguration
-      if let data = try? Data(contentsOf: paths.configURL) {
-        config = try StrictJSON.decode(SpeechWorkerConfiguration.self, from: data)
-        try config.validate(paths: paths)
+      if FileManager.default.fileExists(atPath: paths.configURL.path) {
+        // Transparently rewrites a v0.1 file once with the default relay block.
+        config = try SpeechWorkerConfiguration.loadFromDisk(paths: paths)
       } else {
         config = .default(paths: paths)
         try paths.writePrivate(StrictJSON.encode(config), to: paths.configURL)
@@ -91,6 +117,9 @@ public final class AppState: ObservableObject {
       let username = (try? keychain.read(account: KeychainAccount.perimeterUsername)) ?? nil
       let password = (try? keychain.read(account: KeychainAccount.perimeterPassword)) ?? nil
       hasPerimeterCredentials = username?.isEmpty == false && password?.isEmpty == false
+      hasRelayAPIKey =
+        ((try? keychain.read(account: KeychainAccount.relayAPIKey)) ?? nil)?
+        .isEmpty == false
       launchAtLogin = loginItem.isEnabled
       updateInitialStatus()
       if launchAtLogin { start() }
@@ -138,9 +167,12 @@ public final class AppState: ObservableObject {
     guard let config = configuration, !enrollmentToken.isEmpty else { return }
     do {
       let client = WorkerClient(baseURL: config.baseURL, secrets: keychain)
+      // v0.2 always advertises relay *support* at enrollment, independent of the
+      // enabled toggle, so later toggling never requires re-enrollment.
       let response = try await client.enroll(
         name: config.workerName, capabilities: config.capabilities(),
-        softwareVersion: WorkerConstants.appVersion, enrollmentToken: enrollmentToken)
+        softwareVersion: WorkerConstants.appVersion, enrollmentToken: enrollmentToken,
+        llmRelayCapabilities: [LLMRelayCapability()])
       try keychain.write(response.workerToken, account: KeychainAccount.workerToken)
       var updated = config
       updated.workerID = response.worker.id
@@ -170,30 +202,37 @@ public final class AppState: ObservableObject {
 
   public func start() {
     guard let config = configuration else { return }
+    let identityReady = config.workerID != nil && hasWorkerToken && hasPerimeterCredentials
+    // The lanes are evaluated independently: missing speech setup must not
+    // block the relay lane, and relay misconfiguration must not block TTS.
     guard referenceReady && modelReady else {
       status = .setupRequired
+      restartRelayLane(identityReady: identityReady)
       return
     }
-    guard config.workerID != nil && hasWorkerToken && hasPerimeterCredentials else {
+    guard identityReady else {
       status = .enrollmentRequired
+      restartRelayLane(identityReady: identityReady)
       return
     }
-    if leaseLoop != nil { return }
-    let client = WorkerClient(baseURL: config.baseURL, secrets: keychain)
-    let supervisor = ChatterboxSupervisor(paths: paths, configuration: config)
-    let renderer = ChatterboxRenderer(supervisor: supervisor, configuration: config, paths: paths)
-    let loop = LeaseLoop(
-      client: client, configuration: config, paths: paths, journal: JobJournalStore(paths: paths),
-      chatterbox: renderer)
-    loop.statusChanged = { [weak self, weak loop] value in
-      self?.status = AppStatus(workerStatus: value)
-      self?.lastServerContact = loop?.lastServerContact
-      self?.currentJobType = loop?.currentJobType
+    if leaseLoop == nil {
+      let client = WorkerClient(baseURL: config.baseURL, secrets: keychain)
+      let supervisor = ChatterboxSupervisor(paths: paths, configuration: config)
+      let renderer = ChatterboxRenderer(supervisor: supervisor, configuration: config, paths: paths)
+      let loop = LeaseLoop(
+        client: client, configuration: config, paths: paths, journal: JobJournalStore(paths: paths),
+        chatterbox: renderer)
+      loop.statusChanged = { [weak self, weak loop] value in
+        self?.status = AppStatus(workerStatus: value)
+        self?.lastServerContact = loop?.lastServerContact
+        self?.currentJobType = loop?.currentJobType
+      }
+      loop.log = { [weak self] message in self?.lastError = message }
+      chatterboxSupervisor = supervisor
+      leaseLoop = loop
+      loop.start()
     }
-    loop.log = { [weak self] message in self?.lastError = message }
-    chatterboxSupervisor = supervisor
-    leaseLoop = loop
-    loop.start()
+    restartRelayLane(identityReady: identityReady)
   }
 
   public func stop() {
@@ -201,7 +240,108 @@ public final class AppState: ObservableObject {
     leaseLoop = nil
     chatterboxSupervisor?.stop()
     chatterboxSupervisor = nil
+    relayLoop?.stop()
+    relayLoop = nil
     if status != .setupRequired && status != .enrollmentRequired { status = .stopped }
+    relayStatus = desiredRelayStatus()
+  }
+
+  public func saveRelayConfiguration(
+    enabled: Bool, baseURLString: String, requestTimeoutSeconds: Int, apiKeyIfChanged: String?
+  ) throws {
+    guard var config = configuration else { throw ConfigurationError.invalid }
+    guard let baseURL = URL(string: baseURLString) else { throw RelayConfigError.invalidURL }
+    let relay = RelayConfig(
+      enabled: enabled, baseURL: baseURL, requestTimeoutSeconds: requestTimeoutSeconds)
+    try relay.validate()
+    if let apiKey = apiKeyIfChanged, !apiKey.isEmpty {
+      // Keychain first: a stored key must exist before the config can enable.
+      try keychain.write(apiKey, account: KeychainAccount.relayAPIKey)
+    }
+    if enabled,
+      ((try? keychain.read(account: KeychainAccount.relayAPIKey)) ?? nil)?.isEmpty != false
+    {
+      throw RelayConfigError.missingAPIKey
+    }
+    config.relay = relay
+    try paths.writePrivate(StrictJSON.encode(config), to: paths.configURL)
+    configuration = config
+    hasRelayAPIKey =
+      ((try? keychain.read(account: KeychainAccount.relayAPIKey)) ?? nil)?.isEmpty == false
+    restartRelayLaneIfNeeded()
+  }
+
+  public func clearRelayAPIKey() throws {
+    try keychain.delete(account: KeychainAccount.relayAPIKey)
+    if var config = configuration {
+      config.relay.enabled = false
+      try paths.writePrivate(StrictJSON.encode(config), to: paths.configURL)
+      configuration = config
+    }
+    hasRelayAPIKey = false
+    restartRelayLaneIfNeeded()
+  }
+
+  /// Calls the local relay target directly; never contacts the Doublangu server
+  /// and never logs or displays the key.
+  public func testRelayConnection() async -> RelayTestOutcome {
+    guard let config = configuration, (try? config.relay.validate()) != nil else {
+      return .invalidConfig
+    }
+    guard let apiKey = try? keychain.read(account: KeychainAccount.relayAPIKey),
+      !apiKey.isEmpty
+    else { return .missingKey }
+    let http = RelayHTTPClient(
+      target: RelayTarget(
+        baseURL: config.relay.baseURL, timeout: TimeInterval(config.relay.requestTimeoutSeconds)))
+    do {
+      return .success(models: try await http.listModels(apiKey: apiKey))
+    } catch let error as RelayHTTPError {
+      switch error {
+      case .http(let status, _) where status == 401 || status == 403: return .authFailure
+      case .cannotConnect, .connectionLost, .timedOut: return .unreachable
+      default: return .invalidResponse
+      }
+    } catch {
+      return .invalidResponse
+    }
+  }
+
+  private func restartRelayLaneIfNeeded() {
+    guard let config = configuration else { return }
+    let identityReady = config.workerID != nil && hasWorkerToken && hasPerimeterCredentials
+    restartRelayLane(identityReady: identityReady)
+  }
+
+  private func restartRelayLane(identityReady: Bool) {
+    relayLoop?.stop()
+    relayLoop = nil
+    guard identityReady, let config = configuration, config.relay.enabled else {
+      relayStatus = desiredRelayStatus()
+      return
+    }
+    guard (try? config.relay.validate()) != nil, hasRelayAPIKey else {
+      relayStatus = .misconfigured
+      return
+    }
+    let client = WorkerClient(baseURL: config.baseURL, secrets: keychain)
+    let http = RelayHTTPClient(
+      target: RelayTarget(
+        baseURL: config.relay.baseURL, timeout: TimeInterval(config.relay.requestTimeoutSeconds)))
+    let keychain = self.keychain
+    let loop = RelayLoop(
+      client: client, http: http,
+      keyProvider: { (try? keychain.read(account: KeychainAccount.relayAPIKey)) ?? nil })
+    loop.statusChanged = { [weak self] value in self?.relayStatus = value }
+    loop.log = { [weak self] message in self?.lastError = message }
+    relayLoop = loop
+    loop.start()
+  }
+
+  private func desiredRelayStatus() -> RelayLoop.Status {
+    guard let config = configuration, config.relay.enabled else { return .off }
+    guard (try? config.relay.validate()) != nil, hasRelayAPIKey else { return .misconfigured }
+    return .off
   }
 
   public func restartChatterbox() async {
@@ -236,6 +376,7 @@ public final class AppState: ObservableObject {
   }
 
   private func updateInitialStatus() {
+    if relayLoop == nil { relayStatus = desiredRelayStatus() }
     guard leaseLoop == nil else { return }
     if !referenceReady || !modelReady {
       status = .setupRequired

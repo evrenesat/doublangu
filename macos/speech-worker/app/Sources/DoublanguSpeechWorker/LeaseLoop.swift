@@ -162,7 +162,10 @@ public final class LeaseLoop {
       }
       do {
         setStatus(.ready)
-        guard let lease = try await client.lease(capabilities: configuration.capabilities()) else {
+        guard
+          let lease = try await client.lease(
+            LeaseRequest(lane: .speech(configuration.capabilities())))
+        else {
           try? await Task.sleep(nanoseconds: 1_000_000_000)
           continue
         }
@@ -201,14 +204,15 @@ public final class LeaseLoop {
         }
         _ = await uploadPending(entry)
       case .rendering:
+        let speech = SpeechLeaseDetails(
+          renderID: entry.renderID, requestHash: entry.requestHash,
+          speechUnitID: entry.speechUnitID, language: entry.language, unitKind: entry.unitKind,
+          spokenText: entry.spokenText, contextPronunciationKey: entry.contextPronunciationKey,
+          profile: entry.profile, limits: entry.limits)
         let lease = LeaseResponse(
           protocolVersion: configuration.protocolVersion, jobID: entry.jobID,
           attempt: entry.attempt, leaseToken: entry.leaseToken,
-          leaseExpiresAt: entry.leaseExpiresAt, jobType: entry.jobType, renderID: entry.renderID,
-          requestHash: entry.requestHash, speechUnitID: entry.speechUnitID,
-          language: entry.language, unitKind: entry.unitKind, spokenText: entry.spokenText,
-          contextPronunciationKey: entry.contextPronunciationKey, profile: entry.profile,
-          limits: entry.limits)
+          leaseExpiresAt: entry.leaseExpiresAt, jobType: entry.jobType, speech: speech)
         do {
           let heartbeat = try await client.heartbeat(
             jobID: entry.jobID, leaseToken: entry.leaseToken, attempt: entry.attempt,
@@ -221,10 +225,7 @@ public final class LeaseLoop {
           let renewedLease = LeaseResponse(
             protocolVersion: lease.protocolVersion, jobID: lease.jobID, attempt: lease.attempt,
             leaseToken: lease.leaseToken, leaseExpiresAt: heartbeat.leaseExpiresAt,
-            jobType: lease.jobType, renderID: lease.renderID, requestHash: lease.requestHash,
-            speechUnitID: lease.speechUnitID, language: lease.language, unitKind: lease.unitKind,
-            spokenText: lease.spokenText, contextPronunciationKey: lease.contextPronunciationKey,
-            profile: lease.profile, limits: lease.limits)
+            jobType: lease.jobType, speech: lease.speech)
           try await process(lease: renewedLease, existingEntry: entry)
         } catch let error as WorkerClientError {
           if case .http(let status) = error, status == 409 {
@@ -239,16 +240,17 @@ public final class LeaseLoop {
 
   private func process(lease: LeaseResponse, existingEntry: JobJournalEntry? = nil) async throws {
     try validate(lease)
+    guard let speech = lease.speech else { throw ProtocolError.invalidValue("lease_identity") }
     var entry =
       existingEntry
       ?? JobJournalEntry(
         jobID: lease.jobID, attempt: lease.attempt, leaseToken: lease.leaseToken,
-        renderID: lease.renderID,
-        requestHash: lease.requestHash, jobType: lease.jobType, speechUnitID: lease.speechUnitID,
-        language: lease.language, unitKind: lease.unitKind,
-        spokenText: lease.spokenText, contextPronunciationKey: lease.contextPronunciationKey,
+        renderID: speech.renderID,
+        requestHash: speech.requestHash, jobType: lease.jobType, speechUnitID: speech.speechUnitID,
+        language: speech.language, unitKind: speech.unitKind,
+        spokenText: speech.spokenText, contextPronunciationKey: speech.contextPronunciationKey,
         leaseExpiresAt: lease.leaseExpiresAt,
-        limits: lease.limits, profile: lease.profile,
+        limits: speech.limits, profile: speech.profile,
         partialPath: paths.partialURL(jobID: lease.jobID).path,
         readyPath: paths.readyURL(jobID: lease.jobID).path, phase: .rendering
       )
@@ -272,7 +274,7 @@ public final class LeaseLoop {
       if entry.phase == .rendering {
         setStatus(
           lease.jobType == "tts.chatterbox.v3" ? .loadingModel : .rendering(jobType: lease.jobType))
-        let artifact = try await render(lease: lease, entry: entry, flag: flag)
+        let artifact = try await render(lease: lease, speech: speech, entry: entry, flag: flag)
         guard !flag.isCancelled else { throw CancellationError() }
         if fileManager.fileExists(atPath: entry.readyPath) {
           try fileManager.removeItem(atPath: entry.readyPath)
@@ -317,24 +319,25 @@ public final class LeaseLoop {
     }
   }
 
-  private func render(lease: LeaseResponse, entry: JobJournalEntry, flag: CancellationFlag)
-    async throws -> ArtifactMetadata
-  {
+  private func render(
+    lease: LeaseResponse, speech: SpeechLeaseDetails, entry: JobJournalEntry, flag: CancellationFlag
+  ) async throws -> ArtifactMetadata {
     let partial = URL(fileURLWithPath: entry.partialPath)
     try paths.ensureParent(partial)
     if lease.jobType == "tts.avspeech.v1" {
       let source = paths.spoolRoot.appendingPathComponent("\(lease.jobID).source.wav")
       defer { try? fileManager.removeItem(at: source) }
       _ = try await avSpeech.render(
-        text: lease.spokenText, profile: lease.profile, outputURL: source, limits: lease.limits,
+        text: speech.spokenText, profile: speech.profile, outputURL: source,
+        limits: speech.limits,
         cancellation: { flag.isCancelled })
       guard !flag.isCancelled else { throw CancellationError() }
       return try postprocessor.process(
-        inputURL: source, outputURL: partial, requestHash: lease.requestHash,
-        unitKind: lease.unitKind, limits: lease.limits)
+        inputURL: source, outputURL: partial, requestHash: speech.requestHash,
+        unitKind: speech.unitKind, limits: speech.limits)
     }
     return try await chatterbox.render(
-      lease: lease, partialURL: partial, requestHash: lease.requestHash,
+      speech: speech, partialURL: partial, requestHash: speech.requestHash,
       cancellation: { flag.isCancelled })
   }
 
@@ -366,14 +369,15 @@ public final class LeaseLoop {
 
   private func validate(_ lease: LeaseResponse) throws {
     try lease.validate()
-    guard validULID(lease.jobID), validULID(lease.renderID), validULID(lease.speechUnitID),
-      lease.profile.id.map(validULID) == true,
-      lease.profile.matchesByteAffecting(
+    guard let speech = lease.speech else { throw ProtocolError.invalidValue("lease_identity") }
+    guard validULID(lease.jobID), validULID(speech.renderID), validULID(speech.speechUnitID),
+      speech.profile.id.map(validULID) == true,
+      speech.profile.matchesByteAffecting(
         lease.jobType == "tts.avspeech.v1"
           ? configuration.avSpeechProfile : configuration.chatterboxProfile),
-      requestHash(for: lease) == lease.requestHash,
-      lease.limits.maxBytes == expectedLimits(for: lease.unitKind).maxBytes,
-      lease.limits.maxDurationMS == expectedLimits(for: lease.unitKind).maxDurationMS,
+      requestHash(for: speech) == speech.requestHash,
+      speech.limits.maxBytes == expectedLimits(for: speech.unitKind).maxBytes,
+      speech.limits.maxDurationMS == expectedLimits(for: speech.unitKind).maxDurationMS,
       parseLeaseExpiry(lease.leaseExpiresAt).map({ $0 > clock() }) == true
     else { throw ProtocolError.invalidValue("lease_identity") }
   }
@@ -386,7 +390,7 @@ public final class LeaseLoop {
     }
   }
 
-  private func requestHash(for lease: LeaseResponse) -> String {
+  private func requestHash(for speech: SpeechLeaseDetails) -> String {
     var data = Data()
     func append(_ value: String) {
       var length = UInt64(value.utf8.count).bigEndian
@@ -394,32 +398,32 @@ public final class LeaseLoop {
       data.append(contentsOf: value.utf8)
     }
     append("doublangu.audio-request.v1")
-    append(lease.spokenText)
-    append(lease.language)
-    append(lease.unitKind)
-    append(lease.contextPronunciationKey)
-    append(lease.profile.engine)
-    append(lease.profile.modelRevision)
-    append(lease.profile.language)
-    append(lease.profile.voiceIdentifier)
-    append(lease.profile.referenceAudioHash)
-    var speed = Int64(lease.profile.speedMilli).bigEndian
+    append(speech.spokenText)
+    append(speech.language)
+    append(speech.unitKind)
+    append(speech.contextPronunciationKey)
+    append(speech.profile.engine)
+    append(speech.profile.modelRevision)
+    append(speech.profile.language)
+    append(speech.profile.voiceIdentifier)
+    append(speech.profile.referenceAudioHash)
+    var speed = Int64(speech.profile.speedMilli).bigEndian
     withUnsafeBytes(of: &speed) { data.append(contentsOf: $0) }
-    var pitch = Int64(lease.profile.pitchCents).bigEndian
+    var pitch = Int64(speech.profile.pitchCents).bigEndian
     withUnsafeBytes(of: &pitch) { data.append(contentsOf: $0) }
-    append(lease.profile.mappingVersion)
-    append(lease.profile.codec)
-    append(lease.profile.mimeType)
-    var rate = Int64(lease.profile.sampleRateHz).bigEndian
+    append(speech.profile.mappingVersion)
+    append(speech.profile.codec)
+    append(speech.profile.mimeType)
+    var rate = Int64(speech.profile.sampleRateHz).bigEndian
     withUnsafeBytes(of: &rate) { data.append(contentsOf: $0) }
-    var channels = Int64(lease.profile.channels).bigEndian
+    var channels = Int64(speech.profile.channels).bigEndian
     withUnsafeBytes(of: &channels) { data.append(contentsOf: $0) }
     append(WorkerConstants.audioNormalizationVersion)
     return sha256Hex(data)
   }
 
   private func validULID(_ value: String) -> Bool {
-    value.count == 26 && value.allSatisfy { "0123456789ABCDEFGHJKMNPQRSTVWXYZ".contains($0) }
+    isValidULID(value)
   }
 
   private func handleClientError(_ error: WorkerClientError) {
@@ -482,7 +486,7 @@ public final class LeaseLoop {
     }
     setStatus(.uploading(jobType: entry.jobType))
     do {
-      try await client.complete(
+      try await client.completeSpeech(
         jobID: entry.jobID,
         metadata: CompletionMetadata(
           attempt: entry.attempt, leaseToken: entry.leaseToken, artifact: artifact),

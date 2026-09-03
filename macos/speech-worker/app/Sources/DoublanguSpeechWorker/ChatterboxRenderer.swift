@@ -19,22 +19,24 @@ public struct ChatterboxRenderer {
 
   @MainActor
   public func render(
-    lease: LeaseResponse, partialURL: URL, requestHash: String,
+    speech: SpeechLeaseDetails, partialURL: URL, requestHash: String,
     cancellation: @escaping @Sendable () -> Bool = { Task.isCancelled }
   ) async throws -> ArtifactMetadata {
-    guard lease.profile.matchesByteAffecting(configuration.chatterboxProfile),
-      lease.profile.engine == "chatterbox", lease.language == "nl", lease.unitKind == "sentence",
-      lease.profile.referenceAudioHash == configuration.referenceAudioHash,
-      lease.requestHash == requestHash
+    guard speech.profile.matchesByteAffecting(configuration.chatterboxProfile),
+      speech.profile.engine == "chatterbox", speech.language == "nl",
+      speech.unitKind == "sentence",
+      speech.profile.referenceAudioHash == configuration.referenceAudioHash,
+      speech.requestHash == requestHash
     else { throw ProtocolError.invalidValue("chatterbox_profile") }
-    let audio = try await supervisor.generate(text: lease.spokenText, cancellation: cancellation)
+    let audio = try await supervisor.generate(text: speech.spokenText, cancellation: cancellation)
     if cancellation() { throw CancellationError() }
     let wavURL = partialURL.deletingPathExtension().appendingPathExtension("source.wav")
     try audio.write(to: wavURL, options: .atomic)
     defer { try? FileManager.default.removeItem(at: wavURL) }
     return try postprocessor.process(
-      inputURL: wavURL, outputURL: partialURL, requestHash: requestHash, unitKind: lease.unitKind,
-      limits: lease.limits)
+      inputURL: wavURL, outputURL: partialURL, requestHash: requestHash,
+      unitKind: speech.unitKind,
+      limits: speech.limits)
   }
 
   @MainActor

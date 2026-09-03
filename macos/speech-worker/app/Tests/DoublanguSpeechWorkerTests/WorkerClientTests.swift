@@ -28,7 +28,7 @@ final class WorkerClientTests: XCTestCase {
         requestHash: String(repeating: "a", count: 64), sha256: sha256Hex(artifactData),
         sizeBytes: Int64(artifactData.count), durationMS: 100)
     )
-    try await client.complete(jobID: testJobID, metadata: metadata, audio: artifactData)
+    try await client.completeSpeech(jobID: testJobID, metadata: metadata, audio: artifactData)
 
     let requests = requester.requests
     XCTAssertEqual(requests.count, 2)
@@ -60,9 +60,11 @@ final class WorkerClientTests: XCTestCase {
     let client = WorkerClient(secrets: secrets, requester: requester)
 
     let lease = try await client.lease(
-      capabilities: SpeechWorkerConfiguration.default(
-        paths: AppPaths(rootOverride: temporaryRoot("lease"))
-      ).capabilities())
+      LeaseRequest(
+        lane: .speech(
+          SpeechWorkerConfiguration.default(
+            paths: AppPaths(rootOverride: temporaryRoot("lease"))
+          ).capabilities())))
     XCTAssertNil(lease)
     XCTAssertEqual(requester.requests.first?.url?.path, "/beta/api/v1/speech-worker/lease")
   }

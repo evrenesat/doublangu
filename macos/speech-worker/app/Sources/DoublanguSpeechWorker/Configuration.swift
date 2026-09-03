@@ -18,7 +18,11 @@ public enum WorkerConstants {
   public static let referenceAudioSHA256 =
     "1dd25cc2ea1aa8314af2ce2f062eb44beeb662482516177e098f58f6b6ce10f5"
   public static let audioNormalizationVersion = "audio-normalization.v1"
-  public static let appVersion = "0.1.0"
+  public static let appVersion = "0.2.0"
+  public static let relayMaxCompletionBytes: Int64 = 2_097_152
+  public static let relayDefaultBaseURL = URL(string: "http://127.0.0.1:8899/v1")!
+  public static let relayDefaultTimeoutSeconds = 540
+  public static let relayMinimumTimeoutSeconds = 30
   public static let minimumFreeBytes: Int64 = 12 * 1024 * 1024 * 1024
   public static let recommendedFreeBytes: Int64 = 20 * 1024 * 1024 * 1024
   public static let maxSpoolBytes: Int64 = 512 * 1024 * 1024
@@ -35,6 +39,89 @@ public enum WorkerConstants {
     voiceIdentifier: chatterboxVoiceIdentifier, referenceAudioHash: referenceAudioSHA256,
     speedMilli: 1000, pitchCents: 0, mappingVersion: chatterboxMappingVersion
   )
+}
+
+public enum RelayConfigError: Error, Equatable, LocalizedError, Sendable {
+  case invalidURL
+  case invalidTimeout
+  case missingAPIKey
+
+  public var errorDescription: String? {
+    switch self {
+    case .invalidURL: "relay_invalid_url"
+    case .invalidTimeout: "relay_invalid_timeout"
+    case .missingAPIKey: "relay_missing_api_key"
+    }
+  }
+}
+
+public struct RelayConfig: Codable, Equatable, Sendable {
+  public var enabled: Bool
+  public var baseURL: URL
+  public var requestTimeoutSeconds: Int
+
+  private enum CodingKeys: String, CodingKey, CaseIterable {
+    case enabled
+    case baseURL = "base_url"
+    case requestTimeoutSeconds = "request_timeout_seconds"
+  }
+
+  public init(
+    enabled: Bool = false, baseURL: URL = WorkerConstants.relayDefaultBaseURL,
+    requestTimeoutSeconds: Int = WorkerConstants.relayDefaultTimeoutSeconds
+  ) {
+    self.enabled = enabled
+    self.baseURL = baseURL
+    self.requestTimeoutSeconds = requestTimeoutSeconds
+  }
+
+  public init(from decoder: Decoder) throws {
+    try StrictCoding.checkKeys(decoder, CodingKeys.self)
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    enabled = try c.decode(Bool.self, forKey: .enabled)
+    baseURL = try c.decode(URL.self, forKey: .baseURL)
+    requestTimeoutSeconds = try c.decode(Int.self, forKey: .requestTimeoutSeconds)
+    try validate()
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var c = encoder.container(keyedBy: CodingKeys.self)
+    try c.encode(enabled, forKey: .enabled)
+    try c.encode(baseURL, forKey: .baseURL)
+    try c.encode(requestTimeoutSeconds, forKey: .requestTimeoutSeconds)
+  }
+
+  public func validate() throws {
+    guard requestTimeoutSeconds >= WorkerConstants.relayMinimumTimeoutSeconds,
+      requestTimeoutSeconds <= WorkerConstants.relayDefaultTimeoutSeconds
+    else { throw RelayConfigError.invalidTimeout }
+    guard let components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false),
+      let scheme = components.scheme?.lowercased(), let host = components.host
+    else { throw RelayConfigError.invalidURL }
+    guard components.user == nil, components.password == nil, components.query == nil,
+      components.fragment == nil, components.path == "/v1", scheme == "https" || scheme == "http",
+      components.port.map({ (1...65_535).contains($0) }) ?? true
+    else { throw RelayConfigError.invalidURL }
+    if scheme == "http" {
+      guard Self.isLiteralLoopback(host) else { throw RelayConfigError.invalidURL }
+    }
+  }
+
+  /// Plain HTTP is accepted only for literal loopback addresses so DNS can never
+  /// retarget the local model server; `localhost` is deliberately excluded.
+  static func isLiteralLoopback(_ host: String) -> Bool {
+    var normalized = host
+    if normalized.hasPrefix("["), normalized.hasSuffix("]"), normalized.count >= 4 {
+      normalized = String(normalized.dropFirst().dropLast())
+    }
+    if normalized == "::1" { return true }
+    let parts = normalized.split(separator: ".", omittingEmptySubsequences: false)
+    guard parts.count == 4, parts[0] == "127" else { return false }
+    return parts.dropFirst().allSatisfy { part in
+      !part.isEmpty && part.count <= 3 && part.allSatisfy(\.isNumber)
+        && (Int(part).map { $0 <= 255 } ?? false)
+    }
+  }
 }
 
 public struct SpeechWorkerConfiguration: Codable, Equatable, Sendable {
@@ -56,6 +143,7 @@ public struct SpeechWorkerConfiguration: Codable, Equatable, Sendable {
   public var oneJobCapacity: Int
   public var maxSpoolBytes: Int64
   public var chatterboxIdleSeconds: TimeInterval
+  public var relay: RelayConfig
 
   private enum CodingKeys: String, CodingKey, CaseIterable {
     case baseURL = "base_url"
@@ -76,6 +164,7 @@ public struct SpeechWorkerConfiguration: Codable, Equatable, Sendable {
     case oneJobCapacity = "one_job_capacity"
     case maxSpoolBytes = "max_spool_bytes"
     case chatterboxIdleSeconds = "chatterbox_idle_seconds"
+    case relay
   }
 
   public static func `default`(paths: AppPaths) -> SpeechWorkerConfiguration {
@@ -94,7 +183,8 @@ public struct SpeechWorkerConfiguration: Codable, Equatable, Sendable {
       portRangeStart: WorkerConstants.portRange.lowerBound,
       portRangeEnd: WorkerConstants.portRange.upperBound,
       oneJobCapacity: 1, maxSpoolBytes: WorkerConstants.maxSpoolBytes,
-      chatterboxIdleSeconds: WorkerConstants.chatterboxIdleSeconds
+      chatterboxIdleSeconds: WorkerConstants.chatterboxIdleSeconds,
+      relay: RelayConfig()
     )
   }
 
@@ -104,7 +194,8 @@ public struct SpeechWorkerConfiguration: Codable, Equatable, Sendable {
     modelRepository: String, modelRevision: String, tokenizerRepository: String,
     tokenizerRevision: String, referenceAudioPath: String, referenceAudioHash: String,
     audioNormalizationVersion: String, portRangeStart: Int, portRangeEnd: Int,
-    oneJobCapacity: Int, maxSpoolBytes: Int64, chatterboxIdleSeconds: TimeInterval
+    oneJobCapacity: Int, maxSpoolBytes: Int64, chatterboxIdleSeconds: TimeInterval,
+    relay: RelayConfig = RelayConfig()
   ) {
     self.baseURL = baseURL
     self.protocolVersion = protocolVersion
@@ -124,10 +215,14 @@ public struct SpeechWorkerConfiguration: Codable, Equatable, Sendable {
     self.oneJobCapacity = oneJobCapacity
     self.maxSpoolBytes = maxSpoolBytes
     self.chatterboxIdleSeconds = chatterboxIdleSeconds
+    self.relay = relay
   }
 
   public init(from decoder: Decoder) throws {
-    try StrictCoding.checkKeys(decoder, CodingKeys.self, optional: ["worker_id"])
+    // `relay` is the only newly optional key so installed v0.1 config files keep
+    // decoding; every previously required key stays required and unknown keys stay
+    // rejected.
+    try StrictCoding.checkKeys(decoder, CodingKeys.self, optional: ["worker_id", "relay"])
     let c = try decoder.container(keyedBy: CodingKeys.self)
     baseURL = try c.decode(URL.self, forKey: .baseURL)
     protocolVersion = try c.decode(String.self, forKey: .protocolVersion)
@@ -147,6 +242,7 @@ public struct SpeechWorkerConfiguration: Codable, Equatable, Sendable {
     oneJobCapacity = try c.decode(Int.self, forKey: .oneJobCapacity)
     maxSpoolBytes = try c.decode(Int64.self, forKey: .maxSpoolBytes)
     chatterboxIdleSeconds = try c.decode(TimeInterval.self, forKey: .chatterboxIdleSeconds)
+    relay = try c.decodeIfPresent(RelayConfig.self, forKey: .relay) ?? RelayConfig()
     try validate()
   }
 
@@ -164,9 +260,31 @@ public struct SpeechWorkerConfiguration: Codable, Equatable, Sendable {
       audioNormalizationVersion == WorkerConstants.audioNormalizationVersion,
       portRangeStart >= 1024, portRangeEnd >= portRangeStart, portRangeEnd - portRangeStart <= 999,
       oneJobCapacity == 1, maxSpoolBytes == WorkerConstants.maxSpoolBytes,
-      chatterboxIdleSeconds == WorkerConstants.chatterboxIdleSeconds
+      chatterboxIdleSeconds == WorkerConstants.chatterboxIdleSeconds,
+      (try? relay.validate()) != nil
     else { throw ConfigurationError.invalid }
     if let paths, referenceAudioPath != paths.referenceURL.path { throw ConfigurationError.invalid }
+  }
+
+  /// Loads and validates the on-disk config. A valid v0.1 file without a `relay`
+  /// block is transparently rewritten once with the default relay block so the
+  /// next decode is stable. Throws on unknown keys or invalid values like any
+  /// other strict decode.
+  public static func loadFromDisk(paths: AppPaths) throws -> SpeechWorkerConfiguration {
+    let data = try Data(contentsOf: paths.configURL)
+    let config = try StrictJSON.decode(Self.self, from: data)
+    try config.validate(paths: paths)
+    if !hasRelayBlock(data) {
+      try paths.writePrivate(StrictJSON.encode(config), to: paths.configURL)
+    }
+    return config
+  }
+
+  private static func hasRelayBlock(_ data: Data) -> Bool {
+    guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+      return true
+    }
+    return object["relay"] != nil
   }
 
   public func capabilities() -> [WorkerCapability] {

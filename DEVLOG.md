@@ -1466,3 +1466,71 @@ annotator, analysis, reader, httpapi) passes; gofmt/tidy/vet/diff clean;
 `validate:openapi` passes; API generation byte-stable; `check` 0/0; vitest
 17 files / 103 tests pass; reader E2E 8/8; `make verify` passes. Live
 provider tests not run (no credentials/endpoints).
+## 2026-09-03 — Mac LLM relay: speech worker daemon (checkpoints 1–3 + CP4 build)
+
+Implemented the Mac side of `plans/in-progress/mac-llm-relay-speech-worker-handoff-reviewed.md`
+(review baseline `main` @ `2cda0e2`), mirroring the authoritative backend wire contract. Backend
+work and the physical beta pairing are explicitly out of scope for this pass.
+
+- **Config + migration (CP1):** `RelayConfig` (enabled/base_url/request_timeout_seconds, defaults
+  off / `http://127.0.0.1:8899/v1` / 540 s, timeout 30–540) added as the only newly optional top-level
+  config key; every old key stays required, unknown keys stay rejected. A v0.1 file without `relay`
+  decodes, validates, and is atomically rewritten once with the default block through
+  `AppPaths.writePrivate` (`SpeechWorkerConfiguration.loadFromDisk`). URL rules enforced: absolute,
+  no user/pass/query/fragment, path exactly `/v1`, https any host, http only literal loopback
+  (`127.0.0.0/8` or `::1`; `localhost` rejected).
+- **Keychain (CP1):** `relay-api-key` account added; the key never enters config.json, logs, job
+  payloads, or server requests other than the local provider Authorization header. Settings
+  SecureField starts empty and is never read back; UI shows only "stored"/"no key stored".
+- **RelayHTTPClient (CP1):** separate ephemeral `URLSession` (request/resource timeout from config,
+  `waitsForConnectivity=false`), redirects rejected via session delegate, bounded reads at 2 MiB+1
+  byte, typed local errors (`cannotConnect`/`connectionLost`/`timedOut`/`http`/`modelUnknown`/
+  `oversized`/`invalidResponse`/`canceled`), narrow unknown-model recognition (structured
+  `error.code`, or 400/404 message naming the exact model + "not found"/"unknown model"), and
+  bounded API-key-redacted excerpts for local diagnostics only.
+- **Protocol (CP2):** strict relay wire models (capability, chat/models payloads, results, usage,
+  known-OMXL-keys-only timing, recursive JSON value for schema pass-through). `LeaseResponse` is
+  job-type discriminated: TTS branch validates exactly as before and forbids relay keys; relay
+  branch requires `operation`+`relay`, tolerates zeroed speech fields, validates the payload, and
+  fails on unknown job types. `LeaseRequest` takes a single `LeaseLane` (mixed lanes
+  unrepresentable); `EnrollRequest` carries optional `llm_relay_capabilities` and v0.2 enrolls relay
+  support regardless of the enabled toggle; `WorkerInfo` tolerates the new optional relay fields;
+  `CompletionMetadata.artifact` is optional; `WorkerClient` exposes only `completeSpeech`
+  (metadata+audio) and `completeRelay` (metadata+result, 2 MiB bound enforced before I/O). Lease
+  decode bound raised to 2 MiB+slack for schema pass-through.
+- **RelayLoop + lifecycle (CP3):** serial relay lane with relay-only lease requests, 1 s idle delay,
+  1→300 s offline backoff, 30 s heartbeats during jobs, per-job task so server cancellation/stale
+  409 cancels the in-flight local URLSession work, `v1.relay_canceled` best-effort ack, and the
+  §5.8 code/retry matrix (cannot-connect/5xx retry=true; timeout/auth/malformed/model-unknown/
+  canceled retry=false). 401/403 stop the lane as failed; 400/protocol mismatch stop the lane as
+  `requiresReenrollment`. No journal, spool, or local result persistence. `AppState` starts/stops
+  the lanes independently (speech setup gaps never block relay and vice versa), and
+  `saveRelayConfiguration`/`clearRelayAPIKey`/`testRelayConnection` restart only the relay lane.
+  Clearing the key disables relay and deletes the Keychain item.
+- **UI:** Settings gains a Relay tab (status, enabled toggle, base URL, timeout, key SecureField,
+  stored-key indicator, Save/Clear key/Test connection, bounded model-list result); the menu bar
+  shows separate Speech and Relay status rows.
+- **CP4 code side:** `macos/speech-worker/VERSION` and `WorkerConstants.appVersion` → 0.2.0;
+  `./build-app.sh --development` builds and ad-hoc-signs
+  `dist/macos/Doublangu Speech Worker.app` (Info.plist 0.2.0, codesign "satisfies its Designated
+  Requirement").
+
+Verification (from `macos/speech-worker`): `xcrun swift-format lint --recursive app/Sources
+app/Tests` clean; `swift test --package-path app --parallel` exit 0 (88 tests: config/migration/URL
+matrix, protocol negative matrix incl. duplicate/unknown keys and multipart shapes, relay HTTP
+client against a real loopback NWListener server incl. redirect rejection/oversized reads/local
+timeout/cancellation/key redaction, RelayLoop stub-client behaviors incl. heartbeat survival,
+server cancellation, stale-409 without ack, retry-flag matrix, parallel TTS observation, and
+AppState save/clear/misconfigure flows); `swift build --package-path app -c release` exit 0;
+`./build-app.sh --development` exit 0; repo `git diff --check` clean. Live proof on this Mac with
+OMLX 0.6.4 at `127.0.0.1:8899` (`DOUBLANGU_TEST_RELAY_LIVE=1`): `testLocalOMLXListsPinnedModels`
+returned both pinned models and `testLocalOMLXChatCompletionParity` completed a real
+`chat_completion` (json_schema response format accepted, content ≤1 MiB, finish_reason stop).
+No relay prompt/result is ever written to disk by construction (no journal/spool paths in the
+relay lane; asserted by test).
+
+Remaining owner steps (CP4, not runnable from this checkout): deploy backend checkpoints 1–2 to
+beta, install the v0.2.0 app on `dev-ren-mac`, perform the single Replace Enrollment, save relay
+config + key on that Mac, confirm the beta provider catalog lists both models, run the real beta
+article with parallel TTS observation, and the OMLX-offline/explicit-retry proof; rollback per plan
+§13 (disable relay → clear key → reinstall v0.1 if needed).

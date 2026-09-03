@@ -7,6 +7,8 @@ let testJobID = "01J00000000000000000000001"
 let testRenderID = "01J00000000000000000000002"
 let testSpeechUnitID = "01J00000000000000000000003"
 let testProfileID = "01J00000000000000000000004"
+let testRelayJobID = "01J00000000000000000000005"
+let testRelayRequestID = "01J00000000000000000000006"
 
 func temporaryRoot(_ name: String) -> URL {
   FileManager.default.temporaryDirectory.appendingPathComponent(
@@ -54,18 +56,70 @@ func testLease(
     leaseToken: String(repeating: "t", count: 40),
     leaseExpiresAt: expiresAt ?? ISO8601DateFormatter().string(from: Date().addingTimeInterval(90)),
     jobType: jobType,
-    renderID: testRenderID,
-    requestHash: requestHash,
-    speechUnitID: testSpeechUnitID,
-    language: "nl",
-    unitKind: unitKind,
-    spokenText: unitKind == "sentence" ? "Dit is een zin." : "hallo",
-    contextPronunciationKey: "",
-    profile: profile,
-    limits: AudioLimits(
-      maxBytes: unitKind == "sentence" ? 64 << 20 : 2 << 20,
-      maxDurationMS: unitKind == "sentence" ? 180_000 : unitKind == "phrase" ? 30_000 : 15_000)
-  )
+    speech: SpeechLeaseDetails(
+      renderID: testRenderID,
+      requestHash: requestHash,
+      speechUnitID: testSpeechUnitID,
+      language: "nl",
+      unitKind: unitKind,
+      spokenText: unitKind == "sentence" ? "Dit is een zin." : "hallo",
+      contextPronunciationKey: "",
+      profile: profile,
+      limits: AudioLimits(
+        maxBytes: unitKind == "sentence" ? 64 << 20 : 2 << 20,
+        maxDurationMS: unitKind == "sentence" ? 180_000 : unitKind == "phrase" ? 30_000 : 15_000)
+    ))
+}
+
+func testRelaySchema() -> RelayJSONSchema {
+  RelayJSONSchema(
+    name: "doublangu_stage_artifact", strict: true,
+    schema: .object(["type": .string("object")]))
+}
+
+func testRelayChatLease(
+  jobID: String = testRelayJobID, requestID: String = testRelayRequestID, attempt: Int = 1
+) -> LeaseResponse {
+  LeaseResponse(
+    protocolVersion: WorkerConstants.protocolVersion,
+    jobID: jobID,
+    attempt: attempt,
+    leaseToken: String(repeating: "l", count: 40),
+    leaseExpiresAt: ISO8601DateFormatter().string(from: Date().addingTimeInterval(90)),
+    jobType: "llm.relay.v1",
+    operation: "chat_completion",
+    relay: .chat(
+      RelayChatLease(
+        requestID: requestID,
+        model: "Qwen3.5-2B-MLX-8bit",
+        messages: [RelayChatMessage(role: "user", content: "Hallo")],
+        responseFormat: RelayResponseFormat(jsonSchema: testRelaySchema()),
+        options: RelayChatOptions(temperatureMilli: 0, maxOutputTokens: 16_384),
+        limits: RelayCompletionLimits(maxCompletionBytes: 2_097_152))))
+}
+
+func testRelayModelsLease(
+  jobID: String = testRelayJobID, requestID: String = testRelayRequestID
+) -> LeaseResponse {
+  LeaseResponse(
+    protocolVersion: WorkerConstants.protocolVersion,
+    jobID: jobID,
+    attempt: 1,
+    leaseToken: String(repeating: "l", count: 40),
+    leaseExpiresAt: ISO8601DateFormatter().string(from: Date().addingTimeInterval(90)),
+    jobType: "llm.relay.v1",
+    operation: "list_models",
+    relay: .models(
+      RelayListModelsLease(
+        requestID: requestID, limits: RelayCompletionLimits(maxCompletionBytes: 2_097_152))))
+}
+
+func testChatCompletion(content: String = "{\"label\":\"ok\"}") -> RelayChatCompletion {
+  RelayChatCompletion(
+    id: "chatcmpl-123", reportedModel: "Qwen3.5-2B-MLX-8bit", content: content,
+    finishReason: "stop",
+    usage: RelayUsage(promptTokens: 10, completionTokens: 5, totalTokens: 15),
+    timing: RelayTiming())
 }
 
 final class RecordingHTTPRequester: HTTPRequesting, @unchecked Sendable {

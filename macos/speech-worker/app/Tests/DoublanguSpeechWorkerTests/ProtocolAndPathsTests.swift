@@ -43,7 +43,7 @@ final class ProtocolAndPathsTests: XCTestCase {
 
     let decoded = try StrictJSON.decode(LeaseResponse.self, from: encoded)
 
-    XCTAssertEqual(decoded.requestHash, digest)
+    XCTAssertEqual(decoded.speech?.requestHash, digest)
   }
 
   func testPathsAndJournalUsePrivateJobScopedFiles() throws {
