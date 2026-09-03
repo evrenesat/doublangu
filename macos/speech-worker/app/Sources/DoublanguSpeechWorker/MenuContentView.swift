@@ -31,6 +31,7 @@ public struct MenuContentView: View {
       if appState.workerRunning {
         Button("Restart Chatterbox") { Task { await appState.restartChatterbox() } }
       }
+      Button("Worker Settings…") { openSettings() }
       Button("Reveal Private Log") { appState.revealLogs() }
       Button("Quit") {
         appState.stop()
