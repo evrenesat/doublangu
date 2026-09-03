@@ -20,14 +20,15 @@ public struct MenuContentView: View {
           .foregroundStyle(.secondary)
       }
       Divider()
-      if appState.status == .setupRequired {
+      if appState.status == .setupRequired || appState.status == .enrollmentRequired {
         Button("Open Setup") { openSettings() }
-      } else if appState.status == .enrollmentRequired {
-        Button("Open Setup") { openSettings() }
-      } else {
-        Button(appState.status == .stopped ? "Start Worker" : "Stop Worker") {
-          if appState.status == .stopped { appState.start() } else { appState.stop() }
-        }
+      }
+      // Run intent drives Start/Stop so a relay-only worker (speech setup
+      // still missing) can always be stopped from the menu.
+      Button(appState.workerRunning ? "Stop Worker" : "Start Worker") {
+        if appState.workerRunning { appState.stop() } else { appState.start() }
+      }
+      if appState.workerRunning {
         Button("Restart Chatterbox") { Task { await appState.restartChatterbox() } }
       }
       Button("Reveal Private Log") { appState.revealLogs() }

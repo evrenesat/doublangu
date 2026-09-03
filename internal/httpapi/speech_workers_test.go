@@ -188,6 +188,39 @@ func relayMetadata(t *testing.T, lease *workers.LeaseResponse) []byte {
 	return encoded
 }
 
+func leaseHTTPTTS(t *testing.T, service *workers.Service, worker *workers.Worker) *workers.LeaseResponse {
+	t.Helper()
+	lease, err := service.Lease(context.Background(), worker, workers.LeaseRequest{
+		ProtocolVersion: speech.ProtocolVersion,
+		Capabilities: []speech.WorkerCapability{{
+			Engine: speech.ChatterboxEngine, Languages: []string{"nl"}, UnitKinds: []string{"sentence"},
+			MaxBytes: 64 << 20, MaxDurationMS: 180000,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return lease
+}
+
+func ttsMetadataFor(t *testing.T, lease *workers.LeaseResponse) []byte {
+	t.Helper()
+	encoded, err := json.Marshal(map[string]any{
+		"protocol_version": speech.ProtocolVersion,
+		"attempt":          lease.Attempt,
+		"lease_token":      lease.LeaseToken,
+		"artifact": map[string]any{
+			"request_hash": lease.RequestHash, "sha256": strings.Repeat("a", 64),
+			"size_bytes": 20, "mime_type": speech.AudioMIME, "codec": speech.AudioCodec,
+			"sample_rate_hz": speech.AudioSampleRate, "channels": speech.AudioChannels, "duration_ms": 100,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encoded
+}
+
 func TestServeCompleteRelayMatrix(t *testing.T) {
 	db, service, handler, worker, token := relayHTTPFixture(t)
 
@@ -300,5 +333,69 @@ func TestServeCompleteRelayMatrix(t *testing.T) {
 	}
 	if ttsFailure.Code != ErrCodeAudioUploadRejected {
 		t.Fatalf("tts with result code = %q", ttsFailure.Code)
+	}
+}
+
+// A missing payload part is judged by the leased job type, not by a generic
+// HTTP pre-check: relay jobs report relay rejection, TTS jobs report audio
+// rejection.
+func TestServeCompleteMissingPayloadJudgedByJobType(t *testing.T) {
+	db, service, handler, worker, token := relayHTTPFixture(t)
+
+	// Relay + metadata only -> relay upload rejected.
+	_, _ = seedHTTPRelayJob(t, db)
+	lease := leaseHTTPRelay(t, service, worker)
+	recorder := completeRequest(t, handler, lease.JobID, token, map[string][]byte{
+		"metadata": relayMetadata(t, lease),
+	}, nil)
+	if recorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("relay metadata only = %d: %s", recorder.Code, recorder.Body.String())
+	}
+	assertAPIErrorCode(t, recorder, ErrCodeRelayUploadRejected)
+
+	// Relay + audio (no result) -> relay upload rejected.
+	_, _ = seedHTTPRelayJob(t, db)
+	lease = leaseHTTPRelay(t, service, worker)
+	recorder = completeRequest(t, handler, lease.JobID, token, map[string][]byte{
+		"metadata": relayMetadata(t, lease),
+		"audio":    []byte("RIFFaudio"),
+	}, nil)
+	if recorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("relay with audio = %d: %s", recorder.Code, recorder.Body.String())
+	}
+	assertAPIErrorCode(t, recorder, ErrCodeRelayUploadRejected)
+
+	// TTS + metadata only -> audio upload rejected. The rejected completion
+	// leaves the lease valid, so the same job also covers TTS + result.
+	seedTTSRender(t, db)
+	ttsLease := leaseHTTPTTS(t, service, worker)
+	ttsMetadata := ttsMetadataFor(t, ttsLease)
+	recorder = completeRequest(t, handler, ttsLease.JobID, token, map[string][]byte{
+		"metadata": ttsMetadata,
+	}, nil)
+	if recorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("tts metadata only = %d: %s", recorder.Code, recorder.Body.String())
+	}
+	assertAPIErrorCode(t, recorder, ErrCodeAudioUploadRejected)
+
+	// TTS + result (no audio) -> audio upload rejected.
+	recorder = completeRequest(t, handler, ttsLease.JobID, token, map[string][]byte{
+		"metadata": ttsMetadata,
+		"result":   []byte(`{"request_id":"x"}`),
+	}, nil)
+	if recorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("tts with result only = %d: %s", recorder.Code, recorder.Body.String())
+	}
+	assertAPIErrorCode(t, recorder, ErrCodeAudioUploadRejected)
+}
+
+func assertAPIErrorCode(t *testing.T, recorder *httptest.ResponseRecorder, code string) {
+	t.Helper()
+	var failure APIError
+	if err := json.Unmarshal(recorder.Body.Bytes(), &failure); err != nil {
+		t.Fatal(err)
+	}
+	if failure.Code != code {
+		t.Fatalf("error code = %q, want %q", failure.Code, code)
 	}
 }

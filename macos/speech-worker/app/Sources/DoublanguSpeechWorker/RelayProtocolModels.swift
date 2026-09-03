@@ -173,6 +173,11 @@ public struct RelayCompletionLimits: Codable, Equatable, Sendable {
 }
 
 public struct RelayJSONSchema: Codable, Equatable, Sendable {
+  /// The llm.relay.v1 contract fixes the schema wrapper; the Go-side
+  /// validator enforces the same values, and this protocol boundary
+  /// independently rejects anything else.
+  public static let stageArtifactName = "doublangu_stage_artifact"
+
   public let name: String
   public let strict: Bool
   public let schema: RelayJSONValue
@@ -197,8 +202,9 @@ public struct RelayJSONSchema: Codable, Equatable, Sendable {
   }
 
   public func validate() throws {
-    guard !name.isEmpty, name.utf8.count <= RelayLimits.maxModelBytes, schema.objectValue != nil
-    else { throw ProtocolError.invalidValue("relay_json_schema") }
+    guard name == Self.stageArtifactName, strict, schema.objectValue != nil else {
+      throw ProtocolError.invalidValue("relay_json_schema")
+    }
   }
 }
 

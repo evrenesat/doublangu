@@ -128,6 +128,7 @@ func TestAdapterChatCompletionMapping(t *testing.T) {
 		{"invalid", CodeInvalidResponse, false, annotator.CodeInvalidOutput},
 		{"unreachable", CodeUnreachable, true, annotator.CodeUnavailable},
 		{"model unknown", CodeModelUnknown, false, annotator.CodeUnavailable},
+		{"canceled", CodeCanceled, false, annotator.CodeUnavailable},
 	}
 	for _, tc := range cases {
 		db, svc := adapterTestDB(t)

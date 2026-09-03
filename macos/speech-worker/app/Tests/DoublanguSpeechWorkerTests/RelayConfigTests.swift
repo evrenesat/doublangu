@@ -223,4 +223,83 @@ final class AppStateRelayTests: XCTestCase {
     XCTAssertEqual(appState.relayStatus, .off)
     XCTAssertEqual(appState.status, .setupRequired)
   }
+
+  /// Regression: start → stop → save enabled relay config must not restart
+  /// relay leasing; the user's stopped state wins until they start again.
+  func testStopPreventsRelayRestartOnRelayConfigSave() async throws {
+    let (appState, fake) = try await makeRunningRelayAppState()
+
+    // Positive control: the relay lane is leasing while running.
+    XCTAssertGreaterThan(fake.leaseCalls, 0)
+    XCTAssertEqual(appState.relayStatus, .idle)
+
+    appState.stop()
+    XCTAssertFalse(appState.workerRunning)
+    XCTAssertNil(appState.relayLoop)
+    XCTAssertEqual(appState.relayStatus, .off)
+    let leasesAtStop = fake.leaseCalls
+
+    try appState.saveRelayConfiguration(
+      enabled: true, baseURLString: "http://127.0.0.1:8899/v1", requestTimeoutSeconds: 540,
+      apiKeyIfChanged: nil)
+
+    XCTAssertFalse(appState.workerRunning)
+    XCTAssertNil(appState.relayLoop)
+    XCTAssertEqual(appState.relayStatus, .off)
+    try await Task.sleep(nanoseconds: 400_000_000)
+    XCTAssertEqual(fake.leaseCalls, leasesAtStop)
+  }
+
+  /// Relay-only running (speech setup unavailable) is still a running worker:
+  /// the run intent is set, and stopping tears the relay lane down.
+  func testRelayOnlyRunningWorkerCanBeStoppedWhileSpeechSetupRequired() async throws {
+    let (appState, fake) = try await makeRunningRelayAppState()
+
+    XCTAssertEqual(appState.status, .setupRequired)
+    XCTAssertTrue(appState.workerRunning)
+    XCTAssertEqual(appState.relayStatus, .idle)
+    XCTAssertNotNil(appState.relayLoop)
+
+    let leasesAtStop = fake.leaseCalls
+    appState.stop()
+
+    XCTAssertFalse(appState.workerRunning)
+    XCTAssertNil(appState.relayLoop)
+    XCTAssertEqual(appState.relayStatus, .off)
+    XCTAssertEqual(appState.status, .setupRequired)
+    try await Task.sleep(nanoseconds: 400_000_000)
+    XCTAssertEqual(fake.leaseCalls, leasesAtStop)
+  }
+
+  /// Seeds an enrolled config (worker id) with enabled relay plus a complete
+  /// Keychain identity, then starts the worker with a lease-counting relay
+  /// client override so no network traffic leaves the process.
+  private func makeRunningRelayAppState() async throws
+    -> (AppState, RelayRecordingClient)
+  {
+    let root = temporaryRoot("relay-run-intent")
+    let paths = AppPaths(rootOverride: root)
+    try paths.ensureDirectories()
+    var config = SpeechWorkerConfiguration.default(paths: paths)
+    config.workerID = testRelayJobID
+    config.relay = RelayConfig(
+      enabled: true, baseURL: URL(string: "http://127.0.0.1:8899/v1")!,
+      requestTimeoutSeconds: 540)
+    try StrictJSON.encode(config).write(to: paths.configURL, options: .atomic)
+    let keychain = MemorySecretStore()
+    try keychain.write("perimeter-user", account: KeychainAccount.perimeterUsername)
+    try keychain.write("perimeter-pass", account: KeychainAccount.perimeterPassword)
+    try keychain.write(String(repeating: "w", count: 40), account: KeychainAccount.workerToken)
+    try keychain.write("sk-test", account: KeychainAccount.relayAPIKey)
+
+    let appState = await makeAppState(root: root, keychain: keychain)
+    let fake = RelayRecordingClient()
+    appState.relayClientOverride = fake
+    appState.start()
+    let deadline = Date().addingTimeInterval(5)
+    while Date() < deadline, !(appState.relayStatus == .idle && fake.leaseCalls > 0) {
+      try await Task.sleep(nanoseconds: 20_000_000)
+    }
+    return (appState, fake)
+  }
 }

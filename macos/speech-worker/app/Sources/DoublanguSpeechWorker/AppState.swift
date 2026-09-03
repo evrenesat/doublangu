@@ -62,6 +62,11 @@ public enum RelayTestOutcome: Equatable, Sendable {
 public final class AppState: ObservableObject {
   @Published public private(set) var status: AppStatus = .loading
   @Published public private(set) var relayStatus: RelayLoop.Status = .off
+  /// The user's run request, independent of per-lane prerequisites: true
+  /// between `start()` and `stop()`. The menu's Start/Stop action reflects
+  /// this, and relay configuration mutations only (re)start the relay lane
+  /// while it is true.
+  @Published public private(set) var workerRunning = false
   @Published public private(set) var configuration: SpeechWorkerConfiguration?
   @Published public private(set) var setupReceipt: SetupReceipt?
   @Published public private(set) var referenceReady = false
@@ -78,7 +83,10 @@ public final class AppState: ObservableObject {
   public let keychain: SecretStore
   private let loginItem: LoginItemManaging
   private var leaseLoop: LeaseLoop?
-  private var relayLoop: RelayLoop?
+  var relayLoop: RelayLoop?
+  /// Test hook: when set, the relay lane leases through this client instead
+  /// of constructing a real network client.
+  var relayClientOverride: WorkerClienting?
   private var chatterboxSupervisor: ChatterboxSupervisor?
   private var loadTask: Task<Void, Never>?
 
@@ -201,18 +209,19 @@ public final class AppState: ObservableObject {
   }
 
   public func start() {
+    workerRunning = true
     guard let config = configuration else { return }
     let identityReady = config.workerID != nil && hasWorkerToken && hasPerimeterCredentials
     // The lanes are evaluated independently: missing speech setup must not
     // block the relay lane, and relay misconfiguration must not block TTS.
     guard referenceReady && modelReady else {
       status = .setupRequired
-      restartRelayLane(identityReady: identityReady)
+      restartRelayLane(identityReady: identityReady && workerRunning)
       return
     }
     guard identityReady else {
       status = .enrollmentRequired
-      restartRelayLane(identityReady: identityReady)
+      restartRelayLane(identityReady: identityReady && workerRunning)
       return
     }
     if leaseLoop == nil {
@@ -232,10 +241,11 @@ public final class AppState: ObservableObject {
       leaseLoop = loop
       loop.start()
     }
-    restartRelayLane(identityReady: identityReady)
+    restartRelayLane(identityReady: identityReady && workerRunning)
   }
 
   public func stop() {
+    workerRunning = false
     leaseLoop?.stop()
     leaseLoop = nil
     chatterboxSupervisor?.stop()
@@ -310,7 +320,9 @@ public final class AppState: ObservableObject {
   private func restartRelayLaneIfNeeded() {
     guard let config = configuration else { return }
     let identityReady = config.workerID != nil && hasWorkerToken && hasPerimeterCredentials
-    restartRelayLane(identityReady: identityReady)
+    // A stopped worker stays stopped: configuration changes only refresh the
+    // published relay status until the user starts the worker again.
+    restartRelayLane(identityReady: identityReady && workerRunning)
   }
 
   private func restartRelayLane(identityReady: Bool) {
@@ -324,7 +336,8 @@ public final class AppState: ObservableObject {
       relayStatus = .misconfigured
       return
     }
-    let client = WorkerClient(baseURL: config.baseURL, secrets: keychain)
+    let client =
+      relayClientOverride ?? WorkerClient(baseURL: config.baseURL, secrets: keychain)
     let http = RelayHTTPClient(
       target: RelayTarget(
         baseURL: config.relay.baseURL, timeout: TimeInterval(config.relay.requestTimeoutSeconds)))

@@ -124,6 +124,21 @@ final class RelayProtocolTests: XCTestCase {
         responseFormat:
           "{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"n\",\"strict\":true}}"))
     XCTAssertThrowsError(try decodeLease(missingSchema))
+
+    // The contract fixes the wrapper: exact artifact name and strict=true.
+    let wrongName = leaseWireJSON(
+      relay: chatRelayObject(
+        responseFormat:
+          "{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"other_artifact\",\"strict\":true,\"schema\":{}}}"
+      ))
+    XCTAssertThrowsError(try decodeLease(wrongName))
+
+    let notStrict = leaseWireJSON(
+      relay: chatRelayObject(
+        responseFormat:
+          "{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"doublangu_stage_artifact\",\"strict\":false,\"schema\":{}}}"
+      ))
+    XCTAssertThrowsError(try decodeLease(notStrict))
   }
 
   func testWrongOperationAndPayloadCombinationsAreRejected() {
@@ -362,7 +377,7 @@ final class RelayProtocolTests: XCTestCase {
     let bigSchema = leaseWireJSON(
       relay: chatRelayObject(
         responseFormat:
-          "{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"n\",\"strict\":true,\"schema\":{\"x\":\"\(String(repeating: "s", count: 1_200_000))\"}}}"
+          "{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"doublangu_stage_artifact\",\"strict\":true,\"schema\":{\"x\":\"\(String(repeating: "s", count: 1_200_000))\"}}}"
       ))
     XCTAssertNoThrow(try decodeLease(bigSchema))
   }

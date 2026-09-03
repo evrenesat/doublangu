@@ -276,11 +276,13 @@ func (h *SpeechWorkerHandler) ServeComplete(w http.ResponseWriter, r *http.Reque
 			return
 		}
 	}
-	// Metadata plus at least one payload part is required here; the worker
-	// service discriminates the exact TTS/relay shape after loading the
-	// job lease.
-	if !seenMetadata || (!seenAudio && !seenResult) {
-		WriteError(w, http.StatusBadRequest, "audio metadata and file are required", ErrCodeAudioUploadRejected)
+	// Metadata is the only HTTP-level requirement. Whether `audio` or
+	// `result` is required is discriminated by the leased job type after the
+	// service loads the job lease, so a missing payload part is judged by the
+	// service: ErrUploadRejected for TTS shapes, ErrRelayRejected for relay
+	// shapes.
+	if !seenMetadata {
+		WriteError(w, http.StatusBadRequest, "audio metadata is required", ErrCodeAudioUploadRejected)
 		return
 	}
 	if err := h.service.Complete(r.Context(), worker, jobID, metadata, audio, result); err != nil {

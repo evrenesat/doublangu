@@ -1534,3 +1534,35 @@ beta, install the v0.2.0 app on `dev-ren-mac`, perform the single Replace Enroll
 config + key on that Mac, confirm the beta provider catalog lists both models, run the real beta
 article with parallel TTS observation, and the OMLX-offline/explicit-retry proof; rollback per plan
 §13 (disable relay → clear key → reinstall v0.1 if needed).
+
+## 2026-09-03 — Review findings: relay run intent, canceled mapping, fixed wrapper, completion shapes
+
+- **P1 (Mac):** `AppState` gained an explicit run intent (`workerRunning`, published). `start()`
+  sets it before evaluating lane prerequisites; `stop()` clears it and tears both lanes down.
+  `restartRelayLaneIfNeeded()` now restarts the relay lane only while the intent is set, so
+  start → stop → save-enabled-relay-config no longer resurrects relay leasing; while stopped,
+  config mutations only refresh `relayStatus`. The menu's Start/Stop button is driven by the run
+  intent (with Open Setup still offered when speech setup/enrollment is missing), so a
+  relay-only worker whose speech setup is unavailable can always be stopped from the menu.
+  Regression tests use an enrolled config + full Keychain identity with a lease-counting client
+  override (`AppState.relayClientOverride`, test-only): `testStopPreventsRelayRestartOnRelayConfigSave`
+  and `testRelayOnlyRunningWorkerCanBeStoppedWhileSpeechSetupRequired`.
+- **P2 (Go, `internal/llmrelay`):** `mapWaitError` keeps its parent-context checks first and now
+  maps a terminal `v1.relay_canceled` with a live parent context to `annotator.CodeUnavailable`
+  instead of falling through to the generic provider failure. `TestAdapterChatCompletionMapping`
+  covers all five worker relay codes (auth, invalid response, unreachable, model unknown,
+  canceled).
+- **P2 (Mac):** `RelayJSONSchema.validate()` now enforces the fixed wrapper
+  (`name == "doublangu_stage_artifact"`, `strict == true`, schema object), matching the Go
+  validator; `testInvalidResponseFormatWrapperIsRejected` gained wrong-name and strict=false
+  cases, and the large-schema round-trip test uses the real artifact name.
+- **P3 (Go, `internal/httpapi`):** `ServeComplete` requires only `metadata` at the HTTP layer and
+  always hands the observed `audio`/`result` parts to `workers.Service.Complete`, which judges the
+  shape after loading the lease (`ErrUploadRejected` for TTS, `ErrRelayRejected` for relay). New
+  `TestServeCompleteMissingPayloadJudgedByJobType` covers relay+metadata-only,
+  relay+audio, TTS+metadata-only, and TTS+result, asserting the job-specific 422 codes.
+
+Verification: `go test ./internal/llmrelay/ ./internal/httpapi/ -race -count=1` pass; gofmt clean;
+`xcrun swift-format lint` clean; `swift test --package-path app --parallel` exit 0;
+`swift build -c release` exit 0; `build-app.sh --development` rebuilt the v0.2.0 bundle;
+`git diff --check` clean.

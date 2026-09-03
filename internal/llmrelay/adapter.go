@@ -114,6 +114,12 @@ func mapWaitError(ctx context.Context, err error) error {
 			return &annotator.Error{Code: annotator.CodeInvalidOutput, Err: errors.New("relay returned an invalid response")}
 		case CodeUnreachable, CodeModelUnknown, jobs.LeaseExpiredErrorCode, CodeParentCanceled:
 			return &annotator.Error{Code: annotator.CodeUnavailable, Err: fmt.Errorf("relay unavailable: %s", terminal.Code)}
+		case CodeCanceled:
+			// The worker stopped or disabled its relay lane while still
+			// holding a valid lease; the parent context is live here (a
+			// canceled parent is handled above), so the concrete condition
+			// is that the relay became unavailable for this attempt.
+			return &annotator.Error{Code: annotator.CodeUnavailable, Err: fmt.Errorf("relay unavailable: %s", terminal.Code)}
 		default:
 			return &annotator.Error{Code: annotator.CodeProviderFailure, Err: fmt.Errorf("relay failed: %s", terminal.Code)}
 		}
