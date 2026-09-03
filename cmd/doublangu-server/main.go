@@ -5,6 +5,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -151,26 +152,19 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "WARNING: schema not available: %v\n", err)
 	}
 	registry := manifest.NewRegistry()
-	providerRegistry, configErr := loadProviderRegistry(db)
+	providerRegistry, configErr := loadProviderRegistry(db, cfg)
 	if configErr != nil {
 		fmt.Fprintf(stderr, "provider config: %v\n", configErr)
 		return 1
 	}
 	analysisContext, stopAnalysis := context.WithCancel(context.Background())
 	defer stopAnalysis()
-	if providerRegistry != nil {
-		// Pipeline mode: the two-stage pipeline runner owns every analysis
-		// job queued in this mode. The legacy runner must not claim pipeline
-		// payloads.
-		pipelineRunner := analysis.NewPipelineRunner(db, providerRegistry)
-		go pipelineRunner.Run(analysisContext)
-	} else {
-		// Compatibility mode: no provider config file, so the legacy
-		// single-provider runner owns analysis jobs as before.
-		semanticProvider, _ := articleAnnotator.(annotator.SemanticAnnotator)
-		analysisRunner := analysis.NewRunnerWithMedia(db, semanticProvider, mediaStore)
-		go analysisRunner.Run(analysisContext)
-	}
+	// The two-stage pipeline runner owns every analysis job in both modes:
+	// without a provider file the registry is the synthetic compatibility
+	// provider, so legacy installations enter the pipeline architecture
+	// automatically instead of bypassing it.
+	pipelineRunner := analysis.NewPipelineRunner(db, providerRegistry)
+	go pipelineRunner.Run(analysisContext)
 	if err := serve(cfg.Listen, registry, schema, db, newHandlerWithMedia(registry, schema, authHandler, healthHandler, cfg, db, mediaStore, providerRegistry, articleAnnotator), stdout); err != nil {
 		fmt.Fprintf(stderr, "server: %v\n", err)
 		return 1
@@ -275,22 +269,24 @@ func newHandlerWithMedia(
 	if len(providers) > 0 {
 		articleAnnotator = providers[0]
 	}
-	articleHandler := httpapi.NewArticleHandler(db, authHandler.CSRF, articleAnnotator, mediaStore)
-	if providerRegistry != nil {
-		articleHandler.ConfigurePipeline(db, providerRegistry)
-	} else {
+	pipelineMode := providerRegistry != nil
+	if !pipelineMode {
 		providerRegistry = &emptyProviderRegistry{}
 	}
-	pipelineAnalysisHandler := httpapi.NewPipelineAnalysisHandler(db, authHandler.CSRF, providerRegistry)
+	// One shared catalog for article/fresh-profile validation and the
+	// settings/activation/refresh surface, so a provider refresh is visible
+	// to both handlers instead of lingering in a separate five-minute cache.
+	sharedCatalog := httpapi.NewProviderCatalogService(providerRegistry)
+	articleHandler := httpapi.NewArticleHandler(db, authHandler.CSRF, articleAnnotator, mediaStore)
+	if pipelineMode {
+		articleHandler.ConfigurePipeline(db, providerRegistry, sharedCatalog)
+	}
+	pipelineAnalysisHandler := httpapi.NewPipelineAnalysisHandler(db, authHandler.CSRF, providerRegistry, sharedCatalog)
 	articleRoutes := authHandler.RequireAuth(articleMux(articleHandler))
 	mux.Handle("/api/v1/articles", articleRoutes)
 	mux.Handle("/api/v1/articles/", articleRoutes)
 	mux.Handle("/api/v1/learning-state", articleRoutes)
-	var modelCatalog annotator.ModelCatalogProvider
-	if provider, ok := articleAnnotator.(annotator.ModelCatalogProvider); ok {
-		modelCatalog = provider
-	}
-	analysisHandler := httpapi.NewAnalysisHandler(db, authHandler.CSRF, modelCatalog)
+	analysisHandler := httpapi.NewAnalysisHandler(db)
 	analysisProtected := authHandler.RequireAuth(analysisMux(analysisHandler, pipelineAnalysisHandler))
 	analysisRoutes := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
@@ -388,21 +384,87 @@ func articleMux(h *httpapi.ArticleHandler) http.Handler {
 	return mux
 }
 
-// loadProviderRegistry builds the configured provider registry from the
-// trusted provider configuration file when DOUBLANGU_PROVIDER_CONFIG is set,
-// then seeds the bootstrap profile. Without the file it returns (nil, nil):
-// the caller keeps compatibility mode. Any configured-file failure is
-// returned as an error so startup aborts instead of silently switching to the
-// legacy single-provider path.
-func loadProviderRegistry(db *store.DB) (httpapiProviderRegistry, error) {
+// loadProviderRegistry builds the provider registry from the trusted
+// provider configuration file when DOUBLANGU_PROVIDER_CONFIG is set, and
+// from a synthetic compatibility provider otherwise, then seeds the
+// bootstrap profile. An explicit file must not be combined with legacy
+// provider-selection environment. Any failure is returned as an error so
+// startup aborts instead of silently running without providers.
+func loadProviderRegistry(db *store.DB, cfg *config.Config) (httpapiProviderRegistry, error) {
 	pathValue := os.Getenv("DOUBLANGU_PROVIDER_CONFIG")
-	if pathValue == "" {
-		return nil, nil
+	if pathValue != "" {
+		if name, set := legacyProviderSelection(); set {
+			return nil, fmt.Errorf("DOUBLANGU_PROVIDER_CONFIG must not be combined with %s", name)
+		}
+		file, err := config.LoadProviderConfigFile(pathValue, os.Getenv)
+		if err != nil {
+			return nil, fmt.Errorf("load %q: %w", pathValue, err)
+		}
+		return registryFromFile(db, file)
 	}
-	file, err := config.LoadProviderConfigFile(pathValue, os.Getenv)
+	file, err := compatibilityProviderFile(db, cfg)
 	if err != nil {
-		return nil, fmt.Errorf("load %q: %w", pathValue, err)
+		return nil, err
 	}
+	return registryFromFile(db, file)
+}
+
+// legacyProviderSelection reports whether legacy provider-selection
+// environment is set.
+func legacyProviderSelection() (string, bool) {
+	for _, name := range []string{"DOUBLANGU_ANNOTATOR", "DOUBLANGU_CODEX_MODEL", "DOUBLANGU_CODEX_EFFORT"} {
+		if os.Getenv(name) != "" {
+			return name, true
+		}
+	}
+	return "", false
+}
+
+// compatibilityProviderFile synthesizes the single codex-app-server provider
+// from legacy environment, including the disabled descriptor state. A
+// nonblank model becomes the "Imported Codex" bootstrap candidate binding
+// both stages; a blank model leaves profiles empty so article creation fails
+// closed with v1.analysis_profile_unavailable instead of queueing against no
+// provider. The candidate comes from the persisted analysis_settings row
+// (seeded from the environment on first boot, owner-editable afterwards),
+// not from the current environment, so an upgrade keeps the owner's working
+// selection even when the model environment variable is unset.
+func compatibilityProviderFile(db *store.DB, cfg *config.Config) (*config.ProviderConfigFile, error) {
+	file := &config.ProviderConfigFile{
+		Version: config.ProviderConfigVersion,
+		Providers: []config.ProviderEntry{{
+			ID: "codex-app-server", Label: "Codex app-server", EndpointLabel: "Local authenticated Codex CLI",
+			Type: config.ProviderTypeCodexAppServer, Enabled: cfg.Annotator != "disabled",
+			RequestTimeoutSeconds: 600,
+		}},
+	}
+	if cfg.Annotator == "disabled" {
+		return file, nil
+	}
+	model, effort := strings.TrimSpace(cfg.CodexModel), cfg.CodexEffort
+	if persisted, err := analysis.NewSettingsStore(db).Get(context.Background()); err != nil {
+		fmt.Fprintf(os.Stderr, "provider config: could not read persisted analysis settings, trying environment: %v\n", err)
+	} else if strings.TrimSpace(persisted.Model) != "" {
+		model = strings.TrimSpace(persisted.Model)
+		if strings.TrimSpace(persisted.Effort) != "" {
+			effort = strings.TrimSpace(persisted.Effort)
+		}
+	}
+	if model == "" {
+		return file, nil
+	}
+	options, _ := json.Marshal(map[string]string{"reasoning_effort": effort})
+	file.BootstrapProfile = &config.BootstrapProfileConfig{
+		Name: "Imported Codex",
+		Bindings: map[pipeline.StageID]config.BootstrapBindingConfig{
+			pipeline.StageLinguisticAnalysis: {ProviderID: "codex-app-server", ModelID: model, Options: options},
+			pipeline.StageTranslation:        {ProviderID: "codex-app-server", ModelID: model, Options: options},
+		},
+	}
+	return file, nil
+}
+
+func registryFromFile(db *store.DB, file *config.ProviderConfigFile) (httpapiProviderRegistry, error) {
 	registry, err := annotator.NewRegistry(file, "codex", 10*time.Minute, func(name string) (string, error) {
 		return os.Getenv(name), nil
 	})
@@ -424,10 +486,17 @@ type emptyProviderRegistry struct{}
 func (e *emptyProviderRegistry) Provider(string) (annotator.Provider, bool)  { return nil, false }
 func (e *emptyProviderRegistry) Descriptors() []annotator.ProviderDescriptor { return nil }
 
+// bootstrapCatalog is the narrow discovery seam seedBootstrapProfile needs;
+// *annotator.Registry and test doubles satisfy it.
+type bootstrapCatalog interface {
+	ListModels(ctx context.Context, providerID string) ([]annotator.Model, error)
+}
+
 // seedBootstrapProfile inserts the configured bootstrap profile once, when no
-// profiles exist. Discovery failures log provider ids and stable codes only
-// and never leave an invalid active profile behind.
-func seedBootstrapProfile(db *store.DB, file *config.ProviderConfigFile, registry *annotator.Registry) {
+// profiles exist. Referenced models are discovered and validated against a
+// live catalog first; discovery failures log provider ids only and never
+// leave an invalid active profile behind.
+func seedBootstrapProfile(db *store.DB, file *config.ProviderConfigFile, registry bootstrapCatalog) {
 	if file.BootstrapProfile == nil {
 		return
 	}
@@ -470,7 +539,43 @@ func seedBootstrapProfile(db *store.DB, file *config.ProviderConfigFile, registr
 	if !valid || len(bindings) != 2 {
 		return
 	}
-	if _, err := profiles.Seed(context.Background(), []analysis.SeedProfile{{
+	// Discover and validate every referenced model against a live catalog
+	// before inserting: a typo or stale model/effort must never become a
+	// knowingly unusable active profile. Discovery failures log provider IDs
+	// only and leave profiles/settings empty.
+	ctx := context.Background()
+	for _, binding := range bindings {
+		models, err := registry.ListModels(ctx, binding.ProviderID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "provider bootstrap seed: skipping %q: provider %q catalog unavailable\n", file.BootstrapProfile.Name, binding.ProviderID)
+			return
+		}
+		listed := false
+		for _, model := range models {
+			if model.ID == binding.ModelID {
+				listed = true
+				break
+			}
+		}
+		if !listed {
+			fmt.Fprintf(os.Stderr, "provider bootstrap seed: skipping %q: provider %q model %q not listed\n", file.BootstrapProfile.Name, binding.ProviderID, binding.ModelID)
+			return
+		}
+		if binding.ProviderType == config.ProviderTypeCodexAppServer {
+			var options struct {
+				ReasoningEffort string `json:"reasoning_effort"`
+			}
+			if err := json.Unmarshal(binding.Options, &options); err != nil {
+				fmt.Fprintf(os.Stderr, "provider bootstrap seed: skipping %q: provider %q options invalid\n", file.BootstrapProfile.Name, binding.ProviderID)
+				return
+			}
+			if !annotator.SupportsSelection(models, binding.ModelID, options.ReasoningEffort) {
+				fmt.Fprintf(os.Stderr, "provider bootstrap seed: skipping %q: provider %q model %q effort unsupported\n", file.BootstrapProfile.Name, binding.ProviderID, binding.ModelID)
+				return
+			}
+		}
+	}
+	if _, err := profiles.Seed(ctx, []analysis.SeedProfile{{
 		Name: file.BootstrapProfile.Name, Bindings: bindings,
 	}}); err != nil {
 		fmt.Fprintf(os.Stderr, "provider bootstrap seed: %v\n", err)
@@ -486,9 +591,6 @@ func readerSettingsMux(h *httpapi.ReaderSettingsHandler) http.Handler {
 
 func analysisMux(h *httpapi.AnalysisHandler, pipelineHandler *httpapi.PipelineAnalysisHandler) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/v1/analysis/models", h.ServeModels)
-	mux.HandleFunc("GET /api/v1/analysis/settings", h.ServeSettings)
-	mux.HandleFunc("PUT /api/v1/analysis/settings", h.ServeSettings)
 	mux.HandleFunc("GET /api/v1/analysis/runs", h.ServeRuns)
 	mux.HandleFunc("GET /api/v1/analysis/runs/{id}", h.ServeRun)
 	if pipelineHandler != nil {
@@ -499,8 +601,8 @@ func analysisMux(h *httpapi.AnalysisHandler, pipelineHandler *httpapi.PipelineAn
 		mux.HandleFunc("GET /api/v1/analysis/profiles/{id}", pipelineHandler.ServeProfile)
 		mux.HandleFunc("PUT /api/v1/analysis/profiles/{id}", pipelineHandler.ServeProfile)
 		mux.HandleFunc("DELETE /api/v1/analysis/profiles/{id}", pipelineHandler.ServeProfile)
-		mux.HandleFunc("GET /api/v1/analysis/pipeline-settings", pipelineHandler.ServeProfileSettings)
-		mux.HandleFunc("PUT /api/v1/analysis/pipeline-settings", pipelineHandler.ServeProfileSettings)
+		mux.HandleFunc("GET /api/v1/analysis/settings", pipelineHandler.ServeProfileSettings)
+		mux.HandleFunc("PUT /api/v1/analysis/settings", pipelineHandler.ServeProfileSettings)
 	}
 	return mux
 }

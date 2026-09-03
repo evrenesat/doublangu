@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"doublangu/internal/analysis"
@@ -30,6 +32,12 @@ type pipelineAnalysisHandler struct {
 	registry providerRegistry
 	csrf     CSRFVerifier
 	catalog  *ProviderCatalogService
+	// conform retains the latest in-memory conformance result per
+	// provider/stage/model/options tuple. A test creates no article, job,
+	// run, cache entry, or database row; the providers listing returns the
+	// retained summaries so a result survives a browser reload.
+	conformMu sync.Mutex
+	conform   map[string]conformanceResult
 }
 
 func NewPipelineAnalysisHandler(db *store.DB, csrf CSRFVerifier, registry providerRegistry, catalog ...*ProviderCatalogService) *PipelineAnalysisHandler {
@@ -39,7 +47,60 @@ func NewPipelineAnalysisHandler(db *store.DB, csrf CSRFVerifier, registry provid
 	}
 	return &PipelineAnalysisHandler{
 		profiles: analysis.NewProfileStore(db), registry: registry, csrf: csrf, catalog: service,
+		conform: make(map[string]conformanceResult),
 	}
+}
+
+// conformanceResult is the retained owner-visible outcome of one fixture run
+// for a single provider/stage/model/options tuple. It matches the
+// AnalysisConformanceSummary OpenAPI schema exactly.
+type conformanceResult struct {
+	StageID    string          `json:"stage_id"`
+	ModelID    string          `json:"model_id"`
+	Options    json.RawMessage `json:"options,omitempty"`
+	Status     string          `json:"status"`
+	CheckedAt  string          `json:"checked_at"`
+	DurationMS int64           `json:"duration_ms"`
+	ErrorCode  string          `json:"error_code,omitempty"`
+}
+
+// conformanceKey identifies one tested tuple. Options enter only through
+// their canonical hash, so equivalent spellings share one retained result.
+func conformanceKey(providerID, stageID, modelID, optionsHash string) string {
+	return providerID + "\x00" + stageID + "\x00" + modelID + "\x00" + optionsHash
+}
+
+func (h *PipelineAnalysisHandler) recordConformance(key string, result conformanceResult) {
+	h.conformMu.Lock()
+	defer h.conformMu.Unlock()
+	if h.conform == nil {
+		h.conform = make(map[string]conformanceResult)
+	}
+	h.conform[key] = result
+}
+
+// conformanceFor returns the retained tuple results for one provider in
+// stable stage/model order. It returns nil when nothing was tested yet.
+func (h *PipelineAnalysisHandler) conformanceFor(providerID string) []conformanceResult {
+	h.conformMu.Lock()
+	defer h.conformMu.Unlock()
+	prefix := providerID + "\x00"
+	var out []conformanceResult
+	for key, result := range h.conform {
+		if strings.HasPrefix(key, prefix) {
+			out = append(out, result)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].StageID != out[j].StageID {
+			return out[i].StageID < out[j].StageID
+		}
+		if out[i].ModelID != out[j].ModelID {
+			return out[i].ModelID < out[j].ModelID
+		}
+		return out[i].CheckedAt < out[j].CheckedAt
+	})
+	return out
 }
 
 type PipelineAnalysisHandler = pipelineAnalysisHandler
@@ -50,14 +111,15 @@ type PipelineAnalysisHandler = pipelineAnalysisHandler
 // connection identity (endpoint_label, config_fingerprint, request timeout)
 // is never serialized to the browser.
 type providerListEntry struct {
-	ID        string               `json:"id"`
-	Label     string               `json:"label"`
-	Type      string               `json:"type"`
-	Enabled   bool                 `json:"enabled"`
-	Models    []providerModelEntry `json:"models,omitempty"`
-	Stale     bool                 `json:"stale"`
-	LastError string               `json:"last_error,omitempty"`
-	Health    string               `json:"health"`
+	ID          string               `json:"id"`
+	Label       string               `json:"label"`
+	Type        string               `json:"type"`
+	Enabled     bool                 `json:"enabled"`
+	Models      []providerModelEntry `json:"models,omitempty"`
+	Stale       bool                 `json:"stale"`
+	LastError   string               `json:"last_error,omitempty"`
+	Health      string               `json:"health"`
+	Conformance []conformanceResult  `json:"conformance,omitempty"`
 }
 
 // providerModelEntry matches the AnalysisProviderModel schema exactly:
@@ -82,12 +144,86 @@ type profileRequest struct {
 // profileBindingResponse is the explicit owner-visible binding row declared by
 // the AnalysisProfileBinding schema. Snapshot-only fields (provider type,
 // config fingerprint, options hash, stage contract/prompt versions) stay on
-// the server and in run history; the browser never sees them here.
+// the server and in run history; the browser never sees them here. Valid
+// reports whether the stored binding is still usable against the current
+// registry and shared catalog, with a sanitized reason when it is not.
 type profileBindingResponse struct {
-	StageID    string          `json:"stage_id"`
-	ProviderID string          `json:"provider_id"`
-	ModelID    string          `json:"model_id"`
-	Options    json.RawMessage `json:"options"`
+	StageID        string          `json:"stage_id"`
+	ProviderID     string          `json:"provider_id"`
+	ModelID        string          `json:"model_id"`
+	Options        json.RawMessage `json:"options"`
+	Valid          bool            `json:"valid"`
+	ValidityReason string          `json:"validity_reason,omitempty"`
+}
+
+// bindingValidity derives one stored binding's usability from the live
+// registry and the shared catalog, mirroring activation/queue validation
+// without failing the read: unknown/disabled providers, changed provider
+// types, invalid options, unavailable/stale catalogs, unlisted models, and
+// unsupported Codex efforts each produce a sanitized static reason.
+func (h *PipelineAnalysisHandler) bindingValidity(ctx context.Context, binding pipeline.BindingSnapshot) (bool, string) {
+	descriptors := make(map[string]annotator.ProviderDescriptor)
+	if h.registry != nil {
+		for _, descriptor := range h.registry.Descriptors() {
+			descriptors[descriptor.ID] = descriptor
+		}
+	}
+	descriptor, ok := descriptors[binding.ProviderID]
+	if !ok {
+		return false, "unknown provider"
+	}
+	if !descriptor.Enabled {
+		return false, "disabled provider"
+	}
+	if binding.ProviderType != "" && binding.ProviderType != descriptor.Type {
+		return false, "provider type changed"
+	}
+	canonical, err := config.CanonicalizeProviderOptions(descriptor.Type, binding.Options)
+	if err != nil {
+		return false, "invalid options"
+	}
+	snapshot, err := h.catalog.Snapshot(ctx, binding.ProviderID, false)
+	if err != nil {
+		return false, "provider catalog unavailable"
+	}
+	if snapshot.Stale {
+		return false, "provider catalog stale"
+	}
+	found := false
+	for _, model := range snapshot.Models {
+		if model.ID == binding.ModelID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return false, "model not listed"
+	}
+	if descriptor.Type == config.ProviderTypeCodexAppServer {
+		var options codexCatalogOptions
+		if err := json.Unmarshal(canonical, &options); err != nil || options.ReasoningEffort == "" {
+			return false, "invalid options"
+		}
+		if !annotator.SupportsSelection(snapshot.Models, binding.ModelID, options.ReasoningEffort) {
+			return false, "reasoning effort not supported"
+		}
+	}
+	return true, ""
+}
+
+func (h *PipelineAnalysisHandler) profileResponse(ctx context.Context, profile *analysis.Profile) profileResponse {
+	bindings := make([]profileBindingResponse, 0, len(profile.Bindings))
+	for _, binding := range profile.Bindings {
+		valid, reason := h.bindingValidity(ctx, binding)
+		bindings = append(bindings, profileBindingResponse{
+			StageID: string(binding.StageID), ProviderID: binding.ProviderID,
+			ModelID: binding.ModelID, Options: binding.Options,
+			Valid: valid, ValidityReason: reason,
+		})
+	}
+	return profileResponse{
+		ID: profile.ID, Name: profile.Name, Bindings: bindings, IsActive: profile.IsActive,
+	}
 }
 
 type profileResponse struct {
@@ -303,17 +439,6 @@ func providerEntry(descriptor annotator.ProviderDescriptor, models []annotator.M
 	return entry
 }
 
-func profileBindingsResponse(bindings []pipeline.BindingSnapshot) []profileBindingResponse {
-	response := make([]profileBindingResponse, 0, len(bindings))
-	for _, binding := range bindings {
-		response = append(response, profileBindingResponse{
-			StageID: string(binding.StageID), ProviderID: binding.ProviderID,
-			ModelID: binding.ModelID, Options: binding.Options,
-		})
-	}
-	return response
-}
-
 // ServeProviders renders the predefined provider cards from the shared
 // per-provider catalog. The optional refresh=true&provider_id= pair forces a
 // refresh of exactly that provider; every other provider renders from its
@@ -354,14 +479,18 @@ func (h *PipelineAnalysisHandler) ServeProviders(w http.ResponseWriter, r *http.
 		}
 		snapshot, err := h.catalog.Snapshot(r.Context(), descriptor.ID, refresh && descriptor.ID == providerID)
 		if err != nil {
-			entries = append(entries, providerEntry(descriptor, nil, false, sanitizedProviderError(err), "unhealthy"))
+			failed := providerEntry(descriptor, nil, false, sanitizedProviderError(err), "unhealthy")
+			failed.Conformance = h.conformanceFor(descriptor.ID)
+			entries = append(entries, failed)
 			continue
 		}
 		health := "healthy"
 		if snapshot.LastError != "" {
 			health = "unhealthy"
 		}
-		entries = append(entries, providerEntry(descriptor, snapshot.Models, snapshot.Stale, snapshot.LastError, health))
+		entry := providerEntry(descriptor, snapshot.Models, snapshot.Stale, snapshot.LastError, health)
+		entry.Conformance = h.conformanceFor(descriptor.ID)
+		entries = append(entries, entry)
 	}
 	WriteOK(w, providersResponse{Providers: entries})
 }
@@ -376,10 +505,8 @@ func (h *PipelineAnalysisHandler) ServeProfiles(w http.ResponseWriter, r *http.R
 			return
 		}
 		response := make([]profileResponse, 0, len(profiles))
-		for _, profile := range profiles {
-			response = append(response, profileResponse{
-				ID: profile.ID, Name: profile.Name, Bindings: profileBindingsResponse(profile.Bindings), IsActive: profile.IsActive,
-			})
+		for i := range profiles {
+			response = append(response, h.profileResponse(r.Context(), &profiles[i]))
 		}
 		WriteOK(w, map[string]any{"profiles": response})
 	case http.MethodPost:
@@ -402,9 +529,7 @@ func (h *PipelineAnalysisHandler) ServeProfiles(w http.ResponseWriter, r *http.R
 			writeProfileError(w, err)
 			return
 		}
-		WriteJSON(w, http.StatusCreated, profileResponse{
-			ID: profile.ID, Name: profile.Name, Bindings: profileBindingsResponse(profile.Bindings),
-		})
+		WriteJSON(w, http.StatusCreated, h.profileResponse(r.Context(), profile))
 	default:
 		w.Header().Set("Allow", "GET, POST")
 		WriteError(w, http.StatusMethodNotAllowed, "method not allowed", ErrCodeMethodNotAllow)
@@ -429,7 +554,7 @@ func (h *PipelineAnalysisHandler) ServeProfile(w http.ResponseWriter, r *http.Re
 			writeProfileError(w, err)
 			return
 		}
-		WriteOK(w, profileResponse{ID: profile.ID, Name: profile.Name, Bindings: profileBindingsResponse(profile.Bindings), IsActive: profile.IsActive})
+		WriteOK(w, h.profileResponse(r.Context(), profile))
 	case http.MethodPut:
 		if h.csrf == nil || h.csrf.VerifyRequest(r) != nil {
 			WriteError(w, http.StatusForbidden, "csrf token is missing or invalid", ErrCodeCSRF)
@@ -455,7 +580,7 @@ func (h *PipelineAnalysisHandler) ServeProfile(w http.ResponseWriter, r *http.Re
 			writeProfileError(w, err)
 			return
 		}
-		WriteOK(w, profileResponse{ID: profile.ID, Name: profile.Name, Bindings: profileBindingsResponse(profile.Bindings), IsActive: profile.IsActive})
+		WriteOK(w, h.profileResponse(r.Context(), profile))
 	case http.MethodDelete:
 		if h.csrf == nil || h.csrf.VerifyRequest(r) != nil {
 			WriteError(w, http.StatusForbidden, "csrf token is missing or invalid", ErrCodeCSRF)
@@ -521,8 +646,10 @@ func (h *PipelineAnalysisHandler) ServeProfileSettings(w http.ResponseWriter, r 
 	}
 }
 
-// ServeProviderTest runs the fixed safe fixture through the selected stage and
-// returns only status, duration, and a stable error code.
+// ServeProviderTest runs the fixed safe fixture through the selected stage
+// and returns only status, duration, and a stable error code. The outcome is
+// retained as the latest in-memory result for its
+// provider/stage/model/options tuple and returned with the providers listing.
 func (h *PipelineAnalysisHandler) ServeProviderTest(w http.ResponseWriter, r *http.Request) {
 	noStore(w)
 	if r.Method != http.MethodPost {
@@ -549,12 +676,75 @@ func (h *PipelineAnalysisHandler) ServeProviderTest(w http.ResponseWriter, r *ht
 		WriteError(w, http.StatusBadRequest, "invalid stage", ErrCodeValidation)
 		return
 	}
+	// Validate the complete tuple against the shared catalog before any
+	// provider call: only a fixture that actually executed is recorded, so
+	// client input errors stay 400s and never pollute retained health state.
+	canonical, optionsHash, err := h.verifyTestTuple(r.Context(), provider, input.ModelID, input.Options)
+	if err != nil {
+		writeBindingValidationError(w, err)
+		return
+	}
+	input.Options = canonical
 	started := time.Now()
 	status, errorCode := "healthy", ""
 	if err := runProviderFixture(r.Context(), provider, input); err != nil {
 		status, errorCode = "unhealthy", annotator.StageErrorCode(err)
 	}
-	WriteOK(w, providerTestResponse{Status: status, DurationMS: time.Since(started).Milliseconds(), ErrorCode: errorCode})
+	duration := time.Since(started).Milliseconds()
+	// Retain the latest result keyed by the full tested tuple so Settings can
+	// show per-stage/model/options outcomes instead of one provider verdict.
+	h.recordConformance(conformanceKey(providerID, input.StageID, input.ModelID, optionsHash), conformanceResult{
+		StageID: input.StageID, ModelID: input.ModelID, Options: canonical,
+		Status: status, CheckedAt: store.NowUTC(), DurationMS: duration, ErrorCode: errorCode,
+	})
+	WriteOK(w, providerTestResponse{Status: status, DurationMS: duration, ErrorCode: errorCode})
+}
+
+// verifyTestTuple validates one conformance test tuple against the shared
+// catalog before any provider call and returns the canonical options plus
+// their hash for retention. A blank model, uncanonicalizable options, an
+// unlisted model, or an unsupported Codex effort is a 400; an unavailable or
+// stale catalog is a 503, mirroring profile save validation.
+func (h *PipelineAnalysisHandler) verifyTestTuple(ctx context.Context, provider annotator.Provider, modelID string, raw json.RawMessage) (json.RawMessage, string, error) {
+	descriptor := provider.Descriptor()
+	if strings.TrimSpace(modelID) == "" {
+		return nil, "", &bindingValidationError{Message: "model_id is required"}
+	}
+	canonical, err := canonicalizeForProvider(descriptor.Type, raw)
+	if err != nil {
+		return nil, "", &bindingValidationError{Message: "options are invalid for this provider type"}
+	}
+	snapshot, err := h.catalog.Snapshot(ctx, descriptor.ID, false)
+	if err != nil {
+		return nil, "", &bindingValidationError{Unavailable: true, Message: "provider model catalog is unavailable; cannot verify the binding"}
+	}
+	if snapshot.Stale {
+		return nil, "", &bindingValidationError{Unavailable: true, Message: "provider model catalog is stale; refresh it before testing this binding"}
+	}
+	found := false
+	for _, model := range snapshot.Models {
+		if model.ID == modelID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return nil, "", &bindingValidationError{Message: "model is not listed in the provider catalog"}
+	}
+	if descriptor.Type == config.ProviderTypeCodexAppServer {
+		var options codexCatalogOptions
+		if err := json.Unmarshal(canonical, &options); err != nil || options.ReasoningEffort == "" {
+			return nil, "", &bindingValidationError{Message: "options are invalid for this provider type"}
+		}
+		if !annotator.SupportsSelection(snapshot.Models, modelID, options.ReasoningEffort) {
+			return nil, "", &bindingValidationError{Message: "reasoning effort is not supported by this model"}
+		}
+	}
+	optionsHash, err := pipeline.OptionsHashOf(canonical)
+	if err != nil {
+		return nil, "", &bindingValidationError{Message: "options are invalid for this provider type"}
+	}
+	return canonical, optionsHash, nil
 }
 
 func writeBindingValidationError(w http.ResponseWriter, err error) {

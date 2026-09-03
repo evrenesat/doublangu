@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -28,6 +29,7 @@ func omlxProvider(serverURL string, timeout time.Duration) *openAICompatibleProv
 	return &openAICompatibleProvider{
 		descriptor: ProviderDescriptor{ID: "mac-omlx", Type: ProviderTypeOpenAICompatible, Enabled: true},
 		baseURL:    serverURL, apiKey: "super-secret-value", timeout: timeout,
+		client: newOpenAIHTTPClient(timeout),
 	}
 }
 
@@ -335,5 +337,126 @@ func TestOMLXTransportThroughLinguisticExecutor(t *testing.T) {
 	}
 	if !strings.Contains(result.UsageJSON, "total_tokens") {
 		t.Fatalf("usage missing: %q", result.UsageJSON)
+	}
+}
+
+func TestOpenAICatalogRedactsEchoedKey(t *testing.T) {
+	// A /models 401 echoing the resolved key must classify auth without
+	// leaking the key or the echoed body into the error.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte("invalid token: super-secret-value"))
+	}))
+	defer server.Close()
+	_, err := omlxProvider(server.URL, 5*time.Second).ListModels(context.Background())
+	if err == nil {
+		t.Fatal("auth failure not surfaced")
+	}
+	var typed *Error
+	if !errors.As(err, &typed) || typed.Code != CodeNotAuthenticated {
+		t.Fatalf("auth error = %v", err)
+	}
+	if strings.Contains(err.Error(), "super-secret-value") || strings.Contains(err.Error(), "invalid token") {
+		t.Fatalf("secret or body leaked into catalog error: %v", err)
+	}
+}
+
+func closedPortURL(t *testing.T) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("no loopback listener: %v", err)
+	}
+	address := listener.Addr().String()
+	listener.Close()
+	return "http://" + address
+}
+
+func TestOpenAITransportErrorsHideEndpointURL(t *testing.T) {
+	endpoint := closedPortURL(t)
+	provider := omlxProvider(endpoint, 5*time.Second)
+	if _, err := provider.ListModels(context.Background()); err == nil {
+		t.Fatal("unreachable catalog accepted")
+	} else if strings.Contains(err.Error(), endpoint) || strings.Contains(err.Error(), "127.0.0.1") {
+		t.Fatalf("endpoint URL leaked into catalog error: %v", err)
+	}
+	session, err := provider.OpenSession(context.Background(), omlxBinding(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	if _, err := session.Turn(context.Background(), TurnRequest{Prompt: "x", OutputSchema: json.RawMessage(`{"type":"object"}`)}); err == nil {
+		t.Fatal("unreachable turn accepted")
+	} else {
+		var typed *Error
+		if !errors.As(err, &typed) || typed.Code != CodeUnavailable {
+			t.Fatalf("transport error = %v", err)
+		}
+		if strings.Contains(err.Error(), endpoint) || strings.Contains(err.Error(), "127.0.0.1") {
+			t.Fatalf("endpoint URL leaked into turn error: %v", err)
+		}
+	}
+}
+
+func TestOpenAIReportedModelUsesEnvelopeValue(t *testing.T) {
+	envelope := func(model string) map[string]any {
+		body := chatCompletion(`{"version":"reader.translation.v1","ok":true}`)
+		if model == "" {
+			delete(body, "model")
+		} else {
+			body["model"] = model
+		}
+		return body
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(envelope("served-concrete-model"))
+	}))
+	defer server.Close()
+	session, err := omlxProvider(server.URL, 5*time.Second).OpenSession(context.Background(), omlxBinding(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	completion, err := session.Turn(context.Background(), TurnRequest{Prompt: "x", OutputSchema: json.RawMessage(`{"type":"object"}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completion.ReportedModel != "served-concrete-model" {
+		t.Fatalf("reported model = %q, want the envelope value", completion.ReportedModel)
+	}
+
+	omitted := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(envelope(""))
+	}))
+	defer omitted.Close()
+	omittedSession, err := omlxProvider(omitted.URL, 5*time.Second).OpenSession(context.Background(), omlxBinding(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer omittedSession.Close()
+	omittedCompletion, err := omittedSession.Turn(context.Background(), TurnRequest{Prompt: "x", OutputSchema: json.RawMessage(`{"type":"object"}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if omittedCompletion.ReportedModel != "" {
+		t.Fatalf("omitted model reported = %q, want empty", omittedCompletion.ReportedModel)
+	}
+}
+
+func TestOpenAIProviderReusesBoundedTransport(t *testing.T) {
+	provider := omlxProvider("http://127.0.0.1:9", 5*time.Second)
+	if provider.client == nil {
+		t.Fatal("provider has no owned HTTP client")
+	}
+	transport, ok := provider.client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("transport = %T", provider.client.Transport)
+	}
+	if transport.MaxIdleConnsPerHost <= 0 || transport.IdleConnTimeout <= 0 {
+		t.Fatalf("unbounded idle connections: %+v", transport)
+	}
+	other := omlxProvider("http://127.0.0.1:9", 5*time.Second)
+	if other.client == provider.client {
+		t.Fatal("providers share one transport instead of owning their own")
 	}
 }

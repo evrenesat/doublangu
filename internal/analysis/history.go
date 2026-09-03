@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"doublangu/internal/library"
+	"doublangu/internal/pipeline"
 	"doublangu/internal/store"
 )
 
@@ -54,23 +55,56 @@ type Run struct {
 // RunSummary deliberately uses the same safe fields as Run without turn
 // artifacts. Full prompts and responses are returned only by GetRun.
 type RunSummary struct {
-	ID                  library.ULID `json:"id"`
-	ArticleID           library.ULID `json:"article_id"`
-	ArticleTitle        string       `json:"article_title"`
-	AttemptCount        int          `json:"attempt_count"`
-	RequestedModel      string       `json:"requested_model"`
-	RequestedEffort     string       `json:"requested_effort"`
-	Status              string       `json:"status"`
-	TotalParagraphs     int          `json:"total_paragraphs"`
-	CompletedParagraphs int          `json:"completed_paragraphs"`
-	FailedBlockIndex    int          `json:"failed_block_index"`
-	DurationMS          int64        `json:"duration_ms"`
-	StartedAt           string       `json:"started_at"`
-	CompletedAt         string       `json:"completed_at"`
-	ErrorCode           string       `json:"error_code"`
-	ProfileID           string       `json:"profile_id,omitempty"`
-	ProfileName         string       `json:"profile_name,omitempty"`
-	ProfileSnapshotHash string       `json:"profile_snapshot_hash,omitempty"`
+	ID                  library.ULID        `json:"id"`
+	ArticleID           library.ULID        `json:"article_id"`
+	ArticleTitle        string              `json:"article_title"`
+	AttemptCount        int                 `json:"attempt_count"`
+	RequestedModel      string              `json:"requested_model"`
+	RequestedEffort     string              `json:"requested_effort"`
+	Status              string              `json:"status"`
+	TotalParagraphs     int                 `json:"total_paragraphs"`
+	CompletedParagraphs int                 `json:"completed_paragraphs"`
+	FailedBlockIndex    int                 `json:"failed_block_index"`
+	DurationMS          int64               `json:"duration_ms"`
+	StartedAt           string              `json:"started_at"`
+	CompletedAt         string              `json:"completed_at"`
+	ErrorCode           string              `json:"error_code"`
+	ProfileID           string              `json:"profile_id,omitempty"`
+	ProfileName         string              `json:"profile_name,omitempty"`
+	ProfileSnapshotHash string              `json:"profile_snapshot_hash,omitempty"`
+	Bindings            []RunBindingSummary `json:"bindings,omitempty"`
+}
+
+// RunBindingSummary is the compact stage provenance for one pipeline run:
+// stage, provider, and model only. Options stay in run detail and history.
+type RunBindingSummary struct {
+	StageID    string `json:"stage_id"`
+	ProviderID string `json:"provider_id"`
+	ModelID    string `json:"model_id"`
+}
+
+// runBindingsFromSnapshot derives compact binding summaries from a stored
+// immutable profile snapshot. Legacy rows without a snapshot (or with a
+// snapshot that no longer decodes) yield nil so callers fall back to the
+// legacy requested model/effort fields.
+func runBindingsFromSnapshot(raw string) []RunBindingSummary {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var snapshot pipeline.ProfileSnapshot
+	if err := json.Unmarshal([]byte(raw), &snapshot); err != nil || len(snapshot.Bindings) == 0 {
+		return nil
+	}
+	bindings := make([]RunBindingSummary, 0, len(snapshot.Bindings))
+	for _, binding := range snapshot.Bindings {
+		if binding.StageID == "" || binding.ProviderID == "" || binding.ModelID == "" {
+			return nil
+		}
+		bindings = append(bindings, RunBindingSummary{
+			StageID: string(binding.StageID), ProviderID: binding.ProviderID, ModelID: binding.ModelID,
+		})
+	}
+	return bindings
 }
 
 type RunStart struct {
@@ -322,7 +356,8 @@ func (s *HistoryStore) ListRuns(ctx context.Context, articleID string, limit int
 		       r.requested_effort, r.status, r.total_paragraphs,
 		       r.completed_paragraphs, r.failed_block_index, r.duration_ms,
 		       r.started_at, r.completed_at, r.error_code,
-		       r.profile_id, r.profile_name, r.profile_snapshot_hash
+		       r.profile_id, r.profile_name, r.profile_snapshot_hash,
+		       r.profile_snapshot_json
 		FROM analysis_run r JOIN article a ON a.id = r.article_id
 		WHERE `+strings.Join(where, " AND ")+`
 		ORDER BY r.started_at DESC, r.id DESC LIMIT ?
@@ -334,12 +369,13 @@ func (s *HistoryStore) ListRuns(ctx context.Context, articleID string, limit int
 	page := RunsPage{Runs: make([]RunSummary, 0, limit)}
 	for rows.Next() {
 		var summary RunSummary
-		var rawID, rawArticleID string
-		if err := rows.Scan(&rawID, &rawArticleID, &summary.ArticleTitle, &summary.AttemptCount, &summary.RequestedModel, &summary.RequestedEffort, &summary.Status, &summary.TotalParagraphs, &summary.CompletedParagraphs, &summary.FailedBlockIndex, &summary.DurationMS, &summary.StartedAt, &summary.CompletedAt, &summary.ErrorCode, &summary.ProfileID, &summary.ProfileName, &summary.ProfileSnapshotHash); err != nil {
+		var rawID, rawArticleID, snapshotJSON string
+		if err := rows.Scan(&rawID, &rawArticleID, &summary.ArticleTitle, &summary.AttemptCount, &summary.RequestedModel, &summary.RequestedEffort, &summary.Status, &summary.TotalParagraphs, &summary.CompletedParagraphs, &summary.FailedBlockIndex, &summary.DurationMS, &summary.StartedAt, &summary.CompletedAt, &summary.ErrorCode, &summary.ProfileID, &summary.ProfileName, &summary.ProfileSnapshotHash, &snapshotJSON); err != nil {
 			return RunsPage{}, err
 		}
 		summary.ID = library.ULID(rawID)
 		summary.ArticleID = library.ULID(rawArticleID)
+		summary.Bindings = runBindingsFromSnapshot(snapshotJSON)
 		page.Runs = append(page.Runs, summary)
 	}
 	if err := rows.Err(); err != nil {

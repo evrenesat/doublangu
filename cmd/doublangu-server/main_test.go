@@ -3,11 +3,13 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -18,11 +20,13 @@ import (
 	"testing"
 	"time"
 
+	"doublangu/internal/analysis"
 	"doublangu/internal/annotator"
 	"doublangu/internal/auth"
 	"doublangu/internal/config"
 	"doublangu/internal/httpapi"
 	"doublangu/internal/library"
+	"doublangu/internal/pipeline"
 	manifest "doublangu/internal/plugins"
 	"doublangu/internal/reader"
 	"doublangu/internal/store"
@@ -750,5 +754,251 @@ func findRepositoryRoot(t *testing.T) string {
 			t.Fatal("go.mod not found")
 		}
 		directory = parent
+	}
+}
+
+type seedFakeProvider struct {
+	descriptor annotator.ProviderDescriptor
+	models     []annotator.Model
+	listErr    error
+}
+
+func (p *seedFakeProvider) Descriptor() annotator.ProviderDescriptor { return p.descriptor }
+func (p *seedFakeProvider) ListModels(context.Context) ([]annotator.Model, error) {
+	if p.listErr != nil {
+		return nil, p.listErr
+	}
+	return p.models, nil
+}
+func (p *seedFakeProvider) OpenSession(context.Context, annotator.ResolvedBinding) (annotator.Session, error) {
+	return nil, errors.New("no sessions in seed tests")
+}
+
+type seedFakeCatalog struct {
+	providers map[string]annotator.Provider
+}
+
+func (c *seedFakeCatalog) ListModels(ctx context.Context, id string) ([]annotator.Model, error) {
+	provider, ok := c.providers[id]
+	if !ok {
+		return nil, errors.New("unknown provider")
+	}
+	return provider.ListModels(ctx)
+}
+
+func seedBootstrapFile(modelID, effort string) *config.ProviderConfigFile {
+	options, _ := json.Marshal(map[string]string{"reasoning_effort": effort})
+	return &config.ProviderConfigFile{
+		Version: config.ProviderConfigVersion,
+		Providers: []config.ProviderEntry{{
+			ID: "codex-app-server", Label: "Codex", EndpointLabel: "Local",
+			Type: config.ProviderTypeCodexAppServer, Enabled: true,
+		}},
+		BootstrapProfile: &config.BootstrapProfileConfig{
+			Name: "Bootstrap",
+			Bindings: map[pipeline.StageID]config.BootstrapBindingConfig{
+				pipeline.StageLinguisticAnalysis: {ProviderID: "codex-app-server", ModelID: modelID, Options: options},
+				pipeline.StageTranslation:        {ProviderID: "codex-app-server", ModelID: modelID, Options: options},
+			},
+		},
+	}
+}
+
+func seedCatalog() *seedFakeCatalog {
+	return &seedFakeCatalog{providers: map[string]annotator.Provider{
+		"codex-app-server": &seedFakeProvider{
+			descriptor: annotator.ProviderDescriptor{ID: "codex-app-server", Type: config.ProviderTypeCodexAppServer, Enabled: true},
+			models: []annotator.Model{{
+				ID: "model-a", DisplayName: "Model A",
+				SupportedReasoningEfforts: []annotator.ReasoningEffort{{Value: "low"}, {Value: "medium"}},
+			}},
+		},
+	}}
+}
+
+func TestSeedBootstrapValidatesModelsBeforeActivation(t *testing.T) {
+	newDB := func(t *testing.T) *store.DB {
+		db, err := store.OpenTest()
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { db.Close() })
+		return db
+	}
+
+	t.Run("valid bootstrap seeds and activates", func(t *testing.T) {
+		db := newDB(t)
+		seedBootstrapProfile(db, seedBootstrapFile("model-a", "low"), seedCatalog())
+		profiles := analysis.NewProfileStore(db)
+		active, err := profiles.ActiveProfile(context.Background())
+		if err != nil || active == "" {
+			t.Fatalf("active = %q err=%v", active, err)
+		}
+		stored, err := profiles.Get(context.Background(), active)
+		if err != nil || stored.Name != "Bootstrap" || len(stored.Bindings) != 2 {
+			t.Fatalf("stored = %+v err=%v", stored, err)
+		}
+	})
+
+	for _, test := range []struct {
+		name   string
+		file   *config.ProviderConfigFile
+		mutate func(*seedFakeCatalog)
+	}{
+		{"unlisted model", seedBootstrapFile("ghost-model", "low"), nil},
+		{"unsupported effort", seedBootstrapFile("model-a", "extreme"), nil},
+		{"catalog unavailable", seedBootstrapFile("model-a", "low"), func(c *seedFakeCatalog) {
+			c.providers["codex-app-server"] = &seedFakeProvider{
+				descriptor: annotator.ProviderDescriptor{ID: "codex-app-server", Type: config.ProviderTypeCodexAppServer, Enabled: true},
+				listErr:    errors.New("catalog offline"),
+			}
+		}},
+	} {
+		t.Run(test.name+" leaves profiles empty", func(t *testing.T) {
+			db := newDB(t)
+			catalog := seedCatalog()
+			if test.mutate != nil {
+				test.mutate(catalog)
+			}
+			seedBootstrapProfile(db, test.file, catalog)
+			count, err := analysis.NewProfileStore(db).Count(context.Background())
+			if err != nil || count != 0 {
+				t.Fatalf("profiles = %d err=%v, want none", count, err)
+			}
+		})
+	}
+}
+
+func TestCompatibilityProviderFile(t *testing.T) {
+	newDB := func(t *testing.T) *store.DB {
+		db, err := store.OpenTest()
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { db.Close() })
+		return db
+	}
+	newConfig := func(annotator, model, effort string) *config.Config {
+		return &config.Config{Annotator: annotator, CodexModel: model, CodexEffort: effort}
+	}
+
+	file, err := compatibilityProviderFile(newDB(t), newConfig("codex", "gpt-x", "medium"))
+	if err != nil {
+		t.Fatalf("file = %v", err)
+	}
+	if len(file.Providers) != 1 || file.Providers[0].ID != "codex-app-server" || !file.Providers[0].Enabled {
+		t.Fatalf("providers = %+v", file.Providers)
+	}
+	if file.BootstrapProfile == nil || file.BootstrapProfile.Name != "Imported Codex" {
+		t.Fatalf("bootstrap = %+v", file.BootstrapProfile)
+	}
+	for _, stage := range pipeline.RegisteredStages() {
+		binding, ok := file.BootstrapProfile.Bindings[stage]
+		if !ok || binding.ProviderID != "codex-app-server" || binding.ModelID != "gpt-x" {
+			t.Fatalf("stage %s binding = %+v", stage, binding)
+		}
+	}
+
+	disabled, err := compatibilityProviderFile(newDB(t), newConfig("disabled", "gpt-x", "medium"))
+	if err != nil {
+		t.Fatalf("disabled file = %v", err)
+	}
+	if disabled.Providers[0].Enabled || disabled.BootstrapProfile != nil {
+		t.Fatalf("disabled file = %+v", disabled)
+	}
+
+	blank, err := compatibilityProviderFile(newDB(t), newConfig("codex", "", "medium"))
+	if err != nil {
+		t.Fatalf("blank file = %v", err)
+	}
+	if blank.BootstrapProfile != nil {
+		t.Fatalf("blank model bootstrap = %+v", blank.BootstrapProfile)
+	}
+}
+
+func TestCompatibilityProviderFileImportsPersistedSettings(t *testing.T) {
+	db, err := store.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	// An existing installation saved its selection through the Settings API
+	// while the model environment variable is unset (the upgrade case).
+	if _, err := analysis.NewSettingsStore(db).Save(context.Background(), "persisted-model", "high"); err != nil {
+		t.Fatalf("seed settings: %v", err)
+	}
+	file, err := compatibilityProviderFile(db, &config.Config{Annotator: "codex", CodexEffort: "medium"})
+	if err != nil {
+		t.Fatalf("file = %v", err)
+	}
+	if file.BootstrapProfile == nil || file.BootstrapProfile.Name != "Imported Codex" {
+		t.Fatalf("bootstrap = %+v", file.BootstrapProfile)
+	}
+	for _, stage := range pipeline.RegisteredStages() {
+		binding, ok := file.BootstrapProfile.Bindings[stage]
+		if !ok || binding.ProviderID != "codex-app-server" || binding.ModelID != "persisted-model" {
+			t.Fatalf("stage %s binding = %+v", stage, binding)
+		}
+		var options struct {
+			ReasoningEffort string `json:"reasoning_effort"`
+		}
+		if err := json.Unmarshal(binding.Options, &options); err != nil || options.ReasoningEffort != "high" {
+			t.Fatalf("stage %s options = %s err=%v", stage, binding.Options, err)
+		}
+	}
+}
+
+func TestLegacyProviderSelection(t *testing.T) {
+	t.Setenv("DOUBLANGU_ANNOTATOR", "")
+	t.Setenv("DOUBLANGU_CODEX_MODEL", "")
+	t.Setenv("DOUBLANGU_CODEX_EFFORT", "")
+	if name, set := legacyProviderSelection(); set {
+		t.Fatalf("selection = %q, want unset", name)
+	}
+	t.Setenv("DOUBLANGU_CODEX_MODEL", "gpt-x")
+	if name, set := legacyProviderSelection(); !set || name != "DOUBLANGU_CODEX_MODEL" {
+		t.Fatalf("selection = %q %v", name, set)
+	}
+}
+
+func TestLoadProviderRegistrySynthesizesCompatibilityProvider(t *testing.T) {
+	t.Setenv("DOUBLANGU_PROVIDER_CONFIG", "")
+	t.Setenv("DOUBLANGU_ANNOTATOR", "")
+	t.Setenv("DOUBLANGU_CODEX_MODEL", "")
+	t.Setenv("DOUBLANGU_CODEX_EFFORT", "")
+	db, err := store.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+
+	registry, err := loadProviderRegistry(db, &config.Config{Annotator: "codex", CodexEffort: "medium"})
+	if err != nil {
+		t.Fatalf("load = %v", err)
+	}
+	descriptors := registry.Descriptors()
+	if len(descriptors) != 1 || descriptors[0].ID != "codex-app-server" || !descriptors[0].Enabled {
+		t.Fatalf("descriptors = %+v", descriptors)
+	}
+	if _, ok := registry.Provider("codex-app-server"); !ok {
+		t.Fatal("synthetic provider not resolvable")
+	}
+	count, err := analysis.NewProfileStore(db).Count(context.Background())
+	if err != nil || count != 0 {
+		t.Fatalf("profiles = %d err=%v, want none for a blank legacy model", count, err)
+	}
+}
+
+func TestLoadProviderRegistryRejectsCombinedSources(t *testing.T) {
+	t.Setenv("DOUBLANGU_PROVIDER_CONFIG", "/tmp/doublangu-providers.json")
+	t.Setenv("DOUBLANGU_CODEX_MODEL", "gpt-x")
+	db, err := store.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+
+	if _, err := loadProviderRegistry(db, &config.Config{Annotator: "codex", CodexModel: "gpt-x", CodexEffort: "medium"}); err == nil {
+		t.Fatal("combined file and legacy selection accepted, want startup error")
 	}
 }

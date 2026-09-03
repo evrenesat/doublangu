@@ -1,5 +1,119 @@
 # Development Log
 
+## 2026-09-03 — Pipeline third review: compat registry, seed validation, input schema, exact options, failure caching
+
+Addressed five new material findings from `plans/reviews/latest_review.md`:
+
+- Compatibility mode now synthesizes `codex-app-server` from legacy
+  environment (including the disabled state) and imports a nonblank legacy
+  selection as `Imported Codex`; `run()` always uses `PipelineRunner` and
+  configures the article handler. An explicit file combined with legacy
+  provider-selection env is a startup error.
+- Bootstrap seeding discovers each referenced model via a live catalog and
+  validates Codex model/effort pairs before insert/activation; discovery
+  failures log provider IDs only and leave profiles empty.
+- `AnalysisProfileInput` uses a dedicated `AnalysisProfileBindingInput`
+  (four write fields); validity state stays response-only. Added GET-to-PUT
+  round-trip tests on both sides of the contract.
+- OMLX numerics travel exactly as configured; `stageOptionsError` disables
+  Save/Test with explicit range messages, and the server remains the strict
+  authority. Removed the silent clamp (and its unit test).
+- The catalog retains failed attempts (including cold failures) for the TTL
+  window, serves stale/error state without redialing, coalesces concurrent
+  per-provider refreshes onto one call, and keeps `refresh=true` as the
+  explicit bypass. New call-counting tests cover suppression, expiry retry,
+  and single-call coalescing.
+
+### Verification
+
+- Focused Go tests (8 packages incl. cmd) — passed.
+- Race tests (semantics, annotator, analysis, reader, httpapi) — passed.
+- `go test ./... -count=1 -buildvcs=false` and `make verify` — passed.
+- OpenAPI validation + double generation byte-identical (`cmp`) — passed.
+- `npm --prefix web run check` — 0 errors, 0 warnings.
+- `npm --prefix web run test:unit -- --run` — 97 passed (15 files).
+- Reader E2E and opt-in live provider tests — skipped (container Chromium
+  crashes before app load; no credentials supplied).
+- `gofmt`, `go mod tidy -diff`, `git diff --check` — clean.
+
+## 2026-09-03 — Pipeline follow-up review: tuple validation, runs, effort init, validity, cache provenance
+
+Addressed five new material findings from `plans/reviews/latest_review.md`:
+
+- Conformance tests validate the complete model/options tuple against the
+  shared catalog before any provider call: blank models, non-object options,
+  unlisted models, and unsupported efforts are 400s, stale/unavailable
+  catalogs are 503s, and only executed fixtures are retained. `model_id` is
+  now required in OpenAPI.
+- Recent runs render in both modes with profile plus both compact bindings
+  (`bindings` derived server-side from the stored profile snapshot;
+  `AnalysisRunBinding` schema); legacy rows keep the model/effort fallback.
+- The profile editor initializes a new binding's effort to the first effort
+  its model advertises (incomplete when none is), resets it on provider/model
+  change only when unoffered, preserves stored efforts without coercion, and
+  blocks Save with the mismatch reason via `bindingEffortError`.
+- Profile reads carry per-binding `valid`/`validity_reason` derived from the
+  live registry and shared catalog; Settings shows the reason beside the
+  affected binding and disables activation for known-invalid profiles while
+  editing stays available.
+- Stage-cache writes store the producing run ID (`run.ID`) instead of `""`;
+  hits retain that provenance. Extended the cache integration test to assert
+  every cache row points at the producing run.
+
+### Verification
+
+- Focused Go tests (8 packages incl. cmd) — passed.
+- Race tests (semantics, annotator, analysis, reader, httpapi) — passed.
+- `go test ./... -count=1 -buildvcs=false` and `make verify` — passed.
+- OpenAPI validation + double generation byte-identical (`cmp`) — passed.
+- `npm --prefix web run check` — 0 errors, 0 warnings.
+- `npm --prefix web run test:unit -- --run` — 95 passed (15 files).
+- Reader E2E and opt-in live provider tests — skipped (container Chromium
+  crashes before app load; no credentials supplied).
+- `gofmt`, `go mod tidy -diff`, `git diff --check` — clean.
+
+## 2026-09-03 — Pipeline review feedback: shared catalog, gated legacy editor, per-tuple conformance
+
+Addressed five material review findings on the configurable analysis provider
+pipeline (`0cfd571`):
+
+- `ProviderCatalogService.Snapshot` builds the cached snapshot while holding
+  the mutex and copies the models slice, closing the race between cached reads
+  and concurrent provider refreshes. New `-race` regression test fails on the
+  old code (`DATA RACE`) and passes on the fix.
+- `main.go` constructs one shared catalog and injects it into both
+  `ConfigurePipeline` and `NewPipelineAnalysisHandler`, so a provider refresh
+  in Settings is immediately visible to article/fresh-profile validation.
+- The Settings legacy model/effort editor now renders only in compatibility
+  mode (no configured providers); pipeline mode shows the provider-profile
+  heading instead. A failed providers probe fails open to the legacy surface.
+- `GET /api/v1/analysis/providers` declares `refresh`/`provider_id` in
+  OpenAPI; the web client sends them and each provider card has a Refresh
+  catalog button that bypasses the five-minute cache for that provider only.
+- Conformance tests run per stage/model/options tuple (model select plus
+  per-type options per stage) instead of one hardcoded linguistic fixture.
+  `ServeProviderTest` retains the latest in-memory result per tuple and the
+  providers listing returns those summaries, so results survive reload; no
+  article, job, run, cache, or database row is created for a test.
+
+### Verification
+
+- Focused Go tests (config, semantics, annotator, analysis, reader, httpapi,
+  store, cmd) — passed.
+- Race tests (semantics, annotator, analysis, reader, httpapi) — passed,
+  including the new catalog race test.
+- `go test ./... -count=1 -buildvcs=false` and `make verify` — passed.
+- OpenAPI validation + double generation byte-identical (`cmp`) — passed.
+- `npm --prefix web run check` — 0 errors, 0 warnings.
+- `npm --prefix web run test:unit -- --run` — 93 passed (15 files), including
+  new tuple-helper, provider-refresh client, and pipeline-mode page tests.
+- `npm --prefix web run test:e2e -- reader.spec.ts` — not runnable here: the
+  container's Chromium headless shell crashes on `about:blank`
+  (`Trace/breakpoint trap`), before any app code loads. Environmental,
+  unrelated to this change.
+- Opt-in Codex/OMLX/pipeline live tests — skipped (no credentials supplied).
+- `gofmt`, `go mod tidy -diff`, `git diff --check` — clean.
+
 ## 2026-09-02 — Subtitle completeness and reader affordances
 
 - Renamed learner-facing English “shadows” to “subtitles” while retaining the
@@ -1143,3 +1257,49 @@ per turn).
 - Final tree review: only intended files changed/added by rounds 1-2;
   gofmt/diff checks clean; pre-existing untracked artifacts
   (`doublangu-server` binary, example provider config) preserved.
+
+## 2026-09-03 — Review findings F4/F5/F6 settings cutover + tests
+
+- Settings page cut over to the pipeline panel unconditionally: the legacy
+  Article analysis editor, `/analysis/models` + legacy `/analysis/settings`
+  calls, and `/analysis/pipeline-settings` are gone. `GET /analysis/settings`
+  now returns the pipeline selection shape (`active_profile_id`) and the
+  compat-mode empty state explains that analysis is unavailable until a
+  provider is configured. Run history renders legacy model/effort provenance
+  or profile + per-stage bindings.
+- Profile creation never auto-activates: `saveProfile` persists without
+  touching settings, and the per-profile radio (`chooseActive`) is the only
+  activation path, issuing an explicit `PUT /analysis/settings`.
+- Profile names validate on client (`profileNameError`) and server with the
+  same rules (2-64 chars, letters/digits/space/`-_().+`, single spaces);
+  blank/oversized/illegal names are rejected, never coerced.
+
+Verification: `go test ./...` passes (GOCACHE redirected to /tmp — the
+default cache path is read-only in this container); `make verify` passes end
+to end with the Go toolchain on PATH; `npm --prefix web run check` 0 errors /
+0 warnings; vitest 16 files / 98 tests pass, including rewritten
+`settings-page.test.ts` (compat vs pipeline modes, no legacy calls) and new
+`AnalysisPipelinePanel.test.ts` (create-then-activate without implicit PUT);
+`generate:api` output hash-stable; `git diff --check` clean. Reader E2E and
+live provider tests remain unrunnable here (no container Chromium / creds).
+
+## 2026-09-03 — Latest-review 10-finding verification pass
+
+- Re-verified every finding in `plans/reviews/latest_review.md` against the
+  current tree instead of trusting prior-turn summaries: F1 persisted import
+  (`TestCompatibilityProviderFileImportsPersistedSettings`), F2 key redaction
+  (unit + `TestPipelineProvidersRedactEchoedKey`), F3 URL stripping
+  (`TestOpenAITransportErrorsHideEndpointURL`), F4 cutover (routes, OpenAPI,
+  client, page), F5 explicit activation (component test), F6 name alignment
+  (OpenAPI 80 / input maxlength 80 / `nameBlocked` in `canSave`; the remaining
+  `maxLength: 120` is the unrelated worker-enrollment schema), F7 detached
+  refresh context, F8 commit-under-mutex, F9 envelope reported model, F10
+  provider-owned transport — each with its prescribed test present and green.
+- Only change made: replaced 7 stale `/api/v1/analysis/pipeline-settings`
+  request-URL strings in `internal/httpapi/pipeline_analysis_test.go` with
+  `/api/v1/analysis/settings` (handler invoked directly; cosmetic).
+
+Verification: gofmt clean; `go test ./... -count=1 -buildvcs=false` all pass;
+catalog race tests pass; `make verify` passes; `validate:openapi` passes;
+`npm --prefix web run check` 0/0; vitest 16 files / 98 tests pass;
+`git diff --check` clean. Reader E2E and live provider tests unrunnable here.

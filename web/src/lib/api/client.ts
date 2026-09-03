@@ -24,21 +24,20 @@ export type LearningStateInput = components['schemas']['LearningStateInput'];
 export type LearningStatus = components['schemas']['LearningStatus'];
 export type AnalysisStatus = components['schemas']['AnalysisStatus'];
 export type ReasoningEffort = components['schemas']['ReasoningEffort'];
-export type AnalysisModel = components['schemas']['AnalysisModel'];
-export type AnalysisModelsResponse = components['schemas']['AnalysisModelsResponse'];
-export type AnalysisSettings = components['schemas']['AnalysisSettings'];
-export type AnalysisSettingsInput = components['schemas']['AnalysisSettingsInput'];
 export type AnalysisTurn = components['schemas']['AnalysisTurn'];
 export type AnalysisRunSummary = components['schemas']['AnalysisRunSummary'];
+export type AnalysisRunBinding = components['schemas']['AnalysisRunBinding'];
 export type AnalysisRun = components['schemas']['AnalysisRun'];
 export type AnalysisRunsPage = components['schemas']['AnalysisRunsPage'];
 export type AnalysisProvidersResponse = components['schemas']['AnalysisProvidersResponse'];
 export type AnalysisProvider = components['schemas']['AnalysisProvider'];
 export type AnalysisProviderModel = components['schemas']['AnalysisProviderModel'];
+export type AnalysisConformanceSummary = components['schemas']['AnalysisConformanceSummary'];
 export type AnalysisProviderTestRequest = components['schemas']['AnalysisProviderTestRequest'];
 export type AnalysisProviderTestResponse = components['schemas']['AnalysisProviderTestResponse'];
 export type AnalysisProfile = components['schemas']['AnalysisProfile'];
 export type AnalysisProfileBinding = components['schemas']['AnalysisProfileBinding'];
+export type AnalysisProfileBindingInput = components['schemas']['AnalysisProfileBindingInput'];
 export type AnalysisProfileInput = components['schemas']['AnalysisProfileInput'];
 export type AnalysisProfileListResponse = components['schemas']['AnalysisProfileListResponse'];
 export type AnalysisPipelineSettings = components['schemas']['AnalysisPipelineSettings'];
@@ -283,8 +282,12 @@ export async function reanalyzeArticle(articleId: string, fresh = false, profile
 	}));
 }
 
-export async function listAnalysisProviders(): Promise<AnalysisProvidersResponse> {
-	return apiFetch('/api/v1/analysis/providers');
+export async function listAnalysisProviders(options: { refresh?: boolean; providerId?: string } = {}): Promise<AnalysisProvidersResponse> {
+	const query = new URLSearchParams();
+	if (options.refresh) query.set('refresh', 'true');
+	if (options.providerId) query.set('provider_id', options.providerId);
+	const suffix = query.toString() ? `?${query.toString()}` : '';
+	return apiFetch(`/api/v1/analysis/providers${suffix}`);
 }
 
 export async function testAnalysisProvider(providerId: string, data: AnalysisProviderTestRequest): Promise<AnalysisProviderTestResponse> {
@@ -308,19 +311,11 @@ export async function deleteAnalysisProfile(profileId: string): Promise<{ delete
 }
 
 export async function getPipelineAnalysisSettings(): Promise<AnalysisPipelineSettings> {
-	return apiFetch('/api/v1/analysis/pipeline-settings');
+	return apiFetch('/api/v1/analysis/settings');
 }
 
 export async function savePipelineAnalysisSettings(data: AnalysisPipelineSettingsInput): Promise<AnalysisPipelineSettings> {
-	return apiFetch('/api/v1/analysis/pipeline-settings', { method: 'PUT', body: JSON.stringify(data), csrf: true });
-}
-
-export async function getAnalysisModels(refresh = false): Promise<AnalysisModelsResponse> {
-	return apiFetch(`/api/v1/analysis/models${refresh ? '?refresh=true' : ''}`);
-}
-
-export async function getAnalysisSettings(): Promise<AnalysisSettings> {
-	return apiFetch('/api/v1/analysis/settings');
+	return apiFetch('/api/v1/analysis/settings', { method: 'PUT', body: JSON.stringify(data), csrf: true });
 }
 
 export async function getReaderSettings(): Promise<ReaderSettings> {
@@ -329,10 +324,6 @@ export async function getReaderSettings(): Promise<ReaderSettings> {
 
 export async function saveReaderSettings(data: ReaderSettingsInput): Promise<ReaderSettings> {
 	return apiFetch('/api/v1/reader/settings', { method: 'PUT', body: JSON.stringify(data), csrf: true });
-}
-
-export async function saveAnalysisSettings(data: AnalysisSettingsInput): Promise<AnalysisSettings> {
-	return apiFetch('/api/v1/analysis/settings', { method: 'PUT', body: JSON.stringify(data), csrf: true });
 }
 
 export async function listAnalysisRuns(options: { articleId?: string; limit?: number; cursor?: string } = {}): Promise<AnalysisRunsPage> {

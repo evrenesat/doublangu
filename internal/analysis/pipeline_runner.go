@@ -247,7 +247,7 @@ func (r *PipelineRunner) process(ctx context.Context, lease *jobs.Lease) error {
 			return failRun("v1.analysis_history_failed", err, blockIndex, "", "")
 		}
 		linguistic, artifactHash, outcome, stageErr := r.runLinguistic(runCtx, lease, chunk, linguisticBinding,
-			providerByStage[pipeline.StageLinguisticAnalysis], linguisticSpec, payload.Fresh)
+			providerByStage[pipeline.StageLinguisticAnalysis], linguisticSpec, payload.Fresh, run.ID.String())
 		if stageErr != nil {
 			// The heartbeat may have canceled the run while the provider call
 			// was blocked; never write turns or failure state for a run whose
@@ -283,7 +283,7 @@ func (r *PipelineRunner) process(ctx context.Context, lease *jobs.Lease) error {
 			return failRun("v1.analysis_history_failed", err, blockIndex, "", "")
 		}
 		output, outcome, stageErr := r.runTranslation(runCtx, lease, chunk, linguistic, translationBinding,
-			providerByStage[pipeline.StageTranslation], translationSpec, payload.Fresh)
+			providerByStage[pipeline.StageTranslation], translationSpec, payload.Fresh, run.ID.String())
 		if stageErr != nil {
 			if err := checkOwnership(); err != nil {
 				return leaseLostPath(err, blockIndex)
@@ -522,7 +522,7 @@ type stageOutcome struct {
 // validated artifact. Lease ownership is re-verified around provider calls and
 // before the cache write; a canceled runCtx aborts the provider session.
 func (r *PipelineRunner) runLinguistic(ctx context.Context, lease *jobs.Lease, chunk semantics.PreparedChunk,
-	binding pipeline.BindingSnapshot, provider annotator.Provider, spec StageCacheSpec, fresh bool) (*semantics.ValidatedLinguistic, string, stageOutcome, error) {
+	binding pipeline.BindingSnapshot, provider annotator.Provider, spec StageCacheSpec, fresh bool, runID string) (*semantics.ValidatedLinguistic, string, stageOutcome, error) {
 	outcome := stageOutcome{disposition: "miss"}
 	if !fresh {
 		if hit, err := r.history.ReadStageCache(ctx, spec); err == nil && hit != nil {
@@ -571,7 +571,7 @@ func (r *PipelineRunner) runLinguistic(ctx context.Context, lease *jobs.Lease, c
 		return nil, "", outcome, err
 	}
 	if !fresh {
-		if err := r.history.SaveStageCache(ctx, spec, string(artifactJSON), hash, ""); err != nil {
+		if err := r.history.SaveStageCache(ctx, spec, string(artifactJSON), hash, runID); err != nil {
 			return nil, "", outcome, err
 		}
 	}
@@ -596,7 +596,7 @@ func rawLinguisticArtifact(validated *semantics.ValidatedLinguistic) semantics.L
 // hash in the cache identity.
 func (r *PipelineRunner) runTranslation(ctx context.Context, lease *jobs.Lease, chunk semantics.PreparedChunk,
 	linguistic *semantics.ValidatedLinguistic, binding pipeline.BindingSnapshot, provider annotator.Provider,
-	spec StageCacheSpec, fresh bool) (*annotator.TranslationStageOutput, stageOutcome, error) {
+	spec StageCacheSpec, fresh bool, runID string) (*annotator.TranslationStageOutput, stageOutcome, error) {
 	outcome := stageOutcome{disposition: "miss"}
 	if !fresh {
 		if hit, err := r.history.ReadStageCache(ctx, spec); err == nil && hit != nil {
@@ -646,7 +646,7 @@ func (r *PipelineRunner) runTranslation(ctx context.Context, lease *jobs.Lease, 
 		return nil, outcome, err
 	}
 	if !fresh {
-		if err := r.history.SaveStageCache(ctx, spec, string(artifactJSON), hash, ""); err != nil {
+		if err := r.history.SaveStageCache(ctx, spec, string(artifactJSON), hash, runID); err != nil {
 			return nil, outcome, err
 		}
 	}

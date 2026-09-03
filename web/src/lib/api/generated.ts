@@ -512,10 +512,16 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List configured analysis providers with live health and model catalogs */
+        /**
+         * List configured analysis providers with live health and model catalogs
+         * @description Without query parameters every provider renders from its last-good catalog. `refresh=true` requires one valid `provider_id` and forces a live refresh of only that provider; the listing also carries the latest retained conformance result per tested provider/stage/model/options tuple.
+         */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    refresh?: boolean;
+                    provider_id?: string;
+                };
                 header?: never;
                 path?: never;
                 cookie?: never;
@@ -531,7 +537,9 @@ export interface paths {
                         "application/json": components["schemas"]["AnalysisProvidersResponse"];
                     };
                 };
+                400: components["responses"]["BadRequest"];
                 401: components["responses"]["Unauthorized"];
+                404: components["responses"]["NotFound"];
                 405: components["responses"]["MethodNotAllowed"];
             };
         };
@@ -554,7 +562,7 @@ export interface paths {
         put?: never;
         /**
          * Run the fixed conformance source through one stage of a provider
-         * @description Executes the real stage against the fixed safe fixture and returns only status, duration, and a stable error code. Options are canonicalized for the provider type; the provider must be enabled.
+         * @description Executes the real stage against the fixed safe fixture and returns only status, duration, and a stable error code. Options are canonicalized for the provider type; the provider must be enabled. The outcome is retained as the latest in-memory result for its provider/stage/model/options tuple and returned with the providers listing.
          */
         post: {
             parameters: {
@@ -762,7 +770,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/analysis/pipeline-settings": {
+    "/api/v1/analysis/settings": {
         parameters: {
             query?: never;
             header?: never;
@@ -819,116 +827,6 @@ export interface paths {
                 401: components["responses"]["Unauthorized"];
                 403: components["responses"]["Forbidden"];
                 405: components["responses"]["MethodNotAllowed"];
-            };
-        };
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/analysis/models": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List available analysis models and reasoning efforts */
-        get: {
-            parameters: {
-                query?: {
-                    refresh?: boolean;
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Hidden-inclusive model catalog, possibly marked stale after a failed refresh. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["AnalysisModelsResponse"];
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                401: components["responses"]["Unauthorized"];
-                405: components["responses"]["MethodNotAllowed"];
-                503: components["responses"]["Unavailable"];
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/analysis/settings": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get the selected analysis model and reasoning effort */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Current owner selection. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["AnalysisSettings"];
-                    };
-                };
-                401: components["responses"]["Unauthorized"];
-                405: components["responses"]["MethodNotAllowed"];
-                500: components["responses"]["Internal"];
-            };
-        };
-        /** Save the selected analysis model and reasoning effort */
-        put: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": components["schemas"]["AnalysisSettingsInput"];
-                };
-            };
-            responses: {
-                /** @description Saved owner selection. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["AnalysisSettings"];
-                    };
-                };
-                400: components["responses"]["BadRequest"];
-                401: components["responses"]["Unauthorized"];
-                403: components["responses"]["Forbidden"];
-                405: components["responses"]["MethodNotAllowed"];
-                503: components["responses"]["Unavailable"];
             };
         };
         post?: never;
@@ -3181,13 +3079,6 @@ export interface components {
             value: string;
             description?: string;
         };
-        AnalysisModel: {
-            id: string;
-            display_name: string;
-            is_default: boolean;
-            hidden: boolean;
-            supported_reasoning_efforts: components["schemas"]["ReasoningEffort"][];
-        };
         AnalysisProvidersResponse: {
             providers: components["schemas"]["AnalysisProvider"][];
         };
@@ -3201,6 +3092,19 @@ export interface components {
             /** @enum {string} */
             health: "disabled" | "healthy" | "unhealthy" | "unknown";
             models?: components["schemas"]["AnalysisProviderModel"][];
+            conformance?: components["schemas"]["AnalysisConformanceSummary"][];
+        };
+        AnalysisConformanceSummary: {
+            /** @enum {string} */
+            stage_id: "linguistic_analysis" | "translation";
+            model_id: string;
+            options?: Record<string, never>;
+            /** @enum {string} */
+            status: "healthy" | "unhealthy";
+            checked_at: string;
+            /** Format: int64 */
+            duration_ms: number;
+            error_code?: string;
         };
         AnalysisProviderModel: {
             id: string;
@@ -3210,7 +3114,7 @@ export interface components {
         AnalysisProviderTestRequest: {
             /** @enum {string} */
             stage_id: "linguistic_analysis" | "translation";
-            model_id?: string;
+            model_id: string;
             options: Record<string, never>;
         };
         AnalysisProviderTestResponse: {
@@ -3222,7 +3126,14 @@ export interface components {
         };
         AnalysisProfileInput: {
             name: string;
-            bindings: components["schemas"]["AnalysisProfileBinding"][];
+            bindings: components["schemas"]["AnalysisProfileBindingInput"][];
+        };
+        AnalysisProfileBindingInput: {
+            /** @enum {string} */
+            stage_id: "linguistic_analysis" | "translation";
+            provider_id: string;
+            model_id: string;
+            options: Record<string, never>;
         };
         AnalysisProfileBinding: {
             /** @enum {string} */
@@ -3230,6 +3141,10 @@ export interface components {
             provider_id: string;
             model_id: string;
             options: Record<string, never>;
+            /** @description Whether the stored binding is still usable against the current provider registry and model catalog. Omitted on write; present on profile reads. */
+            valid?: boolean;
+            /** @description Sanitized reason when valid is false; omitted otherwise. */
+            validity_reason?: string;
         };
         AnalysisProfile: {
             id: string;
@@ -3246,21 +3161,6 @@ export interface components {
         };
         AnalysisPipelineSettingsInput: {
             active_profile_id: string;
-        };
-        AnalysisModelsResponse: {
-            models: components["schemas"]["AnalysisModel"][];
-            retrieved_at: string;
-            stale: boolean;
-            last_error?: string;
-        };
-        AnalysisSettingsInput: {
-            model: string;
-            effort: string;
-        };
-        AnalysisSettings: {
-            model: string;
-            effort: string;
-            updated_at: string;
         };
         AnalysisTurn: {
             id: components["schemas"]["ULID"];
@@ -3304,6 +3204,13 @@ export interface components {
             profile_id?: string;
             profile_name?: string;
             profile_snapshot_hash?: string;
+            bindings?: components["schemas"]["AnalysisRunBinding"][];
+        };
+        AnalysisRunBinding: {
+            /** @enum {string} */
+            stage_id: "linguistic_analysis" | "translation";
+            provider_id: string;
+            model_id: string;
         };
         AnalysisRun: {
             id: components["schemas"]["ULID"];

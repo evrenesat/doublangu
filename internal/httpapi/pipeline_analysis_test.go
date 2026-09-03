@@ -88,12 +88,12 @@ func TestPipelineAnalysisProfilesAndSettings(t *testing.T) {
 	}
 
 	settings := httptest.NewRecorder()
-	h.ServeProfileSettings(settings, authedRequest(http.MethodPut, "/api/v1/analysis/pipeline-settings", `{"active_profile_id":"`+profile.ID+`"}`))
+	h.ServeProfileSettings(settings, authedRequest(http.MethodPut, "/api/v1/analysis/settings", `{"active_profile_id":"`+profile.ID+`"}`))
 	if settings.Code != http.StatusOK {
 		t.Fatalf("activate = %d body=%s", settings.Code, settings.Body.String())
 	}
 	settings = httptest.NewRecorder()
-	h.ServeProfileSettings(settings, authedRequest(http.MethodGet, "/api/v1/analysis/pipeline-settings", ""))
+	h.ServeProfileSettings(settings, authedRequest(http.MethodGet, "/api/v1/analysis/settings", ""))
 	if settings.Code != http.StatusOK || !strings.Contains(settings.Body.String(), profile.ID) {
 		t.Fatalf("settings get = %d body=%s", settings.Code, settings.Body.String())
 	}
@@ -104,7 +104,7 @@ func TestPipelineAnalysisProfilesAndSettings(t *testing.T) {
 		t.Fatalf("active delete = %d body=%s", deleted.Code, deleted.Body.String())
 	}
 	empty := httptest.NewRecorder()
-	h.ServeProfileSettings(empty, authedRequest(http.MethodPut, "/api/v1/analysis/pipeline-settings", `{}`))
+	h.ServeProfileSettings(empty, authedRequest(http.MethodPut, "/api/v1/analysis/settings", `{}`))
 	if empty.Code != http.StatusBadRequest {
 		t.Fatalf("empty settings body = %d", empty.Code)
 	}
@@ -162,12 +162,20 @@ func TestPipelineAnalysisProfilesAndSettings(t *testing.T) {
 	}
 	decodeJSONBody(t, profiles.Body.String(), &rawProfiles)
 	for _, binding := range rawProfiles.Profiles[0].Bindings {
-		if len(binding) != 4 {
-			t.Fatalf("binding entry = %v, want exactly stage_id/provider_id/model_id/options", binding)
+		if len(binding) != 5 {
+			t.Fatalf("binding entry = %v, want exactly stage_id/provider_id/model_id/options/valid", binding)
 		}
-		for _, key := range []string{"stage_id", "provider_id", "model_id", "options"} {
+		for _, key := range []string{"stage_id", "provider_id", "model_id", "options", "valid"} {
 			if _, present := binding[key]; !present {
 				t.Fatalf("binding entry missing %q: %v", key, binding)
+			}
+		}
+		if binding["valid"] != true {
+			t.Fatalf("usable binding entry = %v, want valid", binding)
+		}
+		for _, forbidden := range []string{"provider_type", "provider_config_fingerprint", "options_hash", "contract_version", "prompt_version"} {
+			if _, present := binding[forbidden]; present {
+				t.Fatalf("binding entry leaked %q: %v", forbidden, binding)
 			}
 		}
 	}
@@ -180,7 +188,7 @@ func TestPipelineAnalysisProfilesAndSettings(t *testing.T) {
 	registry.descriptors = []annotator.ProviderDescriptor{disabledDescriptor}
 	registry.providers = map[string]annotator.Provider{}
 	settings = httptest.NewRecorder()
-	h.ServeProfileSettings(settings, authedRequest(http.MethodPut, "/api/v1/analysis/pipeline-settings", `{"active_profile_id":"`+profile.ID+`"}`))
+	h.ServeProfileSettings(settings, authedRequest(http.MethodPut, "/api/v1/analysis/settings", `{"active_profile_id":"`+profile.ID+`"}`))
 	if settings.Code != http.StatusConflict {
 		t.Fatalf("activate disabled-provider profile = %d body=%s", settings.Code, settings.Body.String())
 	}
@@ -477,7 +485,7 @@ func TestPipelineActivationRequiresCurrentModelAndEffort(t *testing.T) {
 	var created profilePayload
 	decodeJSONBody(t, rec.Body.String(), &created)
 	rec = httptest.NewRecorder()
-	h.ServeProfileSettings(rec, authedRequest(http.MethodPut, "/api/v1/analysis/pipeline-settings", `{"active_profile_id":"`+created.ID+`"}`))
+	h.ServeProfileSettings(rec, authedRequest(http.MethodPut, "/api/v1/analysis/settings", `{"active_profile_id":"`+created.ID+`"}`))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("initial activate = %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -486,7 +494,7 @@ func TestPipelineActivationRequiresCurrentModelAndEffort(t *testing.T) {
 	time.Sleep(5 * time.Millisecond)
 	provider.models = []annotator.Model{{ID: "model-z", DisplayName: "Model Z", SupportedReasoningEfforts: []annotator.ReasoningEffort{{Value: "low"}}}}
 	rec = httptest.NewRecorder()
-	h.ServeProfileSettings(rec, authedRequest(http.MethodPut, "/api/v1/analysis/pipeline-settings", `{"active_profile_id":"`+created.ID+`"}`))
+	h.ServeProfileSettings(rec, authedRequest(http.MethodPut, "/api/v1/analysis/settings", `{"active_profile_id":"`+created.ID+`"}`))
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("activate removed-model profile = %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -495,8 +503,348 @@ func TestPipelineActivationRequiresCurrentModelAndEffort(t *testing.T) {
 	time.Sleep(5 * time.Millisecond)
 	provider.models = []annotator.Model{{ID: "model-a", DisplayName: "Model A", SupportedReasoningEfforts: []annotator.ReasoningEffort{{Value: "minimal"}}}}
 	rec = httptest.NewRecorder()
-	h.ServeProfileSettings(rec, authedRequest(http.MethodPut, "/api/v1/analysis/pipeline-settings", `{"active_profile_id":"`+created.ID+`"}`))
+	h.ServeProfileSettings(rec, authedRequest(http.MethodPut, "/api/v1/analysis/settings", `{"active_profile_id":"`+created.ID+`"}`))
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("activate removed-effort profile = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestPipelineConformanceRetentionPerTuple proves a provider test retains the
+// latest in-memory result per provider/stage/model/options tuple and returns
+// those summaries with the providers listing: distinct tuples accumulate,
+// re-testing a tuple overwrites it, and no profile or database row is needed.
+func TestPipelineConformanceRetentionPerTuple(t *testing.T) {
+	db, err := store.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	registry := &apiFakeRegistry{
+		descriptors: []annotator.ProviderDescriptor{codexDescriptor()},
+		providers:   map[string]annotator.Provider{"codex-app-server": &apiFakeProvider{descriptor: codexDescriptor()}},
+	}
+	h := httpapi.NewPipelineAnalysisHandler(db, allowArticleCSRF{}, registry)
+
+	runTest := func(stage, model, effort string) {
+		t.Helper()
+		body := `{"stage_id":"` + stage + `","model_id":"` + model + `","options":{"reasoning_effort":"` + effort + `"}}`
+		rec := httptest.NewRecorder()
+		h.ServeProviderTest(rec, authedRequestWithID(http.MethodPost, "/api/v1/analysis/providers/codex-app-server/test", body, "codex-app-server"))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("test %s/%s/%s = %d body=%s", stage, model, effort, rec.Code, rec.Body.String())
+		}
+	}
+	conformance := func() []map[string]any {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		h.ServeProviders(rec, authedRequest(http.MethodGet, "/api/v1/analysis/providers", ""))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("providers = %d body=%s", rec.Code, rec.Body.String())
+		}
+		var body struct {
+			Providers []struct {
+				ID          string           `json:"id"`
+				Conformance []map[string]any `json:"conformance"`
+			} `json:"providers"`
+		}
+		decodeJSONBody(t, rec.Body.String(), &body)
+		if len(body.Providers) != 1 {
+			t.Fatalf("providers = %v", body.Providers)
+		}
+		return body.Providers[0].Conformance
+	}
+
+	if got := conformance(); len(got) != 0 {
+		t.Fatalf("untested provider conformance = %v", got)
+	}
+	runTest("linguistic_analysis", "model-a", "low")
+	runTest("translation", "model-a", "low")
+	got := conformance()
+	if len(got) != 2 {
+		t.Fatalf("two tuples conformance = %v", got)
+	}
+	stages := map[string]bool{}
+	for _, entry := range got {
+		stage, _ := entry["stage_id"].(string)
+		checked, _ := entry["checked_at"].(string)
+		status, _ := entry["status"].(string)
+		stages[stage] = true
+		if entry["model_id"] != "model-a" || checked == "" || status == "" {
+			t.Fatalf("tuple entry = %v", entry)
+		}
+		if _, ok := entry["duration_ms"]; !ok {
+			t.Fatalf("tuple entry missing duration_ms = %v", entry)
+		}
+	}
+	if !stages["linguistic_analysis"] || !stages["translation"] {
+		t.Fatalf("stages = %v", stages)
+	}
+
+	// A different options tuple is a different retained result.
+	runTest("linguistic_analysis", "model-a", "medium")
+	if got := conformance(); len(got) != 3 {
+		t.Fatalf("three tuples conformance = %v", got)
+	}
+
+	// Re-testing an identical tuple overwrites instead of accumulating.
+	runTest("linguistic_analysis", "model-a", "low")
+	if got := conformance(); len(got) != 3 {
+		t.Fatalf("re-tested tuple conformance = %v", got)
+	}
+}
+
+// TestPipelineProviderTestRejectsInvalidTuples proves a conformance test
+// validates the complete model/options tuple before any provider call:
+// missing/invalid/unsupported tuple fields are 400s, a stale catalog is a
+// 503, and none of them is recorded as a retained conformance result.
+func TestPipelineProviderTestRejectsInvalidTuples(t *testing.T) {
+	db, err := store.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	registry := &apiFakeRegistry{
+		descriptors: []annotator.ProviderDescriptor{codexDescriptor()},
+		providers:   map[string]annotator.Provider{"codex-app-server": &apiFakeProvider{descriptor: codexDescriptor()}},
+	}
+	h := httpapi.NewPipelineAnalysisHandler(db, allowArticleCSRF{}, registry)
+
+	post := func(body string) int {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		h.ServeProviderTest(rec, authedRequestWithID(http.MethodPost, "/api/v1/analysis/providers/codex-app-server/test", body, "codex-app-server"))
+		return rec.Code
+	}
+	cases := []struct {
+		name   string
+		body   string
+		status int
+	}{
+		{"missing model", `{"stage_id":"linguistic_analysis","options":{"reasoning_effort":"low"}}`, http.StatusBadRequest},
+		{"blank model", `{"stage_id":"linguistic_analysis","model_id":" ","options":{"reasoning_effort":"low"}}`, http.StatusBadRequest},
+		{"array options", `{"stage_id":"linguistic_analysis","model_id":"model-a","options":["low"]}`, http.StatusBadRequest},
+		{"missing options", `{"stage_id":"linguistic_analysis","model_id":"model-a"}`, http.StatusBadRequest},
+		{"unlisted model", `{"stage_id":"linguistic_analysis","model_id":"ghost-model","options":{"reasoning_effort":"low"}}`, http.StatusBadRequest},
+		{"unsupported effort", `{"stage_id":"linguistic_analysis","model_id":"model-a","options":{"reasoning_effort":"extreme"}}`, http.StatusBadRequest},
+		{"invalid stage", `{"stage_id":"summarize","model_id":"model-a","options":{"reasoning_effort":"low"}}`, http.StatusBadRequest},
+	}
+	for _, test := range cases {
+		if status := post(test.body); status != test.status {
+			t.Fatalf("%s = %d, want %d", test.name, status, test.status)
+		}
+	}
+
+	// None of the rejected tuples was retained.
+	rec := httptest.NewRecorder()
+	h.ServeProviders(rec, authedRequest(http.MethodGet, "/api/v1/analysis/providers", ""))
+	var listing struct {
+		Providers []struct {
+			Conformance []map[string]any `json:"conformance"`
+		} `json:"providers"`
+	}
+	decodeJSONBody(t, rec.Body.String(), &listing)
+	if len(listing.Providers) != 1 || len(listing.Providers[0].Conformance) != 0 {
+		t.Fatalf("rejected tuples retained: %v", listing.Providers)
+	}
+
+	// A stale catalog is a 503, not a provider failure.
+	catalog := httpapi.NewProviderCatalogService(registry)
+	catalog.SetTTL(time.Millisecond)
+	staleHandler := httpapi.NewPipelineAnalysisHandler(db, allowArticleCSRF{}, registry, catalog)
+	prime := httptest.NewRecorder()
+	staleHandler.ServeProviders(prime, authedRequest(http.MethodGet, "/api/v1/analysis/providers", ""))
+	if prime.Code != http.StatusOK {
+		t.Fatalf("prime providers = %d", prime.Code)
+	}
+	time.Sleep(5 * time.Millisecond)
+	registry.providers["codex-app-server"] = &apiFakeProvider{descriptor: codexDescriptor(), listErr: errors.New("catalog offline")}
+	rec = httptest.NewRecorder()
+	staleHandler.ServeProviderTest(rec, authedRequestWithID(http.MethodPost, "/api/v1/analysis/providers/codex-app-server/test",
+		`{"stage_id":"linguistic_analysis","model_id":"model-a","options":{"reasoning_effort":"low"}}`, "codex-app-server"))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("stale catalog test = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestPipelineProfileReadsReportBindingValidity proves profile reads derive
+// per-binding usability from the live registry and shared catalog: a usable
+// profile reads back valid, a removed model or disabled provider reads back
+// invalid with a sanitized reason, while editing stays available.
+func TestPipelineProfileReadsReportBindingValidity(t *testing.T) {
+	db, err := store.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	provider := &apiFakeProvider{descriptor: codexDescriptor()}
+	registry := &apiFakeRegistry{
+		descriptors: []annotator.ProviderDescriptor{codexDescriptor()},
+		providers:   map[string]annotator.Provider{"codex-app-server": provider},
+	}
+	catalog := httpapi.NewProviderCatalogService(registry)
+	catalog.SetTTL(time.Millisecond)
+	h := httpapi.NewPipelineAnalysisHandler(db, allowArticleCSRF{}, registry, catalog)
+
+	rec := httptest.NewRecorder()
+	h.ServeProfiles(rec, authedRequest(http.MethodPost, "/api/v1/analysis/profiles", twoBindingBody("Valid", "codex-app-server", "model-a")))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var created profilePayload
+	decodeJSONBody(t, rec.Body.String(), &created)
+
+	validity := func() map[string]map[string]any {
+		t.Helper()
+		time.Sleep(5 * time.Millisecond)
+		rec := httptest.NewRecorder()
+		h.ServeProfiles(rec, authedRequest(http.MethodGet, "/api/v1/analysis/profiles", ""))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("list = %d body=%s", rec.Code, rec.Body.String())
+		}
+		var body struct {
+			Profiles []struct {
+				ID       string           `json:"id"`
+				Bindings []map[string]any `json:"bindings"`
+			} `json:"profiles"`
+		}
+		decodeJSONBody(t, rec.Body.String(), &body)
+		if len(body.Profiles) != 1 {
+			t.Fatalf("profiles = %v", body.Profiles)
+		}
+		out := make(map[string]map[string]any)
+		for _, binding := range body.Profiles[0].Bindings {
+			stage, _ := binding["stage_id"].(string)
+			out[stage] = binding
+		}
+		return out
+	}
+
+	for stage, binding := range validity() {
+		if binding["valid"] != true {
+			t.Fatalf("%s binding = %v, want valid", stage, binding)
+		}
+		if _, present := binding["validity_reason"]; present {
+			t.Fatalf("%s binding leaks reason: %v", stage, binding)
+		}
+	}
+
+	// The catalog drops the bound model: reads report the affected binding.
+	provider.models = []annotator.Model{{ID: "model-z", DisplayName: "Model Z"}}
+	for stage, binding := range validity() {
+		if binding["valid"] != false || binding["validity_reason"] != "model not listed" {
+			t.Fatalf("%s binding = %v, want invalid model reason", stage, binding)
+		}
+	}
+
+	// The provider is disabled: reads report that instead.
+	disabled := codexDescriptor()
+	disabled.Enabled = false
+	registry.descriptors = []annotator.ProviderDescriptor{disabled}
+	for stage, binding := range validity() {
+		if binding["valid"] != false || binding["validity_reason"] != "disabled provider" {
+			t.Fatalf("%s binding = %v, want invalid disabled reason", stage, binding)
+		}
+	}
+}
+
+// TestPipelineProfileWriteRejectsValidityFields proves the write surface
+// accepts only the four AnalysisProfileBindingInput fields: a GET/edit/PUT
+// round trip that echoes response-only validity state is a 400 under the
+// strict decoder, so writers must strip valid/validity_reason.
+func TestPipelineProfileWriteRejectsValidityFields(t *testing.T) {
+	db, err := store.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	registry := &apiFakeRegistry{
+		descriptors: []annotator.ProviderDescriptor{codexDescriptor()},
+		providers:   map[string]annotator.Provider{"codex-app-server": &apiFakeProvider{descriptor: codexDescriptor()}},
+	}
+	h := httpapi.NewPipelineAnalysisHandler(db, allowArticleCSRF{}, registry)
+
+	rec := httptest.NewRecorder()
+	h.ServeProfiles(rec, authedRequest(http.MethodPost, "/api/v1/analysis/profiles", twoBindingBody("Echo", "codex-app-server", "model-a")))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var created profilePayload
+	decodeJSONBody(t, rec.Body.String(), &created)
+
+	// Read the profile back and echo one binding verbatim (including the
+	// response-only validity fields) into a PUT.
+	get := httptest.NewRecorder()
+	h.ServeProfile(get, authedRequestWithID(http.MethodGet, "/api/v1/analysis/profiles/"+created.ID, "", created.ID))
+	if get.Code != http.StatusOK {
+		t.Fatalf("get = %d body=%s", get.Code, get.Body.String())
+	}
+	var stored struct {
+		Name     string           `json:"name"`
+		Bindings []map[string]any `json:"bindings"`
+	}
+	decodeJSONBody(t, get.Body.String(), &stored)
+	if len(stored.Bindings) != 2 {
+		t.Fatalf("bindings = %v", stored.Bindings)
+	}
+	roundTrip, _ := json.Marshal(map[string]any{"name": stored.Name, "bindings": stored.Bindings})
+	put := httptest.NewRecorder()
+	h.ServeProfile(put, authedRequestWithID(http.MethodPut, "/api/v1/analysis/profiles/"+created.ID, string(roundTrip), created.ID))
+	if put.Code != http.StatusBadRequest {
+		t.Fatalf("echoed validity PUT = %d body=%s, want 400", put.Code, put.Body.String())
+	}
+}
+
+// TestPipelineProvidersRedactEchoedKey proves a catalog failure that echoes
+// the resolved API key never reaches browser state: the shared catalog
+// stores the redacted failure and the providers listing carries no key and
+// no echoed body in last_error.
+func TestPipelineProvidersRedactEchoedKey(t *testing.T) {
+	const secret = "super-secret-value"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte("invalid token: " + secret))
+	}))
+	defer server.Close()
+	db, err := store.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	registry, err := annotator.NewRegistry(&config.ProviderConfigFile{
+		Version: config.ProviderConfigVersion,
+		Providers: []config.ProviderEntry{{
+			ID: "mac-omlx", Label: "OMLX", EndpointLabel: "Test",
+			Type: config.ProviderTypeOpenAICompatible, Enabled: true,
+			RequestTimeoutSeconds: 30, BaseURL: server.URL, APIKeyEnv: "DOUBLANGU_TEST_OMLX_KEY",
+		}},
+	}, "codex", time.Minute, func(string) (string, error) { return secret, nil })
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	h := httpapi.NewPipelineAnalysisHandler(db, allowArticleCSRF{}, registry)
+	rec := httptest.NewRecorder()
+	h.ServeProviders(rec, authedRequest(http.MethodGet, "/api/v1/analysis/providers", ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("providers = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var listing struct {
+		Providers []struct {
+			ID        string `json:"id"`
+			Health    string `json:"health"`
+			LastError string `json:"last_error"`
+		} `json:"providers"`
+	}
+	decodeJSONBody(t, rec.Body.String(), &listing)
+	if len(listing.Providers) != 1 {
+		t.Fatalf("providers = %v", listing.Providers)
+	}
+	entry := listing.Providers[0]
+	if entry.Health != "unhealthy" {
+		t.Fatalf("health = %q, want unhealthy", entry.Health)
+	}
+	for _, leaked := range []string{secret, "invalid token"} {
+		if strings.Contains(entry.LastError, leaked) {
+			t.Fatalf("last_error leaked %q: %q", leaked, entry.LastError)
+		}
 	}
 }

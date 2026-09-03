@@ -248,14 +248,31 @@ paths:
   /api/v1/analysis/providers:
     get:
       summary: List configured analysis providers with live health and model catalogs
+      description: >-
+        Without query parameters every provider renders from its last-good
+        catalog. `refresh=true` requires one valid `provider_id` and forces a
+        live refresh of only that provider; the listing also carries the
+        latest retained conformance result per tested
+        provider/stage/model/options tuple.
       security: [{ sessionCookie: [] }]
+      parameters:
+        - name: refresh
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+        - name: provider_id
+          in: query
+          required: false
+          schema: { type: string }
       responses:
         "200":
           description: Provider descriptors with optional model catalogs.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AnalysisProvidersResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
         "405": { $ref: "#/components/responses/MethodNotAllowed" }
 
   /api/v1/analysis/providers/{id}/test:
@@ -264,7 +281,10 @@ paths:
       description: >-
         Executes the real stage against the fixed safe fixture and returns only
         status, duration, and a stable error code. Options are canonicalized
-        for the provider type; the provider must be enabled.
+        for the provider type; the provider must be enabled. The outcome is
+        retained as the latest in-memory result for its
+        provider/stage/model/options tuple and returned with the providers
+        listing.
       security: [{ sessionCookie: [], csrfToken: [] }]
       parameters:
         - name: id
@@ -388,7 +408,7 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "405": { $ref: "#/components/responses/MethodNotAllowed" }
 
-  /api/v1/analysis/pipeline-settings:
+  /api/v1/analysis/settings:
     get:
       summary: Get the active analysis profile
       security: [{ sessionCookie: [] }]
@@ -417,59 +437,6 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
-        "405": { $ref: "#/components/responses/MethodNotAllowed" }
-
-  /api/v1/analysis/models:
-    get:
-      summary: List available analysis models and reasoning efforts
-      security: [{ sessionCookie: [] }]
-      parameters:
-        - name: refresh
-          in: query
-          required: false
-          schema: { type: boolean, default: false }
-      responses:
-        "200":
-          description: Hidden-inclusive model catalog, possibly marked stale after a failed refresh.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/AnalysisModelsResponse" }
-        "401": { $ref: "#/components/responses/Unauthorized" }
-        "400": { $ref: "#/components/responses/BadRequest" }
-        "503": { $ref: "#/components/responses/Unavailable" }
-        "405": { $ref: "#/components/responses/MethodNotAllowed" }
-
-  /api/v1/analysis/settings:
-    get:
-      summary: Get the selected analysis model and reasoning effort
-      security: [{ sessionCookie: [] }]
-      responses:
-        "200":
-          description: Current owner selection.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/AnalysisSettings" }
-        "401": { $ref: "#/components/responses/Unauthorized" }
-        "500": { $ref: "#/components/responses/Internal" }
-        "405": { $ref: "#/components/responses/MethodNotAllowed" }
-    put:
-      summary: Save the selected analysis model and reasoning effort
-      security: [{ sessionCookie: [], csrfToken: [] }]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/AnalysisSettingsInput" }
-      responses:
-        "200":
-          description: Saved owner selection.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/AnalysisSettings" }
-        "400": { $ref: "#/components/responses/BadRequest" }
-        "401": { $ref: "#/components/responses/Unauthorized" }
-        "403": { $ref: "#/components/responses/Forbidden" }
-        "503": { $ref: "#/components/responses/Unavailable" }
         "405": { $ref: "#/components/responses/MethodNotAllowed" }
 
   /api/v1/reader/settings:
@@ -2140,19 +2107,6 @@ components:
         value: { type: string, minLength: 1 }
         description: { type: string }
 
-    AnalysisModel:
-      type: object
-      additionalProperties: false
-      required: [id, display_name, is_default, hidden, supported_reasoning_efforts]
-      properties:
-        id: { type: string, minLength: 1 }
-        display_name: { type: string, minLength: 1 }
-        is_default: { type: boolean }
-        hidden: { type: boolean }
-        supported_reasoning_efforts:
-          type: array
-          items: { $ref: "#/components/schemas/ReasoningEffort" }
-
     AnalysisProvidersResponse:
       type: object
       additionalProperties: false
@@ -2178,6 +2132,25 @@ components:
         models:
           type: array
           items: { $ref: "#/components/schemas/AnalysisProviderModel" }
+        conformance:
+          type: array
+          items: { $ref: "#/components/schemas/AnalysisConformanceSummary" }
+    AnalysisConformanceSummary:
+      type: object
+      additionalProperties: false
+      required: [stage_id, model_id, status, checked_at, duration_ms]
+      properties:
+        stage_id:
+          type: string
+          enum: [linguistic_analysis, translation]
+        model_id: { type: string }
+        options: { type: object }
+        status:
+          type: string
+          enum: [healthy, unhealthy]
+        checked_at: { type: string }
+        duration_ms: { type: integer, format: int64 }
+        error_code: { type: string }
     AnalysisProviderModel:
       type: object
       additionalProperties: false
@@ -2191,7 +2164,7 @@ components:
     AnalysisProviderTestRequest:
       type: object
       additionalProperties: false
-      required: [stage_id, options]
+      required: [stage_id, model_id, options]
       properties:
         stage_id:
           type: string
@@ -2213,10 +2186,21 @@ components:
       additionalProperties: false
       required: [name, bindings]
       properties:
-        name: { type: string, minLength: 1, maxLength: 120 }
+        name: { type: string, minLength: 1, maxLength: 80 }
         bindings:
           type: array
-          items: { $ref: "#/components/schemas/AnalysisProfileBinding" }
+          items: { $ref: "#/components/schemas/AnalysisProfileBindingInput" }
+    AnalysisProfileBindingInput:
+      type: object
+      additionalProperties: false
+      required: [stage_id, provider_id, model_id, options]
+      properties:
+        stage_id:
+          type: string
+          enum: [linguistic_analysis, translation]
+        provider_id: { type: string }
+        model_id: { type: string }
+        options: { type: object }
     AnalysisProfileBinding:
       type: object
       additionalProperties: false
@@ -2228,6 +2212,15 @@ components:
         provider_id: { type: string }
         model_id: { type: string }
         options: { type: object }
+        valid:
+          type: boolean
+          description: >-
+            Whether the stored binding is still usable against the current
+            provider registry and model catalog. Omitted on write; present on
+            profile reads.
+        validity_reason:
+          type: string
+          description: Sanitized reason when valid is false; omitted otherwise.
     AnalysisProfile:
       type: object
       additionalProperties: false
@@ -2260,35 +2253,6 @@ components:
       required: [active_profile_id]
       properties:
         active_profile_id: { type: string }
-    AnalysisModelsResponse:
-      type: object
-      additionalProperties: false
-      required: [models, retrieved_at, stale]
-      properties:
-        models:
-          type: array
-          items: { $ref: "#/components/schemas/AnalysisModel" }
-        retrieved_at: { type: string }
-        stale: { type: boolean }
-        last_error: { type: string }
-
-    AnalysisSettingsInput:
-      type: object
-      additionalProperties: false
-      required: [model, effort]
-      properties:
-        model: { type: string, minLength: 1 }
-        effort: { type: string, minLength: 1 }
-
-    AnalysisSettings:
-      type: object
-      additionalProperties: false
-      required: [model, effort, updated_at]
-      properties:
-        model: { type: string }
-        effort: { type: string, minLength: 1 }
-        updated_at: { type: string }
-
     AnalysisTurn:
       type: object
       additionalProperties: false
@@ -2339,6 +2303,19 @@ components:
         profile_id: { type: string }
         profile_name: { type: string }
         profile_snapshot_hash: { type: string }
+        bindings:
+          type: array
+          items: { $ref: "#/components/schemas/AnalysisRunBinding" }
+    AnalysisRunBinding:
+      type: object
+      additionalProperties: false
+      required: [stage_id, provider_id, model_id]
+      properties:
+        stage_id:
+          type: string
+          enum: [linguistic_analysis, translation]
+        provider_id: { type: string }
+        model_id: { type: string }
 
     AnalysisRun:
       type: object

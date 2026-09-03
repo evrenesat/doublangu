@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"strings"
 	"sync"
 	"testing"
@@ -746,6 +747,31 @@ func TestPipelineRunnerPersistsStageProvenanceAndCacheIdentity(t *testing.T) {
 	if hitDisposition != "hit" || hitSource == "" {
 		t.Fatalf("hit attempt = disposition %q source %q", hitDisposition, hitSource)
 	}
+	// Every cache row records the producing run: a miss stores the current
+	// run ID, and a later hit retains that provenance instead of claiming
+	// the reusing run.
+	rows, err = db.Query(ctx, `SELECT source_run_id FROM analysis_stage_cache`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cached := 0
+	for rows.Next() {
+		var sourceRunID string
+		if err := rows.Scan(&sourceRunID); err != nil {
+			t.Fatal(err)
+		}
+		if sourceRunID != runIDs[0] {
+			t.Fatalf("cache source_run_id = %q, want producing run %q", sourceRunID, runIDs[0])
+		}
+		cached++
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if cached == 0 {
+		t.Fatal("no stage cache rows stored")
+	}
 	var secondTurns int
 	if err := db.QueryRow(ctx, `SELECT COUNT(*) FROM analysis_stage_turn WHERE stage_attempt_id IN
 		(SELECT id FROM analysis_stage_attempt WHERE run_id = ?)`, secondRunID).Scan(&secondTurns); err != nil {
@@ -753,6 +779,20 @@ func TestPipelineRunnerPersistsStageProvenanceAndCacheIdentity(t *testing.T) {
 	}
 	if secondTurns != 0 {
 		t.Fatalf("cache-hit run recorded %d turns", secondTurns)
+	}
+	// Run summaries carry the profile plus both compact bindings.
+	page, err := NewHistoryStore(db).ListRuns(ctx, first.ID.String(), 20, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Runs) != 1 {
+		t.Fatalf("run summaries = %d", len(page.Runs))
+	}
+	summary := page.Runs[0]
+	if summary.ProfileName == "" || len(summary.Bindings) != 2 ||
+		summary.Bindings[0] != (RunBindingSummary{StageID: "linguistic_analysis", ProviderID: "ling-provider", ModelID: "model-a"}) ||
+		summary.Bindings[1] != (RunBindingSummary{StageID: "translation", ProviderID: "tr-provider", ModelID: "model-a"}) {
+		t.Fatalf("run summary = %+v", summary)
 	}
 	// Run detail exposes the stored options object, not only its hash.
 	run, err := NewHistoryStore(db).GetRun(ctx, libraryULIDOf(t, runIDs[0]))
@@ -812,5 +852,99 @@ func TestPipelineRunnerPreflightTerminalFailureFailsArticle(t *testing.T) {
 	}
 	if jobState != "failed" {
 		t.Fatalf("job state = %q, want failed", jobState)
+	}
+}
+
+// TestPipelineRunnerTransportFailureHidesEndpointURL proves a distinctive
+// configured base URL never reaches persisted stage history: the linguistic
+// stage of a real OpenAI-compatible provider at a closed port fails, and the
+// stored provider error carries the stable sanitized message instead of the
+// URL.
+func TestPipelineRunnerTransportFailureHidesEndpointURL(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("no loopback listener: %v", err)
+	}
+	endpoint := "http://" + listener.Addr().String() + "/v1"
+	listener.Close()
+	db, err := store.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	entry := config.ProviderEntry{
+		ID: "omlx-unreachable", Label: "Unreachable", EndpointLabel: "Test",
+		Type: config.ProviderTypeOpenAICompatible, Enabled: true,
+		RequestTimeoutSeconds: 30, BaseURL: endpoint, APIKeyEnv: "DOUBLANGU_TEST_KEY",
+	}
+	registry, err := annotator.NewRegistry(&config.ProviderConfigFile{
+		Version: config.ProviderConfigVersion, Providers: []config.ProviderEntry{entry},
+	}, "codex", time.Minute, func(string) (string, error) { return "test-secret", nil })
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	fingerprint := config.ProviderConfigFingerprint(entry)
+	options, err := config.CanonicalizeProviderOptions(config.ProviderTypeOpenAICompatible, json.RawMessage(`{"temperature_milli":0,"max_output_tokens":16384}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	optionsHash, err := pipeline.OptionsHashOf(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindings := make([]pipeline.BindingSnapshot, 0, 2)
+	for _, stage := range []pipeline.StageID{pipeline.StageLinguisticAnalysis, pipeline.StageTranslation} {
+		contract, prompt, _ := pipeline.StageContracts(stage)
+		bindings = append(bindings, pipeline.BindingSnapshot{
+			StageID: stage, ProviderID: "omlx-unreachable", ProviderType: config.ProviderTypeOpenAICompatible,
+			ProviderConfigFingerprint: fingerprint, ModelID: "omlx-model", Options: options,
+			OptionsHash: optionsHash, ContractVersion: contract, PromptVersion: prompt,
+		})
+	}
+	snapshot := &pipeline.ProfileSnapshot{ID: "profile-unreachable", Name: "Unreachable", Bindings: bindings}
+	if _, err := snapshot.SnapshotHash(); err != nil {
+		t.Fatal(err)
+	}
+	article, err := reader.NewArticle("Onbereikbaar", "Een zin.", "nl", "en")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reader.NewStore(db).CreateArticleQueuedWithProfile(ctx, &article, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	// The unreachable stage fails the run; the assertion target is what the
+	// failure wrote to history.
+	if err := NewPipelineRunner(db, registry).RunOnce(ctx); err == nil {
+		t.Fatal("run unexpectedly succeeded against a closed port")
+	}
+	rows, err := db.Query(ctx, `
+		SELECT a.error_detail, t.provider_error
+		FROM analysis_stage_attempt a LEFT JOIN analysis_stage_turn t ON t.stage_attempt_id = a.id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	failed := 0
+	for rows.Next() {
+		var errorDetail, providerError string
+		if err := rows.Scan(&errorDetail, &providerError); err != nil {
+			t.Fatal(err)
+		}
+		if errorDetail == "" && providerError == "" {
+			continue
+		}
+		failed++
+		for _, leaked := range []string{endpoint, "127.0.0.1", "test-secret"} {
+			if strings.Contains(providerError, leaked) || strings.Contains(errorDetail, leaked) {
+				t.Fatalf("endpoint identity leaked into history: %q %q", providerError, errorDetail)
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if failed == 0 {
+		t.Fatal("no failed stage attempts recorded")
 	}
 }

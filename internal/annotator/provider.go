@@ -156,9 +156,10 @@ func NewRegistry(file *config.ProviderConfigFile, codexCodexBinary string, codex
 			if err != nil || secretValue == "" {
 				return nil, fmt.Errorf("provider %q secret resolution failed", entry.ID)
 			}
+			timeout := time.Duration(config.ResolveTimeoutSeconds(entry)) * time.Second
 			registry.instances[entry.ID] = &openAICompatibleProvider{
 				descriptor: descriptor, baseURL: entry.BaseURL,
-				apiKey: secretValue, timeout: time.Duration(config.ResolveTimeoutSeconds(entry)) * time.Second,
+				apiKey: secretValue, timeout: timeout, client: newOpenAIHTTPClient(timeout),
 			}
 		default:
 			return nil, fmt.Errorf("provider %q has unknown type %q", entry.ID, entry.Type)

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { cleanup, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, expect, it, vi } from 'vitest';
 import SettingsPage from '../../routes/settings/+page.svelte';
 
@@ -15,16 +15,8 @@ afterEach(() => {
 	}
 });
 
-it('loads runtime models, filters efforts, saves explicitly, and reports stale refreshes', async () => {
+it('renders recent runs without any legacy model editor when no providers exist', async () => {
 	document.cookie = 'csrf_token=test-csrf-token; Path=/';
-	const models = {
-		models: [
-			{ id: 'visible-model', display_name: 'Visible', is_default: true, hidden: false, supported_reasoning_efforts: [{ value: 'low', description: 'Fast' }, { value: 'medium', description: 'Balanced' }] },
-			{ id: 'hidden-model', display_name: 'Hidden', is_default: false, hidden: true, supported_reasoning_efforts: [{ value: 'high', description: 'Careful' }] }
-		],
-		retrieved_at: '2026-01-02T00:00:00Z',
-		stale: false
-	};
 	const run = {
 		id: 'run-id', article_id: 'article-id', article_title: 'Een dag', attempt_count: 1,
 		requested_model: 'visible-model', requested_effort: 'medium', status: 'succeeded',
@@ -33,36 +25,72 @@ it('loads runtime models, filters efforts, saves explicitly, and reports stale r
 	};
 	const fetchMock = vi.fn(async (input: string, init: RequestInit = {}): Promise<Response> => {
 		if (input === '/health') return json(200, { core_ready: true, loader_ready: true, schema_available: true, registry_state: 'ready', plugin_count: 0, plugin_ids: [] });
-		if (input === '/api/v1/analysis/models?refresh=true') return json(200, { ...models, stale: true, last_error: 'refresh failed' });
-		if (input === '/api/v1/analysis/models') return json(200, models);
-		if (input === '/api/v1/analysis/settings' && init.method === 'PUT') return json(200, { model: 'hidden-model', effort: 'high', updated_at: '2026-01-02T00:00:02Z' });
-		if (input === '/api/v1/analysis/settings') return json(200, { model: 'visible-model', effort: 'medium', updated_at: '2026-01-02T00:00:00Z' });
 		if (input === '/api/v1/analysis/runs?limit=10') return json(200, { runs: [run] });
+		if (input === '/api/v1/analysis/providers') return json(200, { providers: [] });
+		if (input === '/api/v1/analysis/profiles') return json(200, { profiles: [] });
+		if (input === '/api/v1/analysis/settings') return json(200, { active_profile_id: '' });
 		throw new Error(`unexpected request ${init.method ?? 'GET'} ${input}`);
 	});
 	vi.stubGlobal('fetch', fetchMock);
 
 	render(SettingsPage);
-	await waitFor(() => expect(screen.getByRole('option', { name: /Visible/ })).toBeTruthy());
-	expect(screen.getByRole('option', { name: /Hidden · hidden/ })).toBeTruthy();
-	expect(screen.getByText('Saved: visible-model · medium')).toBeTruthy();
+	await waitFor(() => expect(screen.getByText('Een dag')).toBeTruthy());
+	// No legacy surface remains: no model editor, no legacy settings calls.
+	expect(screen.queryByRole('heading', { name: 'Article analysis' })).toBeNull();
+	expect(screen.queryByRole('button', { name: 'Save selection' })).toBeNull();
+	expect(screen.queryByRole('button', { name: 'Refresh models' })).toBeNull();
+	expect(screen.getByText('Choose the provider profile used for new article analysis.')).toBeTruthy();
 	expect(screen.getByText('Een dag')).toBeTruthy();
+	expect(screen.getByText('visible-model · medium')).toBeTruthy();
+	expect(screen.getByText(/new articles cannot be analyzed until a provider is configured/)).toBeTruthy();
+	const legacy = fetchMock.mock.calls.filter(([url]) => url === '/api/v1/analysis/models' || url === '/api/v1/analysis/pipeline-settings');
+	expect(legacy).toEqual([]);
+});
 
-	await fireEvent.change(screen.getByRole('combobox', { name: 'Model' }), { target: { value: 'hidden-model' } });
-	await waitFor(() => expect(screen.getByRole('option', { name: /high/i })).toBeTruthy());
-	expect(screen.queryByRole('option', { name: /low/i })).toBeNull();
-	expect(screen.getByText('Unsaved selection')).toBeTruthy();
-	await fireEvent.change(screen.getByRole('combobox', { name: 'Reasoning effort' }), { target: { value: 'high' } });
+it('shows tuple tests and profile-bound runs when pipeline providers are configured', async () => {
+	document.cookie = 'csrf_token=test-csrf-token; Path=/';
+	const providers = {
+		providers: [
+			{
+				id: 'codex-app-server',
+				label: 'Codex',
+				type: 'codex_app_server',
+				enabled: true,
+				stale: false,
+				health: 'healthy',
+				models: [{ id: 'model-a', display_name: 'Model A', supported_reasoning_efforts: [{ value: 'low' }] }]
+			}
+		]
+	};
+	const run = {
+		id: 'run-id', article_id: 'article-id', article_title: 'Een dag', attempt_count: 1,
+		requested_model: '', requested_effort: '', status: 'succeeded',
+		profile_name: 'Mixed', profile_snapshot_hash: 'hash',
+		bindings: [
+			{ stage_id: 'linguistic_analysis', provider_id: 'codex-app-server', model_id: 'model-a' },
+			{ stage_id: 'translation', provider_id: 'mac-omlx', model_id: 'model-b' }
+		],
+		total_paragraphs: 2, completed_paragraphs: 2, failed_block_index: -1, duration_ms: 123,
+		started_at: '2026-01-02T00:00:00Z', completed_at: '2026-01-02T00:00:01Z', error_code: ''
+	};
+	const fetchMock = vi.fn(async (input: string, init: RequestInit = {}): Promise<Response> => {
+		if (input === '/health') return json(200, { core_ready: true, loader_ready: true, schema_available: true, registry_state: 'ready', plugin_count: 0, plugin_ids: [] });
+		if (input === '/api/v1/analysis/runs?limit=10') return json(200, { runs: [run] });
+		if (input === '/api/v1/analysis/providers') return json(200, providers);
+		if (input === '/api/v1/analysis/profiles') return json(200, { profiles: [] });
+		if (input === '/api/v1/analysis/settings') return json(200, { active_profile_id: '' });
+		throw new Error(`unexpected request ${init.method ?? 'GET'} ${input}`);
+	});
+	vi.stubGlobal('fetch', fetchMock);
 
-	await fireEvent.click(screen.getByRole('button', { name: 'Save selection' }));
-	await waitFor(() => expect(screen.getByText('Saved: hidden-model · high')).toBeTruthy());
-	const saveCall = fetchMock.mock.calls.find(([input, init]) => input === '/api/v1/analysis/settings' && init?.method === 'PUT');
-	expect(saveCall?.[1]?.body).toBe(JSON.stringify({ model: 'hidden-model', effort: 'high' }));
-
-	await fireEvent.click(screen.getByRole('button', { name: 'Refresh models' }));
-	await waitFor(() => expect(screen.getByText('Using the last known model catalog. refresh failed')).toBeTruthy());
-	await fireEvent.change(screen.getByRole('combobox', { name: 'Model' }), { target: { value: 'visible-model' } });
-	await fireEvent.change(screen.getByRole('combobox', { name: 'Reasoning effort' }), { target: { value: 'medium' } });
-	await waitFor(() => expect((screen.getByRole('button', { name: 'Save selection' }) as HTMLButtonElement).disabled).toBe(true));
-	expect(screen.getByText('Refresh the model catalog before saving a changed selection.')).toBeTruthy();
+	render(SettingsPage);
+	await waitFor(() => expect(screen.getByRole('heading', { name: 'Analysis providers & profiles' })).toBeTruthy());
+	expect(screen.queryByRole('heading', { name: 'Article analysis' })).toBeNull();
+	// Per-stage tuple tests and the per-provider refresh replace the old single test button.
+	await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh catalog' })).toBeTruthy());
+	expect(screen.getByRole('button', { name: 'Test Linguistic analysis' })).toBeTruthy();
+	expect(screen.getByRole('button', { name: 'Test Translation' })).toBeTruthy();
+	// Recent runs show the profile plus both compact bindings.
+	expect(screen.getByRole('heading', { name: 'Recent runs' })).toBeTruthy();
+	expect(screen.getByText('Mixed · codex-app-server · model-a · mac-omlx · model-b')).toBeTruthy();
 });

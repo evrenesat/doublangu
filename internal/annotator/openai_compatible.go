@@ -24,12 +24,16 @@ const (
 )
 
 // openAICompatibleProvider is the bounded synchronous Chat Completions
-// transport. The resolved secret lives only in this instance.
+// transport. The resolved secret lives only in this instance, and the HTTP
+// client (with its connection pool) is owned by the instance so every
+// catalog and completion call reuses one transport instead of leaking one
+// idle connection per turn.
 type openAICompatibleProvider struct {
 	descriptor ProviderDescriptor
 	baseURL    string
 	apiKey     string
 	timeout    time.Duration
+	client     *http.Client
 }
 
 func (p *openAICompatibleProvider) Descriptor() ProviderDescriptor { return p.descriptor }
@@ -46,8 +50,7 @@ func (p *openAICompatibleProvider) ListModels(ctx context.Context) ([]Model, err
 	}
 	request.Header.Set("Authorization", "Bearer "+p.apiKey)
 	request.Header.Set("Accept", "application/json")
-	client := p.httpClient()
-	response, err := client.Do(request)
+	response, err := p.client.Do(request)
 	if err != nil {
 		return nil, classifyHTTPTransport(ctx, err)
 	}
@@ -57,7 +60,7 @@ func (p *openAICompatibleProvider) ListModels(ctx context.Context) ([]Model, err
 		return nil, &Error{Code: CodeProtocol, Err: err}
 	}
 	if response.StatusCode != http.StatusOK {
-		return nil, classifyHTTPStatus(response.StatusCode, sanitizeExcerpt(body))
+		return nil, classifyHTTPStatus(response.StatusCode, redactAPIKey(sanitizeExcerpt(body), p.apiKey))
 	}
 	var envelope struct {
 		Data []struct {
@@ -110,20 +113,36 @@ func (p *openAICompatibleProvider) join(pathValue string) (string, error) {
 	return copy.String(), nil
 }
 
-func (p *openAICompatibleProvider) httpClient() *http.Client {
+// newOpenAIHTTPClient builds the one transport a provider instance reuses
+// for catalog and completion calls, with bounded idle connections so a busy
+// article cannot accumulate one idle connection per turn.
+func newOpenAIHTTPClient(timeout time.Duration) *http.Client {
 	transport := &http.Transport{
-		DialContext: (&net.Dialer{Timeout: 30 * time.Second}).DialContext,
+		DialContext:         (&net.Dialer{Timeout: 30 * time.Second}).DialContext,
+		MaxIdleConns:        16,
+		MaxIdleConnsPerHost: 4,
+		IdleConnTimeout:     90 * time.Second,
 	}
 	// No automatic cross-host redirects: the request must stay on the
 	// configured origin.
 	transport.Proxy = http.ProxyFromEnvironment
 	return &http.Client{
-		Timeout:   p.timeout,
+		Timeout:   timeout,
 		Transport: transport,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
 	}
+}
+
+// redactAPIKey replaces the whole excerpt when it contains the resolved API
+// key, so a provider echo can never carry the credential into an error. An
+// empty key redacts nothing: strings.Contains would match everything.
+func redactAPIKey(excerpt []byte, apiKey string) []byte {
+	if apiKey != "" && bytes.Contains(excerpt, []byte(apiKey)) {
+		return []byte("[redacted]")
+	}
+	return excerpt
 }
 
 // openAICompatibleSession preserves the message history across separate HTTP
@@ -152,7 +171,7 @@ func (s *openAICompatibleSession) Turn(ctx context.Context, request TurnRequest)
 		map[string]any{"role": "assistant", "content": result.content},
 	)
 	return Completion{
-		Text: result.content, ReportedModel: s.binding.ModelID,
+		Text: result.content, ReportedModel: result.reportedModel,
 		RequestID: result.requestID, FinishReason: result.finishReason,
 		UsageJSON: result.usageJSON, TimingJSON: result.timingJSON,
 		ProviderMetadataJSON: result.metadataJSON,
@@ -173,7 +192,14 @@ func (s *openAICompatibleSession) CompleteWithCorrection(ctx context.Context, co
 
 type chatCompletionResult struct {
 	content, requestID, finishReason, usageJSON, timingJSON, metadataJSON string
+	// reportedModel is the concrete model the provider reports in the
+	// response envelope, empty only when the provider omits it.
+	reportedModel string
 }
+
+// maxReportedModelBytes bounds the provider-reported model identity kept in
+// stage provenance.
+const maxReportedModelBytes = 256
 
 func (s *openAICompatibleSession) complete(ctx context.Context, prompt string, schema json.RawMessage, keepHistory bool) (chatCompletionResult, error) {
 	// Rebuild the body each time: system prompt, original user prompt,
@@ -224,7 +250,7 @@ func (s *openAICompatibleSession) complete(ctx context.Context, prompt string, s
 	}
 	request.Header.Set("Authorization", "Bearer "+s.provider.apiKey)
 	request.Header.Set("Content-Type", "application/json")
-	response, err := s.provider.httpClient().Do(request)
+	response, err := s.provider.client.Do(request)
 	if err != nil {
 		return chatCompletionResult{}, classifyHTTPTransport(ctx, err)
 	}
@@ -234,11 +260,7 @@ func (s *openAICompatibleSession) complete(ctx context.Context, prompt string, s
 		return chatCompletionResult{}, &Error{Code: CodeProtocol, Err: err}
 	}
 	if response.StatusCode != http.StatusOK {
-		excerpt := sanitizeExcerpt(raw)
-		if strings.Contains(string(excerpt), s.provider.apiKey) {
-			excerpt = []byte("[redacted]")
-		}
-		return chatCompletionResult{}, classifyHTTPStatus(response.StatusCode, excerpt)
+		return chatCompletionResult{}, classifyHTTPStatus(response.StatusCode, redactAPIKey(sanitizeExcerpt(raw), s.provider.apiKey))
 	}
 	var envelope struct {
 		ID      string `json:"id"`
@@ -296,9 +318,14 @@ func (s *openAICompatibleSession) complete(ctx context.Context, prompt string, s
 	metadata, _ := json.Marshal(map[string]any{
 		"request_id": envelope.ID, "model": envelope.Model, "finish_reason": choice.FinishReason,
 	})
+	reportedModel := envelope.Model
+	if len(reportedModel) > maxReportedModelBytes {
+		reportedModel = reportedModel[:maxReportedModelBytes]
+	}
 	return chatCompletionResult{
 		content: choice.Message.Content, requestID: envelope.ID, finishReason: choice.FinishReason,
 		usageJSON: string(usageJSON), timingJSON: timingJSON, metadataJSON: string(metadata),
+		reportedModel: reportedModel,
 	}, nil
 }
 
@@ -370,7 +397,10 @@ func classifyHTTPTransport(ctx context.Context, err error) error {
 	}
 	var urlError *url.Error
 	if errors.As(err, &urlError) {
-		return &Error{Code: CodeUnavailable, Err: err}
+		// The wrapped error string carries the configured request URL, so
+		// it must never reach persistence or the browser: map it to a
+		// stable message while preserving the unavailable code.
+		return &Error{Code: CodeUnavailable, Err: errors.New("provider endpoint unreachable")}
 	}
 	return &Error{Code: CodeProviderFailure, Err: err}
 }

@@ -107,3 +107,26 @@ func TestSettingsSeedIsWriteOnceAndHistoryRetainsTurnArtifacts(t *testing.T) {
 		t.Fatalf("deleted run error = %v, want sql.ErrNoRows", err)
 	}
 }
+
+func TestRunBindingsFromSnapshot(t *testing.T) {
+	snapshot := `{"id":"profile-id","name":"Mixed","bindings":[
+		{"stage_id":"linguistic_analysis","provider_id":"codex-app-server","provider_type":"codex_app_server","provider_config_fingerprint":"fp","model_id":"model-a","options":{"reasoning_effort":"low"},"options_hash":"h1","contract_version":"c1","prompt_version":"p1"},
+		{"stage_id":"translation","provider_id":"mac-omlx","provider_type":"openai_compatible","provider_config_fingerprint":"fp","model_id":"model-b","options":{"temperature_milli":0,"max_output_tokens":16384},"options_hash":"h2","contract_version":"c2","prompt_version":"p2"}
+	]}`
+	bindings := runBindingsFromSnapshot(snapshot)
+	if len(bindings) != 2 || bindings[0] != (RunBindingSummary{StageID: "linguistic_analysis", ProviderID: "codex-app-server", ModelID: "model-a"}) ||
+		bindings[1] != (RunBindingSummary{StageID: "translation", ProviderID: "mac-omlx", ModelID: "model-b"}) {
+		t.Fatalf("bindings = %+v", bindings)
+	}
+	for name, raw := range map[string]string{
+		"empty":       "",
+		"blank":       "   ",
+		"malformed":   `{"bindings":`,
+		"no bindings": `{"id":"p","name":"n","bindings":[]}`,
+		"incomplete":  `{"id":"p","name":"n","bindings":[{"stage_id":"linguistic_analysis","provider_id":"","model_id":"m"}]}`,
+	} {
+		if got := runBindingsFromSnapshot(raw); got != nil {
+			t.Fatalf("%s snapshot bindings = %+v, want nil", name, got)
+		}
+	}
+}

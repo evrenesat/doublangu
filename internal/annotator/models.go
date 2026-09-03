@@ -25,8 +25,9 @@ type Model struct {
 	SupportedReasoningEfforts []ReasoningEffort `json:"supported_reasoning_efforts"`
 }
 
-// ModelCatalogProvider is the optional provider capability used by settings
-// validation and the owner-facing model picker.
+// ModelCatalogProvider is the optional provider capability exposing a model
+// catalog. The pipeline catalog service consumes Provider.ListModels
+// through the registry; this narrow interface remains for capability checks.
 type ModelCatalogProvider interface {
 	ListModels(context.Context) ([]Model, error)
 }

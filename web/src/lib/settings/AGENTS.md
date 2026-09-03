@@ -9,9 +9,9 @@ Owner-facing analysis pipeline configuration UI.
   for the wire request, and completeness validation.
 - `AnalysisPipelinePanel.svelte` — provider cards (live health + catalog +
   safe conformance test), profile CRUD, and active-profile selection.
-- The legacy model/effort selection remains the server section owner sees
-  only until the pipeline panel reports configured providers; endpoints and
-  secrets are never shown or edited in the browser.
+- There is no legacy model/effort surface: `/api/v1/analysis/settings` is the
+  active-profile contract and the panel is the only analysis editor;
+  endpoints and secrets are never shown or edited in the browser.
 
 ## Conventions
 
