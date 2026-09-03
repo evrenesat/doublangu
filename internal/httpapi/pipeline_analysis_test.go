@@ -751,6 +751,59 @@ func TestPipelineProfileReadsReportBindingValidity(t *testing.T) {
 	}
 }
 
+// TestPipelineProfileCreateFillsSnapshotIdentityFromRegistry proves the
+// write surface accepts browser-shaped bindings — exactly the four
+// AnalysisProfileBindingInput fields, with no provider type and no config
+// fingerprint — and fills the trusted snapshot identity from the live
+// registry before storing. Without that fill the strict snapshot validator
+// rejects every create and replace with "provider_config_fingerprint is
+// required". A client-declared type contradicting the registry still fails.
+func TestPipelineProfileCreateFillsSnapshotIdentityFromRegistry(t *testing.T) {
+	db, err := store.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	registry := &apiFakeRegistry{
+		descriptors: []annotator.ProviderDescriptor{codexDescriptor()},
+		providers:   map[string]annotator.Provider{"codex-app-server": &apiFakeProvider{descriptor: codexDescriptor()}},
+	}
+	h := httpapi.NewPipelineAnalysisHandler(db, allowArticleCSRF{}, registry)
+
+	browserBody := `{"name":"Browser Profile","bindings":[` +
+		`{"stage_id":"linguistic_analysis","provider_id":"codex-app-server","model_id":"model-a","options":{"reasoning_effort":"low"}},` +
+		`{"stage_id":"translation","provider_id":"codex-app-server","model_id":"model-a","options":{"reasoning_effort":"low"}}]}`
+	created := httptest.NewRecorder()
+	h.ServeProfiles(created, authedRequest(http.MethodPost, "/api/v1/analysis/profiles", browserBody))
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create = %d body=%s", created.Code, created.Body.String())
+	}
+	var profile profilePayload
+	decodeJSONBody(t, created.Body.String(), &profile)
+	if profile.ID == "" || len(profile.Bindings) != 2 {
+		t.Fatalf("created profile = %+v", profile)
+	}
+
+	// The same browser-shaped input keeps working on replace, where the
+	// stored bindings are the ones the registry identity was filled for.
+	replaced := httptest.NewRecorder()
+	h.ServeProfile(replaced, authedRequestWithID(http.MethodPut, "/api/v1/analysis/profiles/"+profile.ID, browserBody, profile.ID))
+	if replaced.Code != http.StatusOK {
+		t.Fatalf("replace = %d body=%s", replaced.Code, replaced.Body.String())
+	}
+
+	// A client-declared type that contradicts the registry is still rejected.
+	contradicting := strings.Replace(browserBody, "Browser Profile", "Contradicted", 1)
+	contradicting = strings.Replace(contradicting,
+		`"provider_id":"codex-app-server","model_id"`,
+		`"provider_id":"codex-app-server","provider_type":"openai_compatible","model_id"`, 1)
+	mismatch := httptest.NewRecorder()
+	h.ServeProfiles(mismatch, authedRequest(http.MethodPost, "/api/v1/analysis/profiles", contradicting))
+	if mismatch.Code != http.StatusBadRequest {
+		t.Fatalf("contradicting type create = %d body=%s", mismatch.Code, mismatch.Body.String())
+	}
+}
+
 // TestPipelineProfileWriteRejectsValidityFields proves the write surface
 // accepts only the four AnalysisProfileBindingInput fields: a GET/edit/PUT
 // round trip that echoes response-only validity state is a 400 under the

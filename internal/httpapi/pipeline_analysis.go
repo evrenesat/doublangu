@@ -298,6 +298,11 @@ func (h *PipelineAnalysisHandler) canonicalizeUsableBindings(ctx context.Context
 		if descriptor.Type != binding.ProviderType && binding.ProviderType != "" {
 			return nil, &bindingValidationError{Message: "binding provider type does not match the configured provider"}
 		}
+		// The browser input carries only stage/provider/model/options; the
+		// trusted connection identity comes from the live registry, exactly
+		// as usableProfileBindings fills it for activation and queueing.
+		binding.ProviderType = descriptor.Type
+		binding.ProviderConfigFingerprint = descriptor.ConfigFingerprint
 		canonical, err := config.CanonicalizeProviderOptions(descriptor.Type, binding.Options)
 		if err != nil {
 			return nil, &bindingValidationError{Message: fmt.Sprintf("binding %s options are invalid for provider type %s", binding.StageID, descriptor.Type)}

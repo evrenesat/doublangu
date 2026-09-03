@@ -93,6 +93,48 @@ func TestProfileStoreCRUDAndActivation(t *testing.T) {
 	}
 }
 
+// TestProfileStoreAcceptsMacRelayBindings proves mac_relay bindings pass the
+// store's provider-type gate with the numeric option schema, while a type
+// with no option codec is still rejected.
+func TestProfileStoreAcceptsMacRelayBindings(t *testing.T) {
+	db, err := store.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	profiles := NewProfileStore(db)
+
+	relayOptions, err := config.CanonicalizeProviderOptions(config.ProviderTypeMacRelay, json.RawMessage(`{"temperature_milli":250,"max_output_tokens":8192}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	relayHash, err := pipeline.OptionsHashOf(relayOptions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contract, prompt, _ := pipeline.StageContracts(pipeline.StageTranslation)
+	relay := pipeline.BindingSnapshot{
+		StageID: pipeline.StageTranslation, ProviderID: "mac-relay", ProviderType: config.ProviderTypeMacRelay,
+		ProviderConfigFingerprint: "relay-fp", ModelID: "qwen-mlx", Options: relayOptions,
+		OptionsHash: relayHash, ContractVersion: contract, PromptVersion: prompt,
+	}
+	bindings := []pipeline.BindingSnapshot{profileBindingForTest(t, pipeline.StageLinguisticAnalysis), relay}
+	created, err := profiles.Create(ctx, "Codex + Relay", bindings)
+	if err != nil {
+		t.Fatalf("create mac_relay profile: %v", err)
+	}
+	if created.Bindings[1].ProviderType != config.ProviderTypeMacRelay {
+		t.Fatalf("stored binding type = %q", created.Bindings[1].ProviderType)
+	}
+
+	unknown := []pipeline.BindingSnapshot{profileBindingForTest(t, pipeline.StageLinguisticAnalysis), relay}
+	unknown[1].ProviderType = "brand_new_provider"
+	if _, err := profiles.Create(ctx, "Unknown Type", unknown); err == nil {
+		t.Fatal("unknown provider type accepted")
+	}
+}
+
 func TestProfileStoreValidationAndSeed(t *testing.T) {
 	db, err := store.OpenTest()
 	if err != nil {

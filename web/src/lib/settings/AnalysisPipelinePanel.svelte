@@ -549,20 +549,20 @@
 							</label>
 							<label class="field">
 								<span>Model</span>
-								<input
-									type="text"
-									list={`models-${stage}`}
-									bind:value={stageDraft.model_id}
-									onchange={(event) => chooseBindingModel(stage, event.currentTarget.value)}
-									placeholder={selectedProvider ? 'Type a model id…' : 'Select a provider first'}
-									disabled={!stageDraft.provider_id}
-								/>
-								{#if selectedProvider}
-									<datalist id={`models-${stage}`}>
+								{#if selectedProvider && modelChoices(selectedProvider).length > 0}
+									<select value={stageDraft.model_id} onchange={(event) => chooseBindingModel(stage, event.currentTarget.value)}>
 										{#each modelChoices(selectedProvider) as modelId (modelId)}
-											<option value={modelId}></option>
+											<option value={modelId}>{modelId}</option>
 										{/each}
-									</datalist>
+									</select>
+								{:else}
+									<input
+										type="text"
+										bind:value={stageDraft.model_id}
+										onchange={(event) => chooseBindingModel(stage, event.currentTarget.value)}
+										placeholder={selectedProvider ? 'Type a model id…' : 'Select a provider first'}
+										disabled={!stageDraft.provider_id}
+									/>
 								{/if}
 							</label>
 						</div>

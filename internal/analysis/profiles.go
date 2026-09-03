@@ -169,7 +169,7 @@ func (s *ProfileStore) validateProfile(name string, bindings []pipeline.BindingS
 	}
 	declaredTypes := make(map[string]string, len(bindings))
 	for _, binding := range bindings {
-		if binding.ProviderType != config.ProviderTypeCodexAppServer && binding.ProviderType != config.ProviderTypeOpenAICompatible {
+		if binding.ProviderType != config.ProviderTypeCodexAppServer && binding.ProviderType != config.ProviderTypeOpenAICompatible && binding.ProviderType != config.ProviderTypeMacRelay {
 			return fmt.Errorf("binding %s has unknown provider type %q", binding.StageID, binding.ProviderType)
 		}
 		if binding.ProviderID != "" {

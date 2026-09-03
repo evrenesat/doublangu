@@ -1,5 +1,41 @@
 # Development Log
 
+## 2026-09-04 — Profile saves fixed server-side; editor model picker becomes a select
+
+Fixed the "cannot use OpenRouter / create any profile" blocker reported from
+the Analysis settings page (error shown: `bindings[0]:
+provider_config_fingerprint is required`).
+
+- Server (`internal/httpapi/pipeline_analysis.go`): `canonicalizeUsableBindings`
+  validated bindings against the live registry but never filled the trusted
+  snapshot identity, while `ProfileStore.validateProfile` → `ProfileSnapshot.
+  Validate` requires it — so every POST/PUT `/api/v1/analysis/profiles` failed
+  with that exact error. It now sets `ProviderType` and
+  `ProviderConfigFingerprint` from the live provider descriptor, mirroring
+  `usableProfileBindings`; contradicting client-declared types are still
+  rejected. Existing Go tests had masked this by posting snapshot-shaped
+  bodies that hardcoded `provider_config_fingerprint`.
+- Server (`internal/analysis/profiles.go`): the store's provider-type gate now
+  also accepts `mac_relay` (same oversight the frontend fix in 5aa0e2b
+  addressed client-side); unknown types are still rejected.
+- Web (`AnalysisPipelinePanel.svelte`): the profile editor's Model field now
+  renders a `<select>` populated from the provider's catalog models —
+  matching the provider test area — and falls back to the free-text input
+  only when a provider advertises no catalog models. This removes the
+  pre-filled `meta/muse-spark-...` text input the report asked to become a
+  selectbox.
+- Regression tests: `TestPipelineProfileCreateFillsSnapshotIdentityFromRegistry`
+  posts browser-shaped 4-field bindings on create and replace (verified to
+  fail with the exact reported error before the fix) and asserts the
+  contradicting-type rejection; `TestProfileStoreAcceptsMacRelayBindings`
+  covers the store gate; the mac_relay panel test asserts the editor model
+  select.
+
+Verification: `go build ./internal/...` clean; `go test ./internal/httpapi
+./internal/analysis ./internal/pipeline ./internal/config` pass; `-race` on
+the profile paths passes; `npm run check` (0/0), `npm run test:unit`
+(130/130), `npm run build`, `git diff --check` — all clean.
+
 ## 2026-09-03 — Settings UI: mac_relay now uses the numeric stage-option schema
 
 Fixed a frontend provider-type bug that survived the settings restructure:

@@ -193,6 +193,10 @@ it('treats mac_relay like openai_compatible for numeric stage options', async ()
 	// Two stages x (temperature + max tokens), and no effort control.
 	expect(editor!.querySelectorAll('input[type="number"]')).toHaveLength(4);
 	expect(editor!.textContent).not.toContain('Reasoning effort');
+	// Catalog models render as a select, not the old free-text input:
+	// two provider selects plus two model selects.
+	expect(editor!.querySelectorAll('select')).toHaveLength(4);
+	expect(editor!.textContent).toContain('qwen-mlx');
 	await waitFor(() => expect(screen.getByRole('button', { name: 'Create profile' }).hasAttribute('disabled')).toBe(false));
 });
 
