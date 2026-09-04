@@ -1,4 +1,4 @@
-# Doublangu Speech Worker
+# Doublangu worker
 
 This is a native arm64 macOS 14+ menu-bar worker for the Doublangu Dutch
 reader. It leases one job at a time from the beta HTTPS API, renders words and
