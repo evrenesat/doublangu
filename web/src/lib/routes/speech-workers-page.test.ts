@@ -85,7 +85,7 @@ it('renders the empty state when no workers are enrolled', async () => {
 	stubWorkersFetch({ workers: () => [] });
 
 	render(SpeechWorkersPage);
-	await waitFor(() => expect(screen.getByText('No speech workers are enrolled yet.')).toBeTruthy());
+	await waitFor(() => expect(screen.getByText('No workers are enrolled yet.')).toBeTruthy());
 	expect(screen.queryByRole('button', { name: 'Revoke' })).toBeNull();
 });
 
@@ -166,7 +166,7 @@ it('revokes only after an inline confirmation and reloads the list', async () =>
 	await fireEvent.click(screen.getByRole('button', { name: 'Revoke' }));
 	revoked = true;
 	await fireEvent.click(screen.getByRole('button', { name: 'Revoke worker' }));
-	await waitFor(() => expect(screen.getByText('No speech workers are enrolled yet.')).toBeTruthy());
+	await waitFor(() => expect(screen.getByText('No workers are enrolled yet.')).toBeTruthy());
 	const deletes = fetchMock.mock.calls.filter(([url, init]) => url === '/api/v1/speech-workers/worker-1' && init?.method === 'DELETE');
 	expect(deletes).toHaveLength(1);
 	const headers = new Headers(deletes[0]![1]!.headers);

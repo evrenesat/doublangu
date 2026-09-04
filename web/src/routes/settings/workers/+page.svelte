@@ -35,7 +35,7 @@
 		try {
 			workers = await listSpeechWorkers();
 		} catch (cause) {
-			listError = errorMessage(cause, 'Could not load speech workers.');
+			listError = errorMessage(cause, 'Could not load workers.');
 		} finally {
 			loading = false;
 		}
@@ -142,20 +142,20 @@
 </script>
 
 <svelte:head>
-	<title>Speech workers — Doublangu</title>
+	<title>Workers — Doublangu</title>
 </svelte:head>
 
 <section class="workers-intro" aria-labelledby="workers-heading">
-	<h2 id="workers-heading">Speech workers</h2>
+	<h2 id="workers-heading">Workers</h2>
 	<p class="intro">
-		Speech workers connect to Doublangu to process speech and relay jobs. Enroll a new worker here or revoke a worker that should no
+		Workers connect to Doublangu to process speech and relay jobs. Enroll a new worker here or revoke a worker that should no
 		longer connect.
 	</p>
 </section>
 
 <section class="enrollment" aria-labelledby="enroll-heading">
 	<h2 id="enroll-heading">Enroll a new worker</h2>
-	<p class="muted enroll-help">Generate a one-time enrollment token for a speech worker. The token expires after 30 minutes and can be used once.</p>
+	<p class="muted enroll-help">Generate a one-time enrollment token for a worker. The token expires after 30 minutes and can be used once.</p>
 	<button type="button" class="secondary" disabled={enrolling} onclick={() => void generateEnrollment()}>
 		{enrolling ? 'Generating…' : 'Generate enrollment token'}
 	</button>
@@ -178,14 +178,14 @@
 <section class="workers-section" aria-labelledby="enrolled-heading">
 	<h2 id="enrolled-heading">Enrolled workers</h2>
 	{#if loading}
-		<p class="status" role="status">Loading speech workers…</p>
+		<p class="status" role="status">Loading workers…</p>
 	{:else if listError}
 		<div class="error-box" role="alert">
 			<p>{listError}</p>
 			<button type="button" class="secondary" onclick={() => void loadWorkers()}>Retry</button>
 		</div>
 	{:else if workers.length === 0}
-		<p class="muted">No speech workers are enrolled yet.</p>
+		<p class="muted">No workers are enrolled yet.</p>
 	{:else}
 		<ul class="worker-list" role="list">
 			{#each workers as worker (worker.id)}

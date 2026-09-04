@@ -232,7 +232,7 @@
 	const speechLabel = $derived.by(() => {
 		switch (current.narration_status) {
 			case 'queued':
-			case 'generating': return 'Waiting for speech worker…';
+			case 'generating': return 'Waiting for the worker…';
 			case 'partial': return 'Partly ready';
 			case 'ready': return 'Ready';
 			case 'failed': return 'Needs retry';

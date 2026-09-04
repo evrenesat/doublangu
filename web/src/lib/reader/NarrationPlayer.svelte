@@ -101,7 +101,7 @@
 		<div>
 			<strong>Article narration</strong>
 			<span class="player-status">
-				{#if loading}Loading clips…{:else if narration?.status === 'ready'}Ready{:else if narration?.status === 'partial'}Partly ready{:else if narration?.status === 'purged'}Cleared{:else if narration?.status === 'failed'}Generation failed{:else if hasReadyAudio}Preparing remaining clips…{:else}Waiting for speech worker…{/if}
+				{#if loading}Loading clips…{:else if narration?.status === 'ready'}Ready{:else if narration?.status === 'partial'}Partly ready{:else if narration?.status === 'purged'}Cleared{:else if narration?.status === 'failed'}Generation failed{:else if hasReadyAudio}Preparing remaining clips…{:else}Waiting for the worker…{/if}
 			</span>
 		</div>
 		{#if narration?.reclaimable_bytes || narration?.size_bytes}<span class="storage">{formatBytes(narration.reclaimable_bytes || narration.size_bytes)} stored</span>{/if}

@@ -24,12 +24,12 @@ it('renders the heading, introduction, and one link per Settings section', () =>
 
 	expect(screen.getByRole('heading', { name: 'Settings' })).toBeTruthy();
 	expect(
-		screen.getByText('Configure reading behavior, analysis models, speech workers, and server diagnostics.')
+		screen.getByText('Configure reading behavior, analysis models, workers, and server diagnostics.')
 	).toBeTruthy();
 
 	expect((screen.getByRole('link', { name: 'Reader' }) as HTMLAnchorElement).getAttribute('href')).toBe('/settings');
 	expect((screen.getByRole('link', { name: 'Analysis' }) as HTMLAnchorElement).getAttribute('href')).toBe('/settings/analysis');
-	expect((screen.getByRole('link', { name: 'Speech workers' }) as HTMLAnchorElement).getAttribute('href')).toBe('/settings/workers');
+	expect((screen.getByRole('link', { name: 'Workers' }) as HTMLAnchorElement).getAttribute('href')).toBe('/settings/workers');
 	expect((screen.getByRole('link', { name: 'System' }) as HTMLAnchorElement).getAttribute('href')).toBe('/settings/system');
 	expect(screen.getByTestId('child-content')).toBeTruthy();
 });
@@ -38,7 +38,7 @@ it('marks the active local section for every settings route', () => {
 	for (const [route, label] of [
 		['/settings', 'Reader'],
 		['/settings/analysis', 'Analysis'],
-		['/settings/workers', 'Speech workers'],
+		['/settings/workers', 'Workers'],
 		['/settings/system', 'System']
 	] as const) {
 		cleanup();
@@ -46,7 +46,7 @@ it('marks the active local section for every settings route', () => {
 		render(SettingsLayout, { children });
 		const active = screen.getByRole('link', { name: label });
 		expect(active.getAttribute('aria-current')).toBe('page');
-		for (const other of ['Reader', 'Analysis', 'Speech workers', 'System']) {
+		for (const other of ['Reader', 'Analysis', 'Workers', 'System']) {
 			if (other === label) continue;
 			expect(screen.getByRole('link', { name: other }).getAttribute('aria-current')).toBeNull();
 		}

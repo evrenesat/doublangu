@@ -7,7 +7,7 @@
 	const sections = [
 		{ href: '/settings', label: 'Reader' },
 		{ href: '/settings/analysis', label: 'Analysis' },
-		{ href: '/settings/workers', label: 'Speech workers' },
+		{ href: '/settings/workers', label: 'Workers' },
 		{ href: '/settings/system', label: 'System' }
 	];
 
@@ -22,7 +22,7 @@
 <div class="settings-page">
 	<div class="settings-heading">
 		<h1>Settings</h1>
-		<p>Configure reading behavior, analysis models, speech workers, and server diagnostics.</p>
+		<p>Configure reading behavior, analysis models, workers, and server diagnostics.</p>
 	</div>
 
 	<div class="settings-body">
