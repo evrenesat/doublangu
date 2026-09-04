@@ -51,7 +51,7 @@ fi
 [[ "$application_commit" == unknown || "$application_commit" =~ ^[0-9a-f]{40}$ ]] || fail "invalid application revision"
 build_number=$(git -C "$repo_root" rev-list --count HEAD)
 
-app_name="Doublangu Speech Worker.app"
+app_name="Doublangu worker.app"
 app_dir="$dist_dir/$app_name"
 mkdir -p "$dist_dir"
 if [[ -e "$app_dir" ]]; then

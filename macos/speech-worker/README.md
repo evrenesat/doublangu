@@ -23,9 +23,9 @@ swift test --package-path app --parallel
 swift build --package-path app -c release
 ./build-runtime.sh
 ./build-app.sh --development
-./verify-release.sh --app-only ../../dist/macos/Doublangu\ Speech\ Worker.app
+./verify-release.sh --app-only ../../dist/macos/Doublangu\ worker.app
 ./build-dmg.sh --development
-./verify-release.sh ../../dist/macos/Doublangu-Speech-Worker-0.1.0-arm64-dev.dmg
+./verify-release.sh ../../dist/macos/Doublangu-Worker-0.2.0-arm64-dev.dmg
 ```
 
 Runtime preparation uses the checked-in `python/uv.lock` and a Python 3.12.11

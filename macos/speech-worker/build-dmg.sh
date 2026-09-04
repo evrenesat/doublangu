@@ -23,17 +23,17 @@ fail() {
 command -v hdiutil >/dev/null || fail "hdiutil is required"
 command -v codesign >/dev/null || fail "codesign is required"
 
-app_name="Doublangu Speech Worker.app"
+app_name="Doublangu worker.app"
 app_dir="$dist_dir/$app_name"
 [[ -d "$app_dir" ]] || fail "app is missing; run build-app.sh first"
 
 if [[ "$mode" == "release" ]]; then
     codesign_identity=$(printenv CODESIGN_IDENTITY 2>/dev/null || true)
     [[ -n "$codesign_identity" ]] || fail "CODESIGN_IDENTITY is required for a release DMG"
-    dmg_name="Doublangu-Speech-Worker-$version-arm64.dmg"
+    dmg_name="Doublangu-Worker-$version-arm64.dmg"
 else
     codesign_identity=-
-    dmg_name="Doublangu-Speech-Worker-$version-arm64-dev.dmg"
+    dmg_name="Doublangu-Worker-$version-arm64-dev.dmg"
 fi
 
 staging="$repo_root/.build/doublangu-speech-worker-dmg-staging"
@@ -48,7 +48,7 @@ output="$dist_dir/$dmg_name"
 if [[ -e "$output" ]]; then
     rm -f -- "$output"
 fi
-hdiutil create -volname "Doublangu Speech Worker $version" -srcfolder "$staging" \
+hdiutil create -volname "Doublangu worker $version" -srcfolder "$staging" \
     -format UDZO -imagekey zlib-level=9 -ov "$output"
 codesign --force --sign "$codesign_identity" "$output"
 codesign --verify --strict --verbose=2 "$output"
