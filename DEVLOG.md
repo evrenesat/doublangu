@@ -1745,3 +1745,36 @@ src/lib/routes/speech-workers-page.test.ts` 9/9 pass; `git diff --check` clean;
 contains no server URL); `verify-release.sh --app-only` passed. The release
 manifest records `application_commit: unknown` because the checkout had
 untracked local model/audio files.
+
+## 2026-09-04 — Worker private log actually logs; basic auth removed
+
+The private log was effectively empty: `LogRotation` was only used for the
+Chatterbox child's stdout/stderr, while the app's own loops only set an
+in-memory `lastError`, so HTTP failures like `worker_http_405` left no trace on
+disk. Changes:
+
+- New `WorkerLogger` (timestamped single lines over `LogRotation`, best-effort
+  writes). `AppState` owns one and logs lifecycle: start/stop, config load
+  (server URL + identity presence), setup/identity flags, server URL and relay
+  saves, enrollment attempts/outcomes, and both lanes' status transitions.
+- `WorkerClient` takes an optional `WorkerLogger` and writes one line per
+  request: method, URL, status, duration, and — for unexpected statuses — a
+  truncated response-body snippet. Headers, tokens, and request bodies are
+  never logged.
+- Both lanes' `log` closures now write to the file in addition to `lastError`,
+  and `statusChanged` handlers log each transition.
+- Basic auth removed from the mac app, matching the server: `WorkerClient` no
+  longer reads perimeter credentials or sends `Authorization: Basic`; the
+  Beta-perimeter section is gone from Setup (enrollment needs only the token);
+  `KeychainAccount.perimeter*` and `hasPerimeterCredentials`/`savePerimeterCredentials`
+  are deleted, and lane identity is worker ID + worker token. Existing
+  perimeter keychain items are simply left orphaned.
+- Tests: client request-log test asserts outcome lines and body snippets are
+  present while the worker token never appears; perimeter writes and Basic
+  header assertions removed; server live test needs only
+  `DOUBLANGU_TEST_SERVER_BASE_URL` + `DOUBLANGU_TEST_WORKER_TOKEN`.
+
+Verification: `xcrun swift-format lint --recursive app/Sources app/Tests` clean;
+`swift test --package-path app --parallel` exit 0 (94 tests, 0 failures);
+`build-app.sh --development` rebuilt `dist/macos/Doublangu worker.app`;
+`verify-release.sh --app-only` passed.

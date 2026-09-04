@@ -1,5 +1,40 @@
 import Foundation
 
+/// Timestamped, single-line app log on top of `LogRotation`. Writes are best
+/// effort: a failed log write must never take the worker down.
+public final class WorkerLogger: @unchecked Sendable {
+  public static let maximumLineUTF8Bytes = 2_000
+  private let rotation: LogRotation
+  private let clock: () -> Date
+  private let formatter: ISO8601DateFormatter
+
+  public init(logURL: URL, clock: @escaping () -> Date = Date.init) {
+    rotation = LogRotation(logURL: logURL)
+    self.clock = clock
+    formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime]
+  }
+
+  public func write(_ message: String) {
+    var compact = message.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(
+      in: .whitespaces)
+    if compact.isEmpty { return }
+    if compact.utf8.count > Self.maximumLineUTF8Bytes {
+      var truncated = ""
+      var bytes = 0
+      for character in compact {
+        let width = String(character).utf8.count
+        if bytes + width > Self.maximumLineUTF8Bytes { break }
+        truncated.append(character)
+        bytes += width
+      }
+      compact = truncated
+    }
+    let line = "\(formatter.string(from: clock())) \(compact)\n"
+    try? rotation.append(Data(line.utf8))
+  }
+}
+
 public final class LogRotation: @unchecked Sendable {
   public let logURL: URL
   public let maximumBytes: Int64

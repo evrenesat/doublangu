@@ -97,12 +97,8 @@ final class ServerIntegrationLiveTests: XCTestCase {
     try XCTSkipUnless(
       ProcessInfo.processInfo.environment["DOUBLANGU_TEST_SERVER_CONFIRM_LEASE"] == "1",
       "set DOUBLANGU_TEST_SERVER_CONFIRM_LEASE=1 to allow a live lease claim")
-    let username = try requiredEnvironment("DOUBLANGU_TEST_PERIMETER_USERNAME")
-    let password = try requiredEnvironment("DOUBLANGU_TEST_PERIMETER_PASSWORD")
     let workerToken = try requiredEnvironment("DOUBLANGU_TEST_WORKER_TOKEN")
     let secrets = MemorySecretStore()
-    try secrets.write(username, account: KeychainAccount.perimeterUsername)
-    try secrets.write(password, account: KeychainAccount.perimeterPassword)
     try secrets.write(workerToken, account: KeychainAccount.workerToken)
     let baseURL = try requiredEnvironment("DOUBLANGU_TEST_SERVER_BASE_URL")
     let client = WorkerClient(

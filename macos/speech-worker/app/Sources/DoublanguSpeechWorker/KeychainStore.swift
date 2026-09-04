@@ -70,8 +70,6 @@ public final class KeychainStore: SecretStore, @unchecked Sendable {
 }
 
 public enum KeychainAccount {
-  public static let perimeterUsername = "perimeter-username"
-  public static let perimeterPassword = "perimeter-password"
   public static let workerToken = "worker-token"
   public static let relayAPIKey = "relay-api-key"
 }

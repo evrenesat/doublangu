@@ -315,8 +315,6 @@ final class AppStateRelayTests: XCTestCase {
       requestTimeoutSeconds: 540)
     try StrictJSON.encode(config).write(to: paths.configURL, options: .atomic)
     let keychain = MemorySecretStore()
-    try keychain.write("perimeter-user", account: KeychainAccount.perimeterUsername)
-    try keychain.write("perimeter-pass", account: KeychainAccount.perimeterPassword)
     try keychain.write(String(repeating: "w", count: 40), account: KeychainAccount.workerToken)
     try keychain.write("sk-test", account: KeychainAccount.relayAPIKey)
 

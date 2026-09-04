@@ -74,7 +74,6 @@ public final class AppState: ObservableObject {
   @Published public private(set) var referenceReady = false
   @Published public private(set) var modelReady = false
   @Published public private(set) var hasWorkerToken = false
-  @Published public private(set) var hasPerimeterCredentials = false
   @Published public private(set) var hasRelayAPIKey = false
   @Published public private(set) var lastServerContact: Date?
   @Published public private(set) var currentJobType: String?
@@ -83,6 +82,7 @@ public final class AppState: ObservableObject {
 
   public let paths: AppPaths
   public let keychain: SecretStore
+  let logger: WorkerLogger
   private let loginItem: LoginItemManaging
   private var leaseLoop: LeaseLoop?
   var relayLoop: RelayLoop?
@@ -94,17 +94,20 @@ public final class AppState: ObservableObject {
 
   public init(
     paths: AppPaths = AppPaths(), keychain: SecretStore = KeychainStore(),
-    loginItem: LoginItemManaging = MainAppLoginItemManager()
+    loginItem: LoginItemManaging = MainAppLoginItemManager(),
+    logger: WorkerLogger? = nil
   ) {
     self.paths = paths
     self.keychain = keychain
     self.loginItem = loginItem
+    self.logger = logger ?? WorkerLogger(logURL: paths.logURL)
     loadTask = Task { [weak self] in await self?.load() }
   }
 
   deinit { loadTask?.cancel() }
 
   public func load() async {
+    logger.write("worker starting (version \(WorkerConstants.appVersion))")
     do {
       try paths.ensureDirectories()
       let config: SpeechWorkerConfiguration
@@ -116,6 +119,9 @@ public final class AppState: ObservableObject {
         try paths.writePrivate(StrictJSON.encode(config), to: paths.configURL)
       }
       configuration = config
+      logger.write(
+        "config loaded (server URL \(config.baseURL?.absoluteString ?? "not set"), worker ID \(config.workerID ?? "none"))"
+      )
       setupReceipt = try? StrictJSON.decode(
         SetupReceipt.self, from: Data(contentsOf: paths.setupReceiptURL))
       referenceReady =
@@ -124,26 +130,21 @@ public final class AppState: ObservableObject {
       modelReady = isModelReady(config)
       hasWorkerToken =
         ((try? keychain.read(account: KeychainAccount.workerToken)) ?? nil)?.isEmpty == false
-      let username = (try? keychain.read(account: KeychainAccount.perimeterUsername)) ?? nil
-      let password = (try? keychain.read(account: KeychainAccount.perimeterPassword)) ?? nil
-      hasPerimeterCredentials = username?.isEmpty == false && password?.isEmpty == false
       hasRelayAPIKey =
         ((try? keychain.read(account: KeychainAccount.relayAPIKey)) ?? nil)?
         .isEmpty == false
       launchAtLogin = loginItem.isEnabled
+      logger.write(
+        "setup reference=\(referenceReady) model=\(modelReady) workerToken=\(hasWorkerToken) relayKey=\(hasRelayAPIKey)"
+      )
       updateInitialStatus()
       if launchAtLogin { start() }
     } catch {
+      logger.write(
+        "config load failed: \((error as? LocalizedError)?.errorDescription ?? "\(error)")")
       lastError = "configuration_invalid"
       status = .failed(code: "configuration_invalid")
     }
-  }
-
-  public func savePerimeterCredentials(username: String, password: String) throws {
-    guard !username.isEmpty, !password.isEmpty else { throw KeychainError.invalidData }
-    try keychain.write(username, account: KeychainAccount.perimeterUsername)
-    try keychain.write(password, account: KeychainAccount.perimeterPassword)
-    hasPerimeterCredentials = true
   }
 
   public func installReference(from sourceURL: URL) throws {
@@ -176,12 +177,15 @@ public final class AppState: ObservableObject {
   public func enroll(enrollmentToken: String) async {
     guard let config = configuration, !enrollmentToken.isEmpty else { return }
     guard let serverURL = config.baseURL else {
+      logger.write("enrollment skipped: no server URL set")
       lastError = "server_url_missing"
       status = .serverURLRequired
       return
     }
+    logger.write("enrolling against \(serverURL.absoluteString)")
     do {
-      let client = WorkerClient(baseURL: serverURL, secrets: keychain)
+      let client = WorkerClient(
+        baseURL: serverURL, secrets: keychain, logger: logger)
       // v0.2 always advertises relay *support* at enrollment, independent of the
       // enabled toggle, so later toggling never requires re-enrollment.
       let response = try await client.enroll(
@@ -196,14 +200,18 @@ public final class AppState: ObservableObject {
       configuration = updated
       hasWorkerToken = true
       lastError = nil
+      logger.write("enrollment succeeded (worker ID \(response.worker.id))")
       updateInitialStatus()
     } catch {
+      logger.write(
+        "enrollment failed: \((error as? LocalizedError)?.errorDescription ?? "\(error)")")
       lastError = (error as? LocalizedError)?.errorDescription ?? "enrollment_failed"
       status = .failed(code: lastError ?? "enrollment_failed")
     }
   }
 
   public func replaceEnrollment() {
+    logger.write("enrollment replaced; worker token cleared")
     stop()
     try? keychain.delete(account: KeychainAccount.workerToken)
     if var config = configuration {
@@ -216,9 +224,10 @@ public final class AppState: ObservableObject {
   }
 
   public func start() {
+    logger.write("worker start requested")
     workerRunning = true
     guard let config = configuration else { return }
-    let identityReady = config.workerID != nil && hasWorkerToken && hasPerimeterCredentials
+    let identityReady = config.workerID != nil && hasWorkerToken
     // The lanes are evaluated independently: missing speech setup must not
     // block the relay lane, and relay misconfiguration must not block TTS.
     guard referenceReady && modelReady else {
@@ -237,7 +246,8 @@ public final class AppState: ObservableObject {
       return
     }
     if leaseLoop == nil {
-      let client = WorkerClient(baseURL: serverURL, secrets: keychain)
+      logger.write("speech lane starting against \(serverURL.absoluteString)")
+      let client = WorkerClient(baseURL: serverURL, secrets: keychain, logger: logger)
       let supervisor = ChatterboxSupervisor(paths: paths, configuration: config)
       let renderer = ChatterboxRenderer(supervisor: supervisor, configuration: config, paths: paths)
       let loop = LeaseLoop(
@@ -247,8 +257,12 @@ public final class AppState: ObservableObject {
         self?.status = AppStatus(workerStatus: value)
         self?.lastServerContact = loop?.lastServerContact
         self?.currentJobType = loop?.currentJobType
+        self?.logger.write("speech lane: \(value.label)")
       }
-      loop.log = { [weak self] message in self?.lastError = message }
+      loop.log = { [weak self] message in
+        self?.logger.write("speech lane: \(message)")
+        self?.lastError = message
+      }
       chatterboxSupervisor = supervisor
       leaseLoop = loop
       loop.start()
@@ -257,6 +271,7 @@ public final class AppState: ObservableObject {
   }
 
   public func stop() {
+    logger.write("worker stop requested")
     workerRunning = false
     leaseLoop?.stop()
     leaseLoop = nil
@@ -289,6 +304,7 @@ public final class AppState: ObservableObject {
     config.baseURL = url
     try config.validate(paths: paths)
     try paths.writePrivate(StrictJSON.encode(config), to: paths.configURL)
+    logger.write("server URL saved: \(url?.absoluteString ?? "cleared")")
     // Both lanes reach the Doublangu server, so both must be rebuilt.
     let wasRunning = workerRunning
     leaseLoop?.stop()
@@ -323,6 +339,8 @@ public final class AppState: ObservableObject {
     }
     config.relay = relay
     try paths.writePrivate(StrictJSON.encode(config), to: paths.configURL)
+    logger.write(
+      "relay configuration saved (enabled \(enabled), target \(relay.baseURL.absoluteString))")
     configuration = config
     hasRelayAPIKey =
       ((try? keychain.read(account: KeychainAccount.relayAPIKey)) ?? nil)?.isEmpty == false
@@ -367,7 +385,7 @@ public final class AppState: ObservableObject {
 
   private func restartRelayLaneIfNeeded() {
     guard let config = configuration else { return }
-    let identityReady = config.workerID != nil && hasWorkerToken && hasPerimeterCredentials
+    let identityReady = config.workerID != nil && hasWorkerToken
     // A stopped worker stays stopped: configuration changes only refresh the
     // published relay status until the user starts the worker again.
     restartRelayLane(identityReady: identityReady && workerRunning)
@@ -387,7 +405,7 @@ public final class AppState: ObservableObject {
       return
     }
     let client =
-      relayClientOverride ?? WorkerClient(baseURL: serverURL, secrets: keychain)
+      relayClientOverride ?? WorkerClient(baseURL: serverURL, secrets: keychain, logger: logger)
     let http = RelayHTTPClient(
       target: RelayTarget(
         baseURL: config.relay.baseURL, timeout: TimeInterval(config.relay.requestTimeoutSeconds)))
@@ -395,8 +413,14 @@ public final class AppState: ObservableObject {
     let loop = RelayLoop(
       client: client, http: http,
       keyProvider: { (try? keychain.read(account: KeychainAccount.relayAPIKey)) ?? nil })
-    loop.statusChanged = { [weak self] value in self?.relayStatus = value }
-    loop.log = { [weak self] message in self?.lastError = message }
+    loop.statusChanged = { [weak self] value in
+      self?.relayStatus = value
+      self?.logger.write("relay lane: \(value.label)")
+    }
+    loop.log = { [weak self] message in
+      self?.logger.write("relay lane: \(message)")
+      self?.lastError = message
+    }
     relayLoop = loop
     loop.start()
   }
@@ -447,7 +471,7 @@ public final class AppState: ObservableObject {
       status = .setupRequired
     } else if configuration?.baseURL == nil {
       status = .serverURLRequired
-    } else if configuration?.workerID == nil || !hasWorkerToken || !hasPerimeterCredentials {
+    } else if configuration?.workerID == nil || !hasWorkerToken {
       status = .enrollmentRequired
     } else {
       status = .stopped

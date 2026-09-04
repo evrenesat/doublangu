@@ -4,8 +4,6 @@ import UniformTypeIdentifiers
 public struct SetupView: View {
   @ObservedObject private var appState: AppState
   @State private var enrollmentToken = ""
-  @State private var perimeterUsername = ""
-  @State private var perimeterPassword = ""
   @State private var showingImporter = false
   @State private var message: String?
 
@@ -24,18 +22,11 @@ public struct SetupView: View {
         LabeledContent("Model", value: appState.modelReady ? "Verified" : "Not prepared")
         Button("Prepare pinned Chatterbox model") { Task { await appState.prepareModel() } }
       }
-      Section("Beta perimeter") {
-        TextField("Basic username", text: $perimeterUsername)
-        SecureField("Basic password", text: $perimeterPassword)
-        Button("Save perimeter credentials") {
-          do {
-            try appState.savePerimeterCredentials(
-              username: perimeterUsername, password: perimeterPassword)
-            message = "Saved to Keychain"
-          } catch { message = "Could not save credentials" }
-        }
-      }
       Section("Worker enrollment") {
+        Text(
+          "Paste a one-time enrollment token generated on the Doublangu server's Workers settings page."
+        )
+        .font(.caption)
         SecureField("One-time enrollment token", text: $enrollmentToken)
         Button("Enroll this Mac") {
           let token = enrollmentToken

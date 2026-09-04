@@ -82,14 +82,18 @@ public final class WorkerClient: WorkerClienting, @unchecked Sendable {
   public let baseURL: URL
   private let secrets: SecretStore
   private let requester: HTTPRequesting
+  /// Optional request log; never receives headers, tokens, or request bodies.
+  private let logger: WorkerLogger?
 
   public init(
     baseURL: URL, secrets: SecretStore,
-    requester: HTTPRequesting = URLSessionRequester()
+    requester: HTTPRequesting = URLSessionRequester(),
+    logger: WorkerLogger? = nil
   ) {
     self.baseURL = baseURL
     self.secrets = secrets
     self.requester = requester
+    self.logger = logger
   }
 
   public func enroll(
@@ -198,19 +202,12 @@ public final class WorkerClient: WorkerClienting, @unchecked Sendable {
   private func makeRequest(
     path: String, method: String, body: Data, workerToken: Bool = false, leaseToken: String? = nil
   ) throws -> URLRequest {
-    guard let username = try secrets.read(account: KeychainAccount.perimeterUsername),
-      let password = try secrets.read(account: KeychainAccount.perimeterPassword),
-      !username.isEmpty, !password.isEmpty
-    else { throw WorkerClientError.credentialsMissing }
     let url = baseURL.appendingPathComponent(path)
     var request = URLRequest(url: url)
     request.httpMethod = method
     request.httpBody = body
     request.timeoutInterval = method == "POST" && path.hasSuffix("/lease") ? 35 : 90
     request.setValue("application/json", forHTTPHeaderField: "Accept")
-    request.setValue(
-      "Basic \(Data("\(username):\(password)".utf8).base64EncodedString())",
-      forHTTPHeaderField: "Authorization")
     if workerToken {
       guard let token = try secrets.read(account: KeychainAccount.workerToken), !token.isEmpty
       else { throw WorkerClientError.credentialsMissing }
@@ -224,11 +221,34 @@ public final class WorkerClient: WorkerClienting, @unchecked Sendable {
   }
 
   private func send(_ request: URLRequest, accepted: Set<Int>) async throws -> HTTPResponse {
-    let response = try await requester.send(request)
-    guard accepted.contains(response.statusCode) else {
-      throw WorkerClientError.http(status: response.statusCode)
+    let startedAt = Date()
+    let response: HTTPResponse
+    do {
+      response = try await requester.send(request)
+    } catch {
+      logger?.write(
+        "\(request.httpMethod ?? "GET") \(request.url?.absoluteString ?? "<url>") failed: \(error)")
+      throw error
     }
-    return response
+    let elapsedMS = Int(Date().timeIntervalSince(startedAt) * 1000)
+    if accepted.contains(response.statusCode) {
+      logger?.write(
+        "\(request.httpMethod ?? "GET") \(request.url?.absoluteString ?? "<url>") -> \(response.statusCode) (\(elapsedMS) ms)"
+      )
+      return response
+    }
+    logger?.write(
+      "\(request.httpMethod ?? "GET") \(request.url?.absoluteString ?? "<url>") -> \(response.statusCode) (\(elapsedMS) ms) body: \(Self.bodySnippet(response.body))"
+    )
+    throw WorkerClientError.http(status: response.statusCode)
+  }
+
+  /// Short, single-line peek at an error response for the private log.
+  static func bodySnippet(_ body: Data) -> String {
+    guard !body.isEmpty else { return "<empty>" }
+    var text = String(decoding: body.prefix(400), as: UTF8.self)
+    if body.count > 400 { text += "…" }
+    return text.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
   }
 }
 

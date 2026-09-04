@@ -385,8 +385,6 @@ final class RelayProtocolTests: XCTestCase {
   private func makeWorkerClient() -> (RecordingHTTPRequester, WorkerClient) {
     let requester = RecordingHTTPRequester(responses: [HTTPResponse(statusCode: 200)])
     let secrets = MemorySecretStore()
-    try? secrets.write("u", account: KeychainAccount.perimeterUsername)
-    try? secrets.write("p", account: KeychainAccount.perimeterPassword)
     try? secrets.write(String(repeating: "w", count: 40), account: KeychainAccount.workerToken)
     return (
       requester,
