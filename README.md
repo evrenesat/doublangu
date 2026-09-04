@@ -69,6 +69,15 @@ DOUBLANGU_WEB_BASE_PATH=/beta npm --prefix web run build
 make verify
 ```
 
+## Deployment
+
+Every push to `main` is verified and packaged by GitHub Actions. A dedicated,
+least-privilege self-hosted runner activates that exact artifact on the server.
+The public workflow contains no deployment hostname, IP address, credentials,
+or external health URL; the app's hostname and all runtime secrets remain in
+protected server-side configuration. The server retains the existing owner
+password and uses the built-in owner login as the public authentication layer.
+
 The API contract is in [`contracts/openapi.yaml`](contracts/openapi.yaml).
 See [`ARCHITECTURE.md`](ARCHITECTURE.md) for system details and
 [`DEVLOG.md`](DEVLOG.md) for implementation history.

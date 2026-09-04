@@ -58,7 +58,8 @@ paths:
   /health:
     get:
       summary: Plugin diagnostics
-      description: Returns core and loader readiness plus plugin counts.
+      description: Returns owner-only core and loader readiness plus plugin counts.
+      security: [{ sessionCookie: [] }]
       responses:
         "200":
           description: Diagnostics report.
@@ -66,6 +67,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DiagnosticsReport"
+        "401":
+          description: Owner authentication required.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIError"
         "405":
           description: Method not allowed.
           content:

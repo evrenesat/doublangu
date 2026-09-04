@@ -120,7 +120,7 @@ export interface paths {
         };
         /**
          * Plugin diagnostics
-         * @description Returns core and loader readiness plus plugin counts.
+         * @description Returns owner-only core and loader readiness plus plugin counts.
          */
         get: {
             parameters: {
@@ -138,6 +138,15 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["DiagnosticsReport"];
+                    };
+                };
+                /** @description Owner authentication required. */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["APIError"];
                     };
                 };
                 /** @description Method not allowed. */

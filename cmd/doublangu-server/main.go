@@ -214,14 +214,15 @@ func newHandlerWithMedia(
 		mediaStore, _ = media.New(cfg.Paths.Media)
 	}
 
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+	healthDiagnostics := authHandler.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			w.Header().Set("Allow", http.MethodGet)
 			httpapi.WriteError(w, http.StatusMethodNotAllowed, "method not allowed", httpapi.ErrCodeMethodNotAllow)
 			return
 		}
 		httpapi.WriteOK(w, manifest.CollectDiagnostics(registry, schema))
-	})
+	}))
+	mux.Handle("/health", healthDiagnostics)
 	mux.HandleFunc("/live", health.ServeLive)
 	mux.HandleFunc("/ready", health.ServeReady)
 

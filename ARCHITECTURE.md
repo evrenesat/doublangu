@@ -527,3 +527,19 @@ cancellation), `v1.analysis_interrupted`. Migration 008 is additive and
 cancels legacy queued analysis with the upgrade code; removing the config
 file and restarting restores compatibility mode on the same database, which
 is the rollback path.
+
+## Deployment boundary
+
+Pushes to `main` are verified and packaged on a GitHub-hosted runner. Only the
+resulting deterministic Linux/ARM64 archive crosses into a dedicated
+self-hosted deployment runner. That account cannot read the application
+environment or persistent state and can elevate only through a fixed,
+root-owned release activator. The activator validates the artifact location
+and shape, creates an immutable release, backs up the database, switches the
+active symlink, and rolls the symlink back when local readiness fails.
+
+The public workflow deliberately has no hostname, server address, SSH key,
+owner password, application secret, or provider credential. Host routing, TLS,
+and protected runtime configuration are owned by the server-side operations
+repository. Nginx exposes the static login shell and delegates authorization to
+the application's single-owner session, CSRF, and rate-limit boundaries.

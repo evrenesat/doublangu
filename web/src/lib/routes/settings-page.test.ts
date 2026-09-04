@@ -78,7 +78,7 @@ it('saves a checkbox mutation and mirrors it to the local copy', async () => {
 	expect(checkbox.checked).toBe(true);
 	await fireEvent.click(checkbox);
 	await waitFor(() => expect(checkbox.checked).toBe(false));
-	expect(localMirror()).toEqual({ pronounce_on_hover: false });
+	await waitFor(() => expect(localMirror()).toEqual({ pronounce_on_hover: false }));
 });
 
 it('rolls back a failed mutation with an inline error', async () => {

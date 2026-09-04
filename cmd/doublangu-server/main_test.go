@@ -320,8 +320,17 @@ func TestServerHandlerAssemblyDoesNotUseGlobalMux(t *testing.T) {
 	first := newHandler(registry, &manifest.ParsedSchema{}, ah, hh, cfg, db)
 	second := newHandler(registry, &manifest.ParsedSchema{}, ah, hh, cfg, db)
 
+	unauthorizedHealth := httptest.NewRecorder()
+	first.ServeHTTP(unauthorizedHealth, httptest.NewRequest(http.MethodGet, "/health", nil))
+	if unauthorizedHealth.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated health status = %d, want 401", unauthorizedHealth.Code)
+	}
+	session, err := ah.Sessions.Create(t.Context(), time.Hour, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
 	health := httptest.NewRecorder()
-	first.ServeHTTP(health, httptest.NewRequest(http.MethodGet, "/health", nil))
+	first.ServeHTTP(health, serverRequest(http.MethodGet, "/health", "", session, ""))
 	if health.Code != http.StatusOK || health.Header().Get("Content-Type") != "application/json" {
 		t.Fatalf("health response = status %d content-type %q", health.Code, health.Header().Get("Content-Type"))
 	}
@@ -670,7 +679,7 @@ func TestZeroPluginServerSmoke(t *testing.T) {
 		}
 	}
 
-	// Check /health endpoint.
+	// Plugin diagnostics require an owner session.
 	endpoint := "http:" + "//" + address + "/health"
 	response, err := (&http.Client{Timeout: 5 * time.Second}).Get(endpoint)
 	if err != nil {
@@ -679,15 +688,8 @@ func TestZeroPluginServerSmoke(t *testing.T) {
 		t.Fatalf("request health: %v", err)
 	}
 	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		t.Fatalf("health status = %d", response.StatusCode)
-	}
-	var report manifest.DiagnosticsReport
-	if err := json.NewDecoder(response.Body).Decode(&report); err != nil {
-		t.Fatalf("decode health: %v", err)
-	}
-	if !report.CoreReady || !report.LoaderReady || !report.SchemaAvailable || report.RegistryState != "empty" || report.PluginCount != 0 || report.RegistrationCount != 0 || len(report.PluginIDs) != 0 {
-		t.Errorf("health report = %+v", report)
+	if response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated health status = %d, want 401", response.StatusCode)
 	}
 
 	// Check /live endpoint.

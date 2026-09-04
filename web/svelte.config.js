@@ -1,6 +1,7 @@
 import adapter from '@sveltejs/adapter-static';
 
 const base = process.env.DOUBLANGU_WEB_BASE_PATH ?? '';
+const versionName = process.env.DOUBLANGU_BUILD_VERSION ?? 'development';
 
 /** @type {import('@sveltejs/kit').Config} */
 const config = {
@@ -8,6 +9,9 @@ const config = {
 		runes: true
 	},
 	kit: {
+		version: {
+			name: versionName
+		},
 		paths: {
 			base
 		},
