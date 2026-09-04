@@ -6,6 +6,7 @@ media/
 test-results/
 *.db
 run.sh
+openrouter_key
 macos/speech-worker/python/.venv/
 macos/speech-worker/python/__pycache__/
 macos/speech-worker/.build/

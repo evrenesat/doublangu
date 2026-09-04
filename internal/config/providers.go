@@ -267,7 +267,8 @@ func validateSafeLabel(name, value string) error {
 }
 
 // validateOpenAIBaseURL requires an absolute URL without user info, query, or
-// fragment, with a path of exactly /v1 after trimming one trailing slash.
+// fragment, with a supported OpenAI-compatible API path after trimming one
+// trailing slash.
 // HTTPS is always accepted; HTTP only for literal loopback or 100.64.0.0/10
 // addresses when explicitly allowed.
 func validateOpenAIBaseURL(raw string, allowInsecureHTTP bool) error {
@@ -288,8 +289,8 @@ func validateOpenAIBaseURL(raw string, allowInsecureHTTP bool) error {
 		return errors.New("must not contain a query or fragment")
 	}
 	pathValue := strings.TrimSuffix(parsed.Path, "/")
-	if pathValue != "/v1" {
-		return fmt.Errorf("path must be exactly /v1, got %q", parsed.Path)
+	if pathValue != "/v1" && pathValue != "/api/v1" {
+		return fmt.Errorf("path must be /v1 or /api/v1, got %q", parsed.Path)
 	}
 	host := parsed.Hostname()
 	if parsed.Scheme == "http" {

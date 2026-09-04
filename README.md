@@ -96,8 +96,9 @@ configured provider in a profile.
   variable name for the secret — never put a credential or endpoint secret in
   the file or the browser. Secrets are referenced as `api_key_env` names that
   must match `^[A-Z_][A-Z0-9_]*$`.
-- **Provider types**: `codex_app_server` (local Codex app server) and
-  `openai_compatible`. HTTP base URLs are allowed only for literal loopback or
+- **Provider types**: `codex_app_server` (local Codex app server),
+  `openai_compatible`, and `mac_relay`. OpenAI-compatible HTTPS base URLs may
+  use `/v1` or `/api/v1`; HTTP base URLs are allowed only for literal loopback or
   the Tailscale CGNAT range when `allow_insecure_tailscale_http` is set. The
   server never returns, stores, or logs `base_url` or secrets; the owner API
   exposes only ids, labels, types, health, and model catalogs.

@@ -112,10 +112,11 @@ func TestProviderConfigRejectsUnsafeURLsAndSecrets(t *testing.T) {
 		{`"http://example.com/v1"`, "DNS name"},
 		{`"http://8.8.8.8/v1"`, "literal loopback"},
 		{`"https://example.com/v1/"`, ""}, // trailing slash trimmed
+		{`"https://openrouter.ai/api/v1"`, ""},
 		{`"https://user:pass@example.com/v1"`, "user info"},
 		{`"https://example.com/v1?x=1"`, "query"},
 		{`"https://example.com/v1#f"`, "fragment"},
-		{`"https://example.com/v2"`, "exactly /v1"},
+		{`"https://example.com/v2"`, "must be /v1 or /api/v1"},
 		{`"http://127.0.0.1:8899/v1"`, ""},
 		{`"http://100.64.7.1:8899/v1"`, ""},
 		{`"http://100.127.255.1/v1"`, ""},
