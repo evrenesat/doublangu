@@ -1703,3 +1703,40 @@ Verification: `go test ./internal/llmrelay/ ./internal/httpapi/ -race -count=1` 
 `xcrun swift-format lint` clean; `swift test --package-path app --parallel` exit 0;
 `swift build -c release` exit 0; `build-app.sh --development` rebuilt the v0.2.0 bundle;
 `git diff --check` clean.
+
+## 2026-09-04 — Configurable worker server URL; rename to "Doublangu worker"
+
+The mac worker hardcoded the beta service URL (`WorkerConstants.baseURL`) and
+`validate()` pinned the host+path, so the deployment target was baked into the
+binary and the public source. It is now user configuration:
+
+- `SpeechWorkerConfiguration.baseURL` is `URL?` (`base_url` optional in the strict
+  decode; fresh default configs omit it). Validation accepts any HTTPS target plus
+  plain HTTP for literal loopback hosts only — mirroring `RelayConfig` rules. No
+  default URL ships in source; a fresh install reports the new
+  `AppStatus.serverURLRequired` ("Server URL required") until it is set.
+- Settings → Worker gained a Server section (`saveServerURL` in `AppState`):
+  validates the URL, persists the config, and rebuilds both lanes since both the
+  lease and relay loops reach the Doublangu server through `WorkerClient`.
+  Clearing the URL returns the worker to `serverURLRequired`; the relay lane
+  reports `misconfigured` while enabled without a server URL.
+- `WorkerClient.init` lost its default `baseURL` argument; the server live test
+  now takes `DOUBLANGU_TEST_SERVER_BASE_URL`.
+- Renames: `WorkerConstants.productName` is "Doublangu worker", the menu's
+  "Worker Settings…" is now "Settings…", and the web Settings section is
+  "Workers" (route stays `/settings/workers`; protocol kind stays
+  `speech-worker.v1`). On-disk paths keep `Doublangu Speech Worker` so existing
+  installs keep their config, models, and logs.
+- Tests: round-trip now asserts nil default URL; new acceptance/rejection tables
+  for URL shapes, disk load without `base_url`, and `saveServerURL`
+  persist/validate/clear behavior; relay AppState tests seed a server URL.
+
+Note: the old URL remains in git history and in earlier DEVLOG entries; removing
+it from history needs a rewrite (`git filter-repo`) plus force-push, which was
+deliberately not done here.
+
+Verification: `xcrun swift-format lint --recursive app/Sources app/Tests` clean;
+`swift test --package-path app --parallel` exit 0 (93 tests, 0 failures);
+`swift build --package-path app` exit 0; `npm --prefix web run check` 0 errors
+0 warnings; `npx vitest run src/lib/routes/settings-layout.test.ts
+src/lib/routes/speech-workers-page.test.ts` 9/9 pass; `git diff --check` clean.
