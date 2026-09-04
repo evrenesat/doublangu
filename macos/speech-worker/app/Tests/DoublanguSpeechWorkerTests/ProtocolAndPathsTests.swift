@@ -14,10 +14,57 @@ final class ProtocolAndPathsTests: XCTestCase {
       SpeechWorkerConfiguration.self, from: StrictJSON.encode(configuration))
 
     XCTAssertEqual(decoded, configuration)
-    XCTAssertEqual(decoded.baseURL.absoluteString, "https://nlrn.evren.io/beta")
+    XCTAssertNil(decoded.baseURL)
     XCTAssertEqual(decoded.avSpeechProfile.voiceIdentifier, WorkerConstants.avSpeechVoiceIdentifier)
     XCTAssertEqual(
       decoded.chatterboxProfile.referenceAudioHash, WorkerConstants.referenceAudioSHA256)
+  }
+
+  func testServerBaseURLAcceptsAnyHTTPSOrLoopbackHTTPTarget() throws {
+    let paths = AppPaths(rootOverride: temporaryRoot("server-url"))
+    defer { try? FileManager.default.removeItem(at: paths.applicationSupportRoot) }
+
+    for candidate in [
+      "https://tts.example.com", "https://tts.example.com/beta/",
+      "https://10.1.2.3:8443/doublangu", "http://127.0.0.1:8080",
+      "http://[::1]:8080/v1",
+    ] {
+      var configuration = SpeechWorkerConfiguration.default(paths: paths)
+      configuration.baseURL = URL(string: candidate)
+      XCTAssertNoThrow(try configuration.validate(paths: paths), candidate)
+      let decoded = try StrictJSON.decode(
+        SpeechWorkerConfiguration.self, from: StrictJSON.encode(configuration))
+      XCTAssertEqual(decoded.baseURL?.absoluteString, URL(string: candidate)?.absoluteString)
+      XCTAssertNoThrow(try decoded.validate(paths: paths), candidate)
+    }
+  }
+
+  func testServerBaseURLRejectsRemotePlainHTTPOrShapedTargets() throws {
+    let paths = AppPaths(rootOverride: temporaryRoot("server-url-invalid"))
+    defer { try? FileManager.default.removeItem(at: paths.applicationSupportRoot) }
+
+    for candidate in [
+      "http://tts.example.com/beta", "https://tts.example.com/?a=b",
+      "https://user:pw@tts.example.com/beta", "https://tts.example.com/beta#frag",
+      "notaurl",
+    ] {
+      var configuration = SpeechWorkerConfiguration.default(paths: paths)
+      configuration.baseURL = URL(string: candidate)
+      XCTAssertThrowsError(try configuration.validate(paths: paths), candidate)
+    }
+  }
+
+  func testLoadFromDiskAcceptsConfigWithoutServerURL() throws {
+    let root = temporaryRoot("configuration-no-url")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let paths = AppPaths(rootOverride: root)
+    try paths.ensureDirectories()
+    try paths.writePrivate(
+      StrictJSON.encode(SpeechWorkerConfiguration.default(paths: paths)), to: paths.configURL)
+
+    let loaded = try SpeechWorkerConfiguration.loadFromDisk(paths: paths)
+
+    XCTAssertNil(loaded.baseURL)
   }
 
   func testStrictJSONRejectsUnknownAndDuplicateKeys() throws {

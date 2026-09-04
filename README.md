@@ -17,10 +17,10 @@ The working product is an article reader for one owner:
 - retry failed analysis, force a fresh run, and inspect retained owner-only run
   diagnostics
 - play cached pronunciation and sentence narration when a compatible external
-  macOS speech worker is connected
+  macOS worker is connected
 
 Reading and playback do not call an LLM. Analysis failures preserve the article
-and can be retried. The speech worker is a separate companion project and is not
+and can be retried. The worker is a separate companion project and is not
 included here.
 
 ## Planned

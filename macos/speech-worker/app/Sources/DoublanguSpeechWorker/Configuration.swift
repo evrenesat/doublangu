@@ -3,8 +3,7 @@ import Foundation
 
 public enum WorkerConstants {
   public static let bundleIdentifier = "io.evren.doublangu.speech-worker"
-  public static let productName = "Doublangu Speech Worker"
-  public static let baseURL = URL(string: "https://nlrn.evren.io/beta")!
+  public static let productName = "Doublangu worker"
   public static let protocolVersion = "speech-worker.v1"
   public static let avSpeechModelRevision = "macos-15.7.9-build-24G830"
   public static let avSpeechVoiceIdentifier = "com.apple.voice.compact.nl-NL.Xander"
@@ -125,7 +124,9 @@ public struct RelayConfig: Codable, Equatable, Sendable {
 }
 
 public struct SpeechWorkerConfiguration: Codable, Equatable, Sendable {
-  public var baseURL: URL
+  /// Deployment-specific; set through worker settings and persisted as
+  /// `base_url`. `nil` means "not configured yet".
+  public var baseURL: URL?
   public var protocolVersion: String
   public var workerID: String?
   public var workerName: String
@@ -169,7 +170,7 @@ public struct SpeechWorkerConfiguration: Codable, Equatable, Sendable {
 
   public static func `default`(paths: AppPaths) -> SpeechWorkerConfiguration {
     SpeechWorkerConfiguration(
-      baseURL: WorkerConstants.baseURL, protocolVersion: WorkerConstants.protocolVersion,
+      baseURL: nil, protocolVersion: WorkerConstants.protocolVersion,
       workerID: nil, workerName: Host.current().localizedName ?? "Doublangu Mac",
       avSpeechProfile: WorkerConstants.avSpeechProfile,
       chatterboxProfile: WorkerConstants.chatterboxProfile,
@@ -189,7 +190,7 @@ public struct SpeechWorkerConfiguration: Codable, Equatable, Sendable {
   }
 
   public init(
-    baseURL: URL, protocolVersion: String, workerID: String?, workerName: String,
+    baseURL: URL?, protocolVersion: String, workerID: String?, workerName: String,
     avSpeechProfile: SpeechProfile, chatterboxProfile: SpeechProfile,
     modelRepository: String, modelRevision: String, tokenizerRepository: String,
     tokenizerRevision: String, referenceAudioPath: String, referenceAudioHash: String,
@@ -219,12 +220,14 @@ public struct SpeechWorkerConfiguration: Codable, Equatable, Sendable {
   }
 
   public init(from decoder: Decoder) throws {
-    // `relay` is the only newly optional key so installed v0.1 config files keep
-    // decoding; every previously required key stays required and unknown keys stay
-    // rejected.
-    try StrictCoding.checkKeys(decoder, CodingKeys.self, optional: ["worker_id", "relay"])
+    // `base_url` and `relay` are the optional keys so fresh installs can be
+    // written before a server URL exists and installed v0.1 config files keep
+    // decoding; every previously required key stays required and unknown keys
+    // stay rejected.
+    try StrictCoding.checkKeys(
+      decoder, CodingKeys.self, optional: ["base_url", "worker_id", "relay"])
     let c = try decoder.container(keyedBy: CodingKeys.self)
-    baseURL = try c.decode(URL.self, forKey: .baseURL)
+    baseURL = try c.decodeIfPresent(URL.self, forKey: .baseURL)
     protocolVersion = try c.decode(String.self, forKey: .protocolVersion)
     workerID = try c.decodeIfPresent(String.self, forKey: .workerID)
     workerName = try c.decode(String.self, forKey: .workerName)
@@ -247,8 +250,23 @@ public struct SpeechWorkerConfiguration: Codable, Equatable, Sendable {
   }
 
   public func validate(paths: AppPaths? = nil) throws {
-    guard baseURL.scheme == "https", baseURL.host == "nlrn.evren.io", baseURL.path == "/beta",
-      protocolVersion == WorkerConstants.protocolVersion, !workerName.isEmpty,
+    // The server base URL is deployment-specific and user-configured: any
+    // HTTPS target is accepted, plus plain HTTP for literal loopback hosts so
+    // a locally hosted server can be used in development. Only the shape is
+    // enforced here; the protocol pins the rest of the identity.
+    if let baseURL {
+      guard let components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false),
+        let scheme = components.scheme?.lowercased(), let host = components.host, !host.isEmpty,
+        scheme == "https" || scheme == "http",
+        components.user == nil, components.password == nil, components.query == nil,
+        components.fragment == nil,
+        components.port.map({ (1...65_535).contains($0) }) ?? true
+      else { throw ConfigurationError.invalid }
+      if scheme == "http" {
+        guard RelayConfig.isLiteralLoopback(host) else { throw ConfigurationError.invalid }
+      }
+    }
+    guard protocolVersion == WorkerConstants.protocolVersion, !workerName.isEmpty,
       workerName.count <= 120,
       avSpeechProfile.matchesByteAffecting(WorkerConstants.avSpeechProfile),
       chatterboxProfile.matchesByteAffecting(WorkerConstants.chatterboxProfile),
@@ -301,6 +319,7 @@ public struct SpeechWorkerConfiguration: Codable, Equatable, Sendable {
 
 public enum ConfigurationError: Error, Equatable, LocalizedError, Sendable {
   case invalid
+  case invalidServerURL
   case storageGate(required: Int64, available: Int64?)
   case referenceMissing
   case referenceHashMismatch
@@ -309,6 +328,7 @@ public enum ConfigurationError: Error, Equatable, LocalizedError, Sendable {
   public var errorDescription: String? {
     switch self {
     case .invalid: "configuration_invalid"
+    case .invalidServerURL: "server_url_invalid"
     case .storageGate: "storage_gate_failed"
     case .referenceMissing: "reference_audio_missing"
     case .referenceHashMismatch: "reference_audio_hash_mismatch"

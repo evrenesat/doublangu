@@ -2,12 +2,29 @@ import SwiftUI
 
 public struct SettingsView: View {
   @ObservedObject private var appState: AppState
+  @State private var serverURLText = ""
+  @State private var serverSeeded = false
+  @State private var serverMessage: String?
   public init(appState: AppState) { self.appState = appState }
 
   public var body: some View {
     TabView {
       SetupView(appState: appState).tabItem { Label("Setup", systemImage: "checkmark.shield") }
       Form {
+        Section("Server") {
+          TextField("Server base URL (https…)", text: $serverURLText)
+          HStack {
+            Button("Save server URL") { saveServerURL() }
+            if let serverMessage {
+              Text(serverMessage).font(.caption).foregroundStyle(.secondary)
+            }
+          }
+          Text(
+            "Base URL of the Doublangu deployment, including any path prefix, e.g. https://host.example/prefix."
+          )
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        }
         Section("Worker") {
           LabeledContent("Status", value: appState.status.label)
           LabeledContent("Worker", value: appState.configuration?.workerName ?? "Not enrolled")
@@ -20,10 +37,30 @@ public struct SettingsView: View {
           Button("Reveal private log") { appState.revealLogs() }
           Button("Stop worker", role: .destructive) { appState.stop() }
         }
-      }.tabItem { Label("Worker", systemImage: "waveform") }
+      }
+      .tabItem { Label("Worker", systemImage: "waveform") }
+      .onAppear { seedServerURL() }
+      .onChange(of: appState.configuration) { _, _ in seedServerURL() }
       RelaySettingsView(appState: appState).tabItem { Label("Relay", systemImage: "cpu") }
     }
     .frame(width: 600, height: 480)
+  }
+
+  private func seedServerURL() {
+    guard !serverSeeded, let configuration = appState.configuration else { return }
+    serverURLText = configuration.baseURL?.absoluteString ?? ""
+    serverSeeded = true
+  }
+
+  private func saveServerURL() {
+    serverMessage = nil
+    do {
+      try appState.saveServerURL(serverURLText)
+      serverURLText = appState.configuration?.baseURL?.absoluteString ?? ""
+      serverMessage = "Server URL saved"
+    } catch {
+      serverMessage = (error as? LocalizedError)?.errorDescription ?? "server_url_save_failed"
+    }
   }
 }
 

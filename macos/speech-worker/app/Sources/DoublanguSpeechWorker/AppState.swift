@@ -6,6 +6,7 @@ import SwiftUI
 public enum AppStatus: Equatable, Sendable {
   case loading
   case setupRequired
+  case serverURLRequired
   case enrollmentRequired
   case stopped
   case ready
@@ -21,6 +22,7 @@ public enum AppStatus: Equatable, Sendable {
     switch self {
     case .loading: return "Starting"
     case .setupRequired: return "Setup required"
+    case .serverURLRequired: return "Server URL required"
     case .enrollmentRequired: return "Enrollment required"
     case .stopped: return "Stopped"
     case .ready: return "Ready"
@@ -173,8 +175,13 @@ public final class AppState: ObservableObject {
 
   public func enroll(enrollmentToken: String) async {
     guard let config = configuration, !enrollmentToken.isEmpty else { return }
+    guard let serverURL = config.baseURL else {
+      lastError = "server_url_missing"
+      status = .serverURLRequired
+      return
+    }
     do {
-      let client = WorkerClient(baseURL: config.baseURL, secrets: keychain)
+      let client = WorkerClient(baseURL: serverURL, secrets: keychain)
       // v0.2 always advertises relay *support* at enrollment, independent of the
       // enabled toggle, so later toggling never requires re-enrollment.
       let response = try await client.enroll(
@@ -219,13 +226,18 @@ public final class AppState: ObservableObject {
       restartRelayLane(identityReady: identityReady && workerRunning)
       return
     }
+    guard let serverURL = config.baseURL else {
+      status = .serverURLRequired
+      restartRelayLane(identityReady: identityReady && workerRunning)
+      return
+    }
     guard identityReady else {
       status = .enrollmentRequired
       restartRelayLane(identityReady: identityReady && workerRunning)
       return
     }
     if leaseLoop == nil {
-      let client = WorkerClient(baseURL: config.baseURL, secrets: keychain)
+      let client = WorkerClient(baseURL: serverURL, secrets: keychain)
       let supervisor = ChatterboxSupervisor(paths: paths, configuration: config)
       let renderer = ChatterboxRenderer(supervisor: supervisor, configuration: config, paths: paths)
       let loop = LeaseLoop(
@@ -252,8 +264,44 @@ public final class AppState: ObservableObject {
     chatterboxSupervisor = nil
     relayLoop?.stop()
     relayLoop = nil
-    if status != .setupRequired && status != .enrollmentRequired { status = .stopped }
+    if status != .setupRequired && status != .enrollmentRequired
+      && status != .serverURLRequired
+    {
+      status = .stopped
+    }
     relayStatus = desiredRelayStatus()
+  }
+
+  /// Persists a new server base URL and rebuilds the lanes against it. An
+  /// empty string clears the URL; the worker then reports the missing setup.
+  public func saveServerURL(_ urlString: String) throws {
+    guard var config = configuration else { throw ConfigurationError.invalid }
+    let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+    let url: URL?
+    if trimmed.isEmpty {
+      url = nil
+    } else {
+      guard let parsed = URL(string: trimmed),
+        let scheme = parsed.scheme?.lowercased(), scheme == "https" || scheme == "http"
+      else { throw ConfigurationError.invalidServerURL }
+      url = parsed
+    }
+    config.baseURL = url
+    try config.validate(paths: paths)
+    try paths.writePrivate(StrictJSON.encode(config), to: paths.configURL)
+    // Both lanes reach the Doublangu server, so both must be rebuilt.
+    let wasRunning = workerRunning
+    leaseLoop?.stop()
+    leaseLoop = nil
+    chatterboxSupervisor?.stop()
+    chatterboxSupervisor = nil
+    configuration = config
+    lastError = nil
+    if wasRunning {
+      start()
+    } else {
+      updateInitialStatus()
+    }
   }
 
   public func saveRelayConfiguration(
@@ -332,12 +380,14 @@ public final class AppState: ObservableObject {
       relayStatus = desiredRelayStatus()
       return
     }
-    guard (try? config.relay.validate()) != nil, hasRelayAPIKey else {
+    guard
+      let serverURL = config.baseURL, (try? config.relay.validate()) != nil, hasRelayAPIKey
+    else {
       relayStatus = .misconfigured
       return
     }
     let client =
-      relayClientOverride ?? WorkerClient(baseURL: config.baseURL, secrets: keychain)
+      relayClientOverride ?? WorkerClient(baseURL: serverURL, secrets: keychain)
     let http = RelayHTTPClient(
       target: RelayTarget(
         baseURL: config.relay.baseURL, timeout: TimeInterval(config.relay.requestTimeoutSeconds)))
@@ -353,7 +403,9 @@ public final class AppState: ObservableObject {
 
   private func desiredRelayStatus() -> RelayLoop.Status {
     guard let config = configuration, config.relay.enabled else { return .off }
-    guard (try? config.relay.validate()) != nil, hasRelayAPIKey else { return .misconfigured }
+    guard config.baseURL != nil, (try? config.relay.validate()) != nil, hasRelayAPIKey else {
+      return .misconfigured
+    }
     return .off
   }
 
@@ -393,6 +445,8 @@ public final class AppState: ObservableObject {
     guard leaseLoop == nil else { return }
     if !referenceReady || !modelReady {
       status = .setupRequired
+    } else if configuration?.baseURL == nil {
+      status = .serverURLRequired
     } else if configuration?.workerID == nil || !hasWorkerToken || !hasPerimeterCredentials {
       status = .enrollmentRequired
     } else {

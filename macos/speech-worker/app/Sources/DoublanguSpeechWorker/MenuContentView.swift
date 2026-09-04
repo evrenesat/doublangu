@@ -20,7 +20,9 @@ public struct MenuContentView: View {
           .foregroundStyle(.secondary)
       }
       Divider()
-      if appState.status == .setupRequired || appState.status == .enrollmentRequired {
+      if appState.status == .setupRequired || appState.status == .enrollmentRequired
+        || appState.status == .serverURLRequired
+      {
         Button("Open Setup") { openSettings() }
       }
       // Run intent drives Start/Stop so a relay-only worker (speech setup
@@ -31,7 +33,7 @@ public struct MenuContentView: View {
       if appState.workerRunning {
         Button("Restart Chatterbox") { Task { await appState.restartChatterbox() } }
       }
-      Button("Worker Settings…") { openSettings() }
+      Button("Settings…") { openSettings() }
       Button("Reveal Private Log") { appState.revealLogs() }
       Button("Quit") {
         appState.stop()
@@ -46,7 +48,7 @@ public struct MenuContentView: View {
     switch status {
     case .ready: return .green
     case .offline, .failed, .profileMismatch: return .orange
-    case .setupRequired, .enrollmentRequired: return .yellow
+    case .setupRequired, .enrollmentRequired, .serverURLRequired: return .yellow
     default: return .primary
     }
   }

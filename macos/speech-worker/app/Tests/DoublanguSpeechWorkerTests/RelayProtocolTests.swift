@@ -388,6 +388,12 @@ final class RelayProtocolTests: XCTestCase {
     try? secrets.write("u", account: KeychainAccount.perimeterUsername)
     try? secrets.write("p", account: KeychainAccount.perimeterPassword)
     try? secrets.write(String(repeating: "w", count: 40), account: KeychainAccount.workerToken)
-    return (requester, WorkerClient(secrets: secrets, requester: requester))
+    return (
+      requester,
+      WorkerClient(
+        baseURL: URL(string: "https://server.example.com/beta")!, secrets: secrets,
+        requester: requester
+      )
+    )
   }
 }

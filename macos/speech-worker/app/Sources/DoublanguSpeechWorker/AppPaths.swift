@@ -1,6 +1,8 @@
 import Foundation
 
 public struct AppPaths: @unchecked Sendable {
+  /// On-disk identity predates the "Doublangu worker" product rename; changing
+  /// it would strand the config, models, and logs of existing installs.
   public static let productDirectory = "Doublangu Speech Worker"
 
   private let fileManager: FileManager

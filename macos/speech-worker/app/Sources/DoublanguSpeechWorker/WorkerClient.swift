@@ -84,7 +84,7 @@ public final class WorkerClient: WorkerClienting, @unchecked Sendable {
   private let requester: HTTPRequesting
 
   public init(
-    baseURL: URL = WorkerConstants.baseURL, secrets: SecretStore,
+    baseURL: URL, secrets: SecretStore,
     requester: HTTPRequesting = URLSessionRequester()
   ) {
     self.baseURL = baseURL

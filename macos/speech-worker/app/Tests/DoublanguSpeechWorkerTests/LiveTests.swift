@@ -104,7 +104,9 @@ final class ServerIntegrationLiveTests: XCTestCase {
     try secrets.write(username, account: KeychainAccount.perimeterUsername)
     try secrets.write(password, account: KeychainAccount.perimeterPassword)
     try secrets.write(workerToken, account: KeychainAccount.workerToken)
-    let client = WorkerClient(secrets: secrets)
+    let baseURL = try requiredEnvironment("DOUBLANGU_TEST_SERVER_BASE_URL")
+    let client = WorkerClient(
+      baseURL: URL(string: baseURL)!, secrets: secrets)
     _ = try await client.lease(
       LeaseRequest(
         lane: .speech(SpeechWorkerConfiguration.default(paths: AppPaths()).capabilities())))

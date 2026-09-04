@@ -4,7 +4,7 @@ import XCTest
 @testable import DoublanguSpeechWorker
 
 final class WorkerClientTests: XCTestCase {
-  func testClientPreservesBetaPrefixAndAuthenticationHeaders() async throws {
+  func testClientPreservesBasePathPrefixAndAuthenticationHeaders() async throws {
     let heartbeat =
       "{\"protocol_version\":\"speech-worker.v1\",\"cancel_requested\":false,\"lease_expires_at\":\"2026-09-01T12:00:00Z\",\"progress_percent\":50}"
     let requester = RecordingHTTPRequester(responses: [
@@ -15,7 +15,8 @@ final class WorkerClientTests: XCTestCase {
     try secrets.write("password", account: KeychainAccount.perimeterPassword)
     try secrets.write(String(repeating: "w", count: 40), account: KeychainAccount.workerToken)
     let client = WorkerClient(
-      baseURL: URL(string: "https://nlrn.evren.io/beta")!, secrets: secrets, requester: requester)
+      baseURL: URL(string: "https://server.example.com/beta")!, secrets: secrets,
+      requester: requester)
 
     _ = try await client.heartbeat(
       jobID: testJobID, leaseToken: String(repeating: "l", count: 40), attempt: 1,
@@ -57,7 +58,9 @@ final class WorkerClientTests: XCTestCase {
     try secrets.write("user", account: KeychainAccount.perimeterUsername)
     try secrets.write("password", account: KeychainAccount.perimeterPassword)
     try secrets.write(String(repeating: "w", count: 40), account: KeychainAccount.workerToken)
-    let client = WorkerClient(secrets: secrets, requester: requester)
+    let client = WorkerClient(
+      baseURL: URL(string: "https://server.example.com/beta")!, secrets: secrets,
+      requester: requester)
 
     let lease = try await client.lease(
       LeaseRequest(

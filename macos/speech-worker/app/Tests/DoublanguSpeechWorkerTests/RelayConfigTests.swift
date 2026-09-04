@@ -133,6 +133,7 @@ final class AppStateRelayTests: XCTestCase {
     defer { try? FileManager.default.removeItem(at: root) }
     let keychain = MemorySecretStore()
     let appState = await makeAppState(root: root, keychain: keychain)
+    try appState.saveServerURL("https://server.example.com/beta")
 
     try appState.saveRelayConfiguration(
       enabled: true, baseURLString: "http://127.0.0.1:8899/v1", requestTimeoutSeconds: 540,
@@ -210,10 +211,36 @@ final class AppStateRelayTests: XCTestCase {
     XCTAssertEqual(outcome, .missingKey)
   }
 
+  func testSaveServerURLPersistsValidatesAndClears() async throws {
+    let root = temporaryRoot("appstate-server-url")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let appState = await makeAppState(root: root)
+
+    try appState.saveServerURL("https://server.example.com/beta")
+    XCTAssertEqual(
+      appState.configuration?.baseURL?.absoluteString, "https://server.example.com/beta")
+    XCTAssertTrue(
+      String(decoding: try Data(contentsOf: appState.paths.configURL), as: UTF8.self)
+        .contains("server.example.com"))
+
+    for bad in ["notaurl", "ftp://server.example.com"] {
+      XCTAssertThrowsError(try appState.saveServerURL(bad)) { error in
+        XCTAssertEqual(error as? ConfigurationError, .invalidServerURL)
+      }
+    }
+
+    try appState.saveServerURL("   ")
+    XCTAssertNil(appState.configuration?.baseURL)
+    XCTAssertFalse(
+      String(decoding: try Data(contentsOf: appState.paths.configURL), as: UTF8.self)
+        .contains("server.example.com"))
+  }
+
   func testStopLeavesRelayOffAndClearsStatus() async throws {
     let root = temporaryRoot("relay-appstate-stop")
     defer { try? FileManager.default.removeItem(at: root) }
     let appState = await makeAppState(root: root)
+    try appState.saveServerURL("https://server.example.com/beta")
     try appState.saveRelayConfiguration(
       enabled: true, baseURLString: "http://127.0.0.1:8899/v1", requestTimeoutSeconds: 540,
       apiKeyIfChanged: "k")
@@ -281,6 +308,7 @@ final class AppStateRelayTests: XCTestCase {
     let paths = AppPaths(rootOverride: root)
     try paths.ensureDirectories()
     var config = SpeechWorkerConfiguration.default(paths: paths)
+    config.baseURL = URL(string: "https://server.example.com/beta")
     config.workerID = testRelayJobID
     config.relay = RelayConfig(
       enabled: true, baseURL: URL(string: "http://127.0.0.1:8899/v1")!,
