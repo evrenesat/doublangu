@@ -1739,4 +1739,9 @@ Verification: `xcrun swift-format lint --recursive app/Sources app/Tests` clean;
 `swift test --package-path app --parallel` exit 0 (93 tests, 0 failures);
 `swift build --package-path app` exit 0; `npm --prefix web run check` 0 errors
 0 warnings; `npx vitest run src/lib/routes/settings-layout.test.ts
-src/lib/routes/speech-workers-page.test.ts` 9/9 pass; `git diff --check` clean.
+src/lib/routes/speech-workers-page.test.ts` 9/9 pass; `git diff --check` clean;
+`build-app.sh --development` rebuilt the v0.2.0 bundle as
+`dist/macos/Doublangu worker.app` (CFBundleName/DisplayName renamed, binary
+contains no server URL); `verify-release.sh --app-only` passed. The release
+manifest records `application_commit: unknown` because the checkout had
+untracked local model/audio files.
