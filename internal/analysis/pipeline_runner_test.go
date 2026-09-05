@@ -20,7 +20,7 @@ import (
 )
 
 // fakeStageProvider answers each stage turn from the exact token enum in the
-// request schema with an always-valid unchanged artifact.
+// request schema with an always-valid glossed artifact.
 type fakeStageProvider struct {
 	descriptor  annotator.ProviderDescriptor
 	mu          sync.Mutex
@@ -70,7 +70,8 @@ type fakeStageSession struct {
 }
 
 // artifactFromSchema builds a valid stage artifact covering every token id in
-// the request schema, using unchanged classifications and empty translations.
+// the request schema: every word references a per-token glossed sense, and the
+// translation stage gives every word its individual subtitle.
 func artifactFromSchema(schema []byte, translation bool) (string, error) {
 	var object map[string]any
 	if err := json.Unmarshal(schema, &object); err != nil {
@@ -83,14 +84,25 @@ func artifactFromSchema(schema []byte, translation bool) (string, error) {
 	enums := tokenProperties["token_id"].(map[string]any)["enum"].([]any)
 	if !translation {
 		artifact := map[string]any{
-			"version":    pipeline.LinguisticContractVersion,
-			"tokens":     make([]map[string]any, 0, len(enums)),
-			"new_senses": []any{}, "constructions": []any{},
+			"version":       pipeline.LinguisticContractVersion,
+			"tokens":        make([]map[string]any, 0, len(enums)),
+			"new_senses":    make([]map[string]any, 0, len(enums)),
+			"constructions": []any{},
 		}
 		for _, id := range enums {
+			tokenID, _ := id.(string)
+			ref := "fill-" + tokenID
+			artifact["new_senses"] = append(artifact["new_senses"].([]map[string]any), map[string]any{
+				"ref": ref, "kind": "word",
+				"canonical_form": tokenID, "normalized_form": tokenID,
+				"lemma": tokenID, "part_of_speech": "word",
+				"sense_discriminator": "gloss",
+				"meaning_note":        "", "usage_note": "", "parts_note": "",
+				"canonical_pronunciation_text": "",
+			})
 			artifact["tokens"] = append(artifact["tokens"].([]map[string]any), map[string]any{
-				"token_id": id, "classification": "unchanged", "kind": "word",
-				"semantic_sense_id": "", "new_sense_ref": "",
+				"token_id": id, "classification": "word", "kind": "word",
+				"semantic_sense_id": "", "new_sense_ref": ref,
 				"canonical_pronunciation_text": "", "context_pronunciation_key": "",
 				"confidence_milli": 1000,
 			})
@@ -104,7 +116,16 @@ func artifactFromSchema(schema []byte, translation bool) (string, error) {
 	}
 	for _, id := range enums {
 		artifact["tokens"] = append(artifact["tokens"].([]map[string]any), map[string]any{
-			"token_id": id, "shadow_text": "",
+			"token_id": id, "shadow_text": "gloss",
+		})
+	}
+	// Every linguistic sense needs a translation entry.
+	senseItems := properties["new_senses"].(map[string]any)["items"].(map[string]any)
+	senseRefs := senseItems["properties"].(map[string]any)["ref"].(map[string]any)["enum"].([]any)
+	for _, ref := range senseRefs {
+		artifact["new_senses"] = append(artifact["new_senses"].([]any), map[string]any{
+			"ref": ref, "primary_translation": "gloss",
+			"alternatives": []any{}, "literal_translation": "",
 		})
 	}
 	return string(mustMarshal(artifact)), nil

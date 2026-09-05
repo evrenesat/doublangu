@@ -69,6 +69,25 @@ func loadLongFixture(t *testing.T) longFixture {
 	return fixture
 }
 
+// expressionNotes authors one real explanation per long-fixture expression,
+// keyed by the expression's label. The seed is the delivery vehicle for the
+// saved article, so each popover Meaning section gets genuine,
+// expression-specific content rather than a generic instruction.
+var expressionNotes = map[string]string{
+	"zich afvragen":                "Dutch splits this reflexive verb: vroeg (asked) … af (off) wrap around zich. Literally 'asked herself off', it simply means she wondered.",
+	"stelde … voor":                "Voorstellen puts voor (forward) at the end of the clause: stelde … voor literally means 'put forward', here 'proposed' an idea.",
+	"vond … plaats":                "Plaatsvinden separates: vond (found) … plaats (place). Dutch says the meeting 'found place' — it took place.",
+	"legde … uit":                  "Uitleggen splits in two: legde (laid) … uit (out). She 'laid out' how the space would be used — she explained it.",
+	"hingen … op":                  "Ophangen comes apart: hingen (hung) … op (up). They hung the map up beside the entrance.",
+	"ergens mee in je maag zitten": "Literally 'to sit with something in your stomach': zat … mee … in haar maag pictures carrying a worry inside — it troubled her.",
+	"gaf … op":                     "Opgeven splits around the object: gaf (gave) … op (up). She never gave her plan up.",
+	"nodigde … uit":                "Uitnodigen separates: nodigde … uit. Literally 'called out', it means invited.",
+	"op te lossen":                 "Oplossen stays together in this infinitive clause: op te lossen is 'to be solved', pointing at the problem itself.",
+	"hield … bij":                  "Bijhouden splits: hield (kept) … bij (up). Nobody kept up with how many problems were solved.",
+	"tot rust te komen":            "Tot rust komen means 'to come to rest': om … te komen frames the infinitive, so the whole phrase means to unwind, to finally relax.",
+	"deed … uit":                   "Uitdoen splits: deed (did) … uit (out). Someone switched the shop lights off.",
+}
+
 // authorLongBlockResponse turns one fixture block into a validated-shape v3
 // response: every token carries its authored gloss through a per-block sense,
 // and each construction references exactly its authored members and spans.
@@ -121,19 +140,28 @@ func authorLongBlockResponse(t *testing.T, chunk semantics.PreparedChunk, blockI
 	}
 	for constructionIndex, construction := range fixture.Constructions {
 		ref := fmt.Sprintf("c%d", constructionIndex)
-		response.NewSenses = append(response.NewSenses, semantics.NewSense{
-			Ref: ref, Kind: semantics.Kind(construction.Kind), CanonicalForm: construction.Label,
-			NormalizedForm: construction.Label, Lemma: construction.Label,
-			SenseDiscriminator: construction.Meaning, PrimaryTranslation: construction.Meaning,
-		})
+		meaningNote, authored := expressionNotes[construction.Label]
+		if !authored {
+			t.Fatalf("long fixture expression %q has no authored meaning note", construction.Label)
+		}
 		memberIDs := make([]string, 0, len(construction.Members))
+		memberParts := make([]string, 0, len(construction.Members))
 		for _, member := range construction.Members {
 			id, ok := tokenByOffset[[2]int{member.Start, member.End}]
 			if !ok {
 				t.Fatalf("block %d construction %q member %q has no token", blockIndex, construction.Label, member.Source)
 			}
 			memberIDs = append(memberIDs, id)
+			// The popover's parts note lists each member with its literal gloss.
+			memberParts = append(memberParts, fmt.Sprintf("%s: %s", member.Source, glossByToken[id]))
 		}
+		response.NewSenses = append(response.NewSenses, semantics.NewSense{
+			Ref: ref, Kind: semantics.Kind(construction.Kind), CanonicalForm: construction.Label,
+			NormalizedForm: construction.Label, Lemma: construction.Label,
+			SenseDiscriminator: construction.Meaning, PrimaryTranslation: construction.Meaning,
+			MeaningNote: meaningNote,
+			PartsNote:   strings.Join(memberParts, " · "),
+		})
 		spans := make([]semantics.SpanRef, 0, len(construction.Spans))
 		for _, span := range construction.Spans {
 			spans = append(spans, semantics.SpanRef{
@@ -284,6 +312,12 @@ func assertLongFixtureArticle(t *testing.T, articles *Store, ctx context.Context
 				constructionsSeen++
 				if strings.TrimSpace(occurrence.ShadowText) == "" || len(occurrence.MemberOccurrenceIDs) == 0 {
 					t.Fatalf("block %d construction %q lost its meaning or members: %+v", blockIndex, occurrence.ShadowText, occurrence)
+				}
+				// The popover's Meaning section must carry the exact authored
+				// explanation and Parts the member glosses after the round trip.
+				wantNote := expressionNotes[occurrence.Sense.CanonicalForm]
+				if occurrence.Sense == nil || occurrence.Sense.MeaningNote != wantNote || strings.TrimSpace(occurrence.Sense.PartsNote) == "" {
+					t.Fatalf("block %d construction %q meaning note = %q, want the authored %q (parts = %q)", blockIndex, occurrence.ShadowText, occurrence.Sense.MeaningNote, wantNote, occurrence.Sense.PartsNote)
 				}
 			}
 		}

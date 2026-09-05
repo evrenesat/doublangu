@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"doublangu/internal/jobs"
@@ -12,13 +13,21 @@ import (
 	"doublangu/internal/store"
 )
 
+// wordSenseFixture authors one glossed ordinary-word sense for fixtures.
+func wordSenseFixture(ref, canonical, translation string) semantics.NewSense {
+	return semantics.NewSense{
+		Ref: ref, Kind: semantics.KindWord, CanonicalForm: canonical, NormalizedForm: canonical,
+		Lemma: canonical, SenseDiscriminator: translation, PrimaryTranslation: translation,
+	}
+}
+
 // chunkFixture returns a prepared two-paragraph article and its chunk
 // responses, one per block, with a discontinuous construction on block 0
 // whose members are only the fixed lexical items.
 func chunkFixture(t *testing.T, db *store.DB) (library.ULID, semantics.PreparedArticle, semantics.PreparedChunk, semantics.ValidatedResponse) {
 	t.Helper()
 	ctx := context.Background()
-	article, err := NewArticle("Alinea", "Hij gooit het bijltje erbij neer.\n\nDe bank staat.", "nl", "en")
+	article, err := NewArticle("Alinea", "Hij gooit het bijltje erbij neer.\n\nDe bank staat al 12 jaar.", "nl", "en")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,11 +48,19 @@ func chunkFixture(t *testing.T, db *store.DB) (library.ULID, semantics.PreparedA
 	}
 	response := semantics.Response{
 		Version: semantics.AnalysisContractVersion,
-		NewSenses: []semantics.NewSense{{
-			Ref: "gooi-ref", Kind: semantics.KindExpression, CanonicalForm: "bijltje erbij neergooien",
-			NormalizedForm: "bijltje erbij neergooien", SenseDiscriminator: "resign",
-			PrimaryTranslation: "give up", Alternatives: []string{"throw in the towel"},
-		}},
+		NewSenses: []semantics.NewSense{
+			{
+				Ref: "gooi-ref", Kind: semantics.KindExpression, CanonicalForm: "bijltje erbij neergooien",
+				NormalizedForm: "bijltje erbij neergooien", SenseDiscriminator: "resign",
+				PrimaryTranslation: "give up", Alternatives: []string{"throw in the towel"},
+			},
+			wordSenseFixture("w-hij", "Hij", "He"),
+			wordSenseFixture("w-gooit", "gooit", "throws"),
+			wordSenseFixture("w-het", "het", "the"),
+			wordSenseFixture("w-bijltje", "bijltje", "little axe"),
+			wordSenseFixture("w-erbij", "erbij", "therewith"),
+			wordSenseFixture("w-neer", "neer", "down"),
+		},
 		Constructions: []semantics.Construction{{
 			Kind: semantics.KindExpression, Role: "discontinuous_construction",
 			NewSenseRef: "gooi-ref", ShadowText: "give up", ConfidenceMilli: 900,
@@ -55,9 +72,14 @@ func chunkFixture(t *testing.T, db *store.DB) (library.ULID, semantics.PreparedA
 			},
 		}},
 	}
+	glosses := map[string]string{
+		"Hij": "He", "gooit": "throws", "het": "the", "bijltje": "little axe",
+		"erbij": "therewith", "neer": "down",
+	}
 	for _, token := range chunk.Tokens {
 		response.Tokens = append(response.Tokens, semantics.TokenResult{
-			TokenID: token.ID, Classification: "unchanged", Kind: semantics.KindWord, ConfidenceMilli: 1000,
+			TokenID: token.ID, Classification: "word", Kind: semantics.KindWord,
+			NewSenseRef: "w-" + strings.ToLower(token.SourceText), ShadowText: glosses[token.SourceText], ConfidenceMilli: 1000,
 		})
 	}
 	namespaced, err := semantics.NamespaceChunkResponse(0, response, nil)
@@ -285,10 +307,10 @@ func TestPersistAnalysisChunkRejectsSupersededJob(t *testing.T) {
 	}
 }
 
-// TestUnchangedTokensSuppressAndPronunciationsFollowBlocks proves the display
-// invariant for effective subtitles and that lexical jobs exist only for the
-// published paragraph.
-func TestUnchangedTokensSuppressAndPronunciationsFollowBlocks(t *testing.T) {
+// TestTokenSubtitleDisplayAndPronunciationsFollowBlocks proves the display
+// invariant for effective subtitles (glossed words visible, unlabeled specials
+// suppressed) and that lexical jobs exist only for the published paragraph.
+func TestTokenSubtitleDisplayAndPronunciationsFollowBlocks(t *testing.T) {
 	db, err := store.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -306,7 +328,9 @@ func TestUnchangedTokensSuppressAndPronunciationsFollowBlocks(t *testing.T) {
 	if rendersBefore != 0 {
 		t.Fatalf("lexical renders before publish = %d", rendersBefore)
 	}
-	// Publish only block 1 (a plain paragraph without constructions).
+	// Publish only block 1 (a plain paragraph without constructions): every
+	// ordinary word is glossed, and the unlabeled number keeps the special
+	// display path covered now that validation rejects unchanged words.
 	prepared, err := articles.PrepareAnalysis(ctx, articleID)
 	if err != nil {
 		t.Fatal(err)
@@ -317,17 +341,23 @@ func TestUnchangedTokensSuppressAndPronunciationsFollowBlocks(t *testing.T) {
 	}
 	response := semantics.Response{
 		Version: semantics.AnalysisContractVersion,
-		NewSenses: []semantics.NewSense{{
-			Ref: "sofa-ref", Kind: semantics.KindWord, CanonicalForm: "bank", NormalizedForm: "bank",
-			SenseDiscriminator: "sofa", PrimaryTranslation: "sofa",
-		}},
+		NewSenses: []semantics.NewSense{
+			wordSenseFixture("w-de", "de", "The"),
+			wordSenseFixture("w-bank", "bank", "sofa"),
+			wordSenseFixture("w-staat", "staat", "stands"),
+			wordSenseFixture("w-al", "al", "already"),
+			wordSenseFixture("w-jaar", "jaar", "years"),
+		},
 	}
+	glosses := map[string]string{"De": "The", "bank": "sofa", "staat": "stands", "al": "already", "jaar": "years"}
 	for _, token := range chunk.Tokens {
-		result := semantics.TokenResult{TokenID: token.ID, Classification: "unchanged", Kind: semantics.KindWord, ConfidenceMilli: 1000}
-		if token.NormalizedForm == "bank" {
-			result.Classification = "lexical"
-			result.NewSenseRef = "sofa-ref"
-			result.ShadowText = "sofa"
+		result := semantics.TokenResult{TokenID: token.ID, Classification: "word", Kind: semantics.KindWord, ConfidenceMilli: 1000}
+		if gloss, ok := glosses[token.SourceText]; ok {
+			result.NewSenseRef = "w-" + strings.ToLower(token.SourceText)
+			result.ShadowText = gloss
+		} else {
+			// A special token without an authored label stays suppressed.
+			result.Classification = "number"
 		}
 		response.Tokens = append(response.Tokens, result)
 	}
@@ -353,15 +383,15 @@ func TestUnchangedTokensSuppressAndPronunciationsFollowBlocks(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, occurrence := range loaded.Blocks[1].Occurrences {
-		if occurrence.ShadowText == "sofa" {
-			if !occurrence.ShowShadow || occurrence.SubtitleSuppressionReason != SubtitleNone {
-				t.Errorf("translated token display = %+v", occurrence)
-			}
-		} else {
-			// Unchanged function words have no effective subtitle.
+		if occurrence.Spans[0].SourceText == "12" {
+			// The unlabeled number has no effective subtitle.
 			if occurrence.ShowShadow || occurrence.SubtitleSuppressionReason != SubtitleSpecialToken {
-				t.Errorf("unchanged token display = %+v", occurrence)
+				t.Errorf("special token display = %+v", occurrence)
 			}
+			continue
+		}
+		if !occurrence.ShowShadow || occurrence.SubtitleSuppressionReason != SubtitleNone || occurrence.ShadowText == "" {
+			t.Errorf("glossed token display = %+v", occurrence)
 		}
 	}
 	var lexicalRenders int
@@ -635,10 +665,13 @@ func authorParityResponse(t *testing.T, articles *Store, ctx context.Context, ar
 }
 
 // TestPersistAnalysisChunkKeepsWordSubtitlesVisible proves the
-// persistent-visible display policy end to end: every word's authored subtitle
-// survives publication and rereading, contiguous members keep their own
-// glosses, a learned sense stays visible, unchanged tokens never store a
-// source copy, identity labels survive, and exact membership is retained.
+// persistent-visible display policy end to end: every word — including
+// function words — carries its own authored gloss through publication and
+// rereading, contiguous members keep their own glosses, constructions keep
+// their meaning and member-parts notes, a learned sense stays visible,
+// identity labels survive, and exact membership is retained. (Deliberately
+// unchanged tokens remain covered by
+// TestUnchangedTokensSuppressAndPronunciationsFollowBlocks.)
 func TestPersistAnalysisChunkKeepsWordSubtitlesVisible(t *testing.T) {
 	db, err := store.OpenTest()
 	if err != nil {
@@ -666,21 +699,27 @@ func TestPersistAnalysisChunkKeepsWordSubtitlesVisible(t *testing.T) {
 		}
 	}
 
-	// Block 0: split gaf … op with individual glosses and a same-spelling plan.
+	// Block 0: split gaf … op with individual glosses for every word,
+	// function words included, and a same-spelling plan.
 	block0 := authorParityResponse(t, articles, ctx, article.ID, 0, []semantics.NewSense{
+		wordSense("he", "hij", "He"),
 		wordSense("gave", "geven", "gave"),
+		wordSense("the", "het", "the"),
 		wordSense("plan", "plan", "plan"),
+		wordSense("not", "niet", "not"),
 		wordSense("up", "op", "up"),
 		{
 			Ref: "give-up", Kind: semantics.KindExpression, CanonicalForm: "opgeven",
 			NormalizedForm: "opgeven", SenseDiscriminator: "abandon", PrimaryTranslation: "give up",
+			MeaningNote: "Opgeven splits around the object: gaf (gave) … op (up). Here he did not give the plan up.",
+			PartsNote:   "gaf: gave · op: up",
 		},
 	}, map[string]parityTokenSpec{
-		"Hij":  {classification: "unchanged"},
+		"Hij":  {classification: "word", senseRef: "he", shadow: "He"},
 		"gaf":  {classification: "word", senseRef: "gave", shadow: "gave"},
-		"het":  {classification: "unchanged"},
+		"het":  {classification: "word", senseRef: "the", shadow: "the"},
 		"plan": {classification: "word", senseRef: "plan", shadow: "plan"},
-		"niet": {classification: "unchanged"},
+		"niet": {classification: "word", senseRef: "not", shadow: "not"},
 		"op":   {classification: "word", senseRef: "up", shadow: "up"},
 	}, &parityConstructionSpec{
 		kind: semantics.KindExpression, role: "discontinuous_construction",
@@ -701,6 +740,8 @@ func TestPersistAnalysisChunkKeepsWordSubtitlesVisible(t *testing.T) {
 			Ref: "couch-sit", Kind: semantics.KindIdiom, CanonicalForm: "op de bank zitten",
 			NormalizedForm: "op de bank zitten", SenseDiscriminator: "sit on the couch",
 			PrimaryTranslation: "sit on the couch",
+			MeaningNote:        "Literally 'to sit on the bench': op de bank zitten means relaxing on the couch — bank is the sofa here, not the financial bank.",
+			PartsNote:          "op: on · de: the · bank: sofa · zitten: sit",
 		},
 	}, map[string]parityTokenSpec{
 		"Noor":   {classification: "proper_name", shadow: "Noor"},
@@ -726,7 +767,6 @@ func TestPersistAnalysisChunkKeepsWordSubtitlesVisible(t *testing.T) {
 		if len(loaded.Sentences) != 2 || len(loaded.Blocks[0].Sentences) != 1 || len(loaded.Blocks[1].Sentences) != 1 {
 			t.Fatalf("%s: sentences = %d/%d/%d, want 2/1/1", stage, len(loaded.Sentences), len(loaded.Blocks[0].Sentences), len(loaded.Blocks[1].Sentences))
 		}
-		unchanged := map[string]bool{"Hij": true, "het": true, "niet": true}
 		var bankOccurrence *ArticleOccurrence
 		memberEntries := 0
 		tokenOwners := map[string]int{}
@@ -738,18 +778,19 @@ func TestPersistAnalysisChunkKeepsWordSubtitlesVisible(t *testing.T) {
 					for _, memberID := range occurrence.MemberOccurrenceIDs {
 						tokenOwners[memberID]++
 					}
+					// Construction meaning and member-parts notes must survive
+					// publication and rereading so the popover can show them.
+					if occurrence.Sense == nil || occurrence.Sense.MeaningNote == "" || occurrence.Sense.PartsNote == "" {
+						t.Fatalf("%s: construction %q lost its meaning/parts notes: %+v", stage, occurrence.ShadowText, occurrence.Sense)
+					}
 					continue
 				}
 				source := occurrence.Spans[0].SourceText
 				if source == "bank" {
 					bankOccurrence = occurrence
 				}
-				if unchanged[source] {
-					if occurrence.ShowShadow || occurrence.SubtitleSuppressionReason != SubtitleSpecialToken || occurrence.ShadowText != "" {
-						t.Fatalf("%s: unchanged token %q display = %+v", stage, source, occurrence)
-					}
-					continue
-				}
+				// Every ordinary word — function words included — keeps a
+				// visible individual gloss.
 				if !occurrence.ShowShadow || occurrence.SubtitleSuppressionReason != SubtitleNone || occurrence.ShadowText == "" {
 					t.Fatalf("%s: token %q lost its visible subtitle: %+v", stage, source, occurrence)
 				}
@@ -757,6 +798,9 @@ func TestPersistAnalysisChunkKeepsWordSubtitlesVisible(t *testing.T) {
 				// storage and rereading.
 				if source == "plan" && occurrence.ShadowText != "plan" {
 					t.Fatalf("%s: plan subtitle = %q", stage, occurrence.ShadowText)
+				}
+				if source == "Hij" && occurrence.ShadowText != "He" {
+					t.Fatalf("%s: Hij subtitle = %q", stage, occurrence.ShadowText)
 				}
 				if source == "Noor" && (occurrence.ShadowText != "Noor" || !occurrence.ShowShadow) {
 					t.Fatalf("%s: Noor identity label = %+v", stage, occurrence)

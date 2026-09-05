@@ -519,13 +519,15 @@ func validateLinguisticTokenResult(result LinguisticTokenResult, token Token, so
 	if result.SemanticSenseID != "" && result.NewSenseRef != "" {
 		return errors.New("semantic_sense_id and new_sense_ref are mutually exclusive")
 	}
-	unchanged := result.Classification == "unchanged"
-	special := unchanged || result.Classification == "proper_name" || result.Classification == "number" || result.Classification == "acronym"
+	// Every ordinary word must reference a semantic sense; the translation
+	// stage then gives it an individual gloss. Same-spelling senses cover
+	// words that read the same in English, so "unchanged" is never accepted.
+	if result.Classification == "unchanged" {
+		return errors.New("unchanged is not accepted for a word: reference a semantic sense")
+	}
+	special := result.Classification == "proper_name" || result.Classification == "number" || result.Classification == "acronym"
 	if result.SemanticSenseID == "" && result.NewSenseRef == "" && !special {
 		return errors.New("a semantic sense reference is required")
-	}
-	if unchanged && (result.SemanticSenseID != "" || result.NewSenseRef != "") {
-		return errors.New("an unchanged token must not reference a semantic sense")
 	}
 	return validateLinguisticSenseReference(result.SemanticSenseID, result.NewSenseRef, result.Kind, sourceLanguage, targetLanguage, candidates, newSenses)
 }

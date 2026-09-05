@@ -35,10 +35,14 @@ func fixtureChunkResponse(chunk PreparedChunk, bankRef string) Response {
 		Tokens:    make([]TokenResult, 0, len(chunk.Tokens)),
 		NewSenses: []NewSense{}, Constructions: []Construction{},
 	}
+	// Every ordinary word references a sense and carries a gloss; the article
+	// keeps its own per-chunk sense, bank reuses the caller's ref.
+	deSense := NewSense{Ref: "de-article", Kind: KindWord, CanonicalForm: "de", NormalizedForm: "de",
+		SenseDiscriminator: "article", PrimaryTranslation: "The", Alternatives: []string{}}
+	response.NewSenses = append(response.NewSenses, deSense)
 	for _, token := range chunk.Tokens {
-		result := TokenResult{TokenID: token.ID, Classification: "unchanged", Kind: KindWord, ConfidenceMilli: 1000}
+		result := TokenResult{TokenID: token.ID, Classification: "word", Kind: KindWord, NewSenseRef: "de-article", ShadowText: "The", ConfidenceMilli: 1000}
 		if strings.EqualFold(token.SourceText, "bank") {
-			result.Classification = "known"
 			result.NewSenseRef = bankRef
 			result.ShadowText = "bench"
 		}
@@ -106,7 +110,7 @@ func TestMergeChunksNamespacesCarryAndRunsFinalValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	firstResponse := fixtureChunkResponse(first, "local-bank")
-	firstResponse.NewSenses = []NewSense{fixtureNewSense("local-bank", "bench")}
+	firstResponse.NewSenses = append(firstResponse.NewSenses, fixtureNewSense("local-bank", "bench"))
 	firstNamespaced, err := NamespaceChunkResponse(0, firstResponse, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -124,7 +128,9 @@ func TestMergeChunksNamespacesCarryAndRunsFinalValidation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MergeChunks: %v", err)
 	}
-	if len(merged.NewSenses) != 1 || merged.NewSenses[0].Ref != "b0:local-bank" {
+	// Namespacing keeps the carried bank ref and separates each chunk's own
+	// article sense.
+	if len(merged.NewSenses) != 3 || merged.NewSenses[1].Ref != "b0:local-bank" {
 		t.Fatalf("merged senses = %+v", merged.NewSenses)
 	}
 	if merged.Tokens[3].NewSenseRef != "b0:local-bank" {

@@ -3,6 +3,7 @@ package analysis
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
 	"testing"
 
@@ -21,13 +22,27 @@ func (p *countingSemanticProvider) Analyze(_ context.Context, input semantics.Pr
 	p.mu.Lock()
 	p.calls++
 	p.mu.Unlock()
+	return glossedWholeResponse(input), nil
+}
+
+// glossedWholeResponse authors a valid whole-article response: every word is
+// an ordinary glossed word, since validation rejects unchanged classes.
+func glossedWholeResponse(input semantics.PreparedArticle) semantics.Response {
 	response := semantics.Response{
 		Version: semantics.AnalysisContractVersion,
 	}
-	for _, token := range input.Tokens {
-		response.Tokens = append(response.Tokens, semantics.TokenResult{TokenID: token.ID, Classification: "unchanged", Kind: semantics.KindWord, ConfidenceMilli: 1000})
+	for index, token := range input.Tokens {
+		ref := fmt.Sprintf("fill-%d", index)
+		response.NewSenses = append(response.NewSenses, semantics.NewSense{
+			Ref: ref, Kind: semantics.KindWord, CanonicalForm: token.SourceText, NormalizedForm: token.SourceText,
+			Lemma: token.SourceText, SenseDiscriminator: "gloss", PrimaryTranslation: "gloss",
+		})
+		response.Tokens = append(response.Tokens, semantics.TokenResult{
+			TokenID: token.ID, Classification: "word", Kind: semantics.KindWord,
+			NewSenseRef: ref, ShadowText: "gloss", ConfidenceMilli: 1000,
+		})
 	}
-	return response, nil
+	return response
 }
 
 func (p *countingSemanticProvider) Calls() int {
@@ -55,8 +70,16 @@ func (p *chunkCountingProvider) AnalyzeChunk(_ context.Context, chunk semantics.
 		Version: semantics.AnalysisContractVersion,
 		Tokens:  make([]semantics.TokenResult, 0, len(chunk.Tokens)), NewSenses: []semantics.NewSense{}, Constructions: []semantics.Construction{},
 	}
-	for _, token := range chunk.Tokens {
-		response.Tokens = append(response.Tokens, semantics.TokenResult{TokenID: token.ID, Classification: "unchanged", Kind: semantics.KindWord, ConfidenceMilli: 1000})
+	for index, token := range chunk.Tokens {
+		ref := fmt.Sprintf("fill-%d", index)
+		response.NewSenses = append(response.NewSenses, semantics.NewSense{
+			Ref: ref, Kind: semantics.KindWord, CanonicalForm: token.SourceText, NormalizedForm: token.SourceText,
+			Lemma: token.SourceText, SenseDiscriminator: "gloss", PrimaryTranslation: "gloss",
+		})
+		response.Tokens = append(response.Tokens, semantics.TokenResult{
+			TokenID: token.ID, Classification: "word", Kind: semantics.KindWord,
+			NewSenseRef: ref, ShadowText: "gloss", ConfidenceMilli: 1000,
+		})
 	}
 	raw, _ := json.Marshal(response)
 	turn := annotator.TurnArtifact{
@@ -149,12 +172,40 @@ func TestRunnerRetainsFailedParagraphAndReusesOnlyCompatibleChunks(t *testing.T)
 	if err := runner.RunOnce(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if got := provider.Calls(); len(got) != 3 || got[0] != 0 || got[1] != 1 || got[2] != 1 {
+	// The retry reprocesses both paragraphs: the first attempt published real
+	// word senses into the local lexicon, so this article's prepared input now
+	// carries candidates and the exact prepared-input cache legitimately
+	// misses. Once that lexicon state is stable, the next retry reuses both
+	// exact chunks without a provider call.
+	if got := provider.Calls(); len(got) != 4 || got[2] != 0 || got[3] != 1 {
 		t.Fatalf("provider calls after compatible retry = %v", got)
 	}
 	loaded, err = articles.GetArticle(ctx, article.ID)
 	if err != nil || loaded.AnalysisStatus != reader.AnalysisReady || loaded.AnalysisModel != "model-a" || loaded.AnalysisEffort != "low" {
 		t.Fatalf("successful article = %+v err=%v", loaded, err)
+	}
+
+	// The lexicon converges: this retry reuses paragraph one's exact chunk
+	// and only misses paragraph two, whose "Nog" candidate first appeared when
+	// the retry analyzed it. The next retry then reuses both exact chunks.
+	if _, err := articles.QueueAnalysis(ctx, article.ID, true, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := provider.Calls(); len(got) != 5 || got[4] != 1 {
+		t.Fatalf("provider calls after stable-lexicon retry = %v", got)
+	}
+
+	if _, err := articles.QueueAnalysis(ctx, article.ID, true, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := provider.Calls(); len(got) != 5 {
+		t.Fatalf("provider calls after converged lexicon retry = %v, want exact cache reuse", got)
 	}
 
 	if _, err := articles.QueueAnalysis(ctx, article.ID, true, true); err != nil {
@@ -163,7 +214,7 @@ func TestRunnerRetainsFailedParagraphAndReusesOnlyCompatibleChunks(t *testing.T)
 	if err := runner.RunOnce(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if got := provider.Calls(); len(got) != 5 || got[3] != 0 || got[4] != 1 {
+	if got := provider.Calls(); len(got) != 7 || got[5] != 0 || got[6] != 1 {
 		t.Fatalf("provider calls after fresh retry = %v", got)
 	}
 
@@ -176,11 +227,11 @@ func TestRunnerRetainsFailedParagraphAndReusesOnlyCompatibleChunks(t *testing.T)
 	if err := runner.RunOnce(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if got := provider.Calls(); len(got) != 7 || got[5] != 0 || got[6] != 1 {
+	if got := provider.Calls(); len(got) != 9 || got[7] != 0 || got[8] != 1 {
 		t.Fatalf("provider calls after configuration change = %v", got)
 	}
 	page, err = NewHistoryStore(db).ListRuns(ctx, article.ID.String(), 20, "")
-	if err != nil || len(page.Runs) != 4 {
+	if err != nil || len(page.Runs) != 6 {
 		t.Fatalf("retained run count = %+v err=%v", page, err)
 	}
 }
@@ -246,10 +297,17 @@ func TestRunnerReusesExactValidatedCacheAcrossArticles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	third, err := reader.NewArticle("Cache", "Een zin.\n\nNog een.", "nl", "en")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := articles.CreateArticleQueued(ctx, &first); err != nil {
 		t.Fatal(err)
 	}
 	if err := articles.CreateArticleQueued(ctx, &second); err != nil {
+		t.Fatal(err)
+	}
+	if err := articles.CreateArticleQueued(ctx, &third); err != nil {
 		t.Fatal(err)
 	}
 	provider := &chunkCountingProvider{failBlock: -1}
@@ -260,13 +318,19 @@ func TestRunnerReusesExactValidatedCacheAcrossArticles(t *testing.T) {
 	if err := runner.RunOnce(ctx); err != nil {
 		t.Fatal(err)
 	}
-	// The first article misses both paragraph caches; the identical second
-	// article hits both exact caches and republishes them paragraph by
-	// paragraph without a provider call. The whole-article cache is retired.
-	if got := provider.Calls(); len(got) != 2 || got[0] != 0 || got[1] != 1 {
-		t.Fatalf("provider calls = %v, want one miss per paragraph", got)
+	if err := runner.RunOnce(ctx); err != nil {
+		t.Fatal(err)
 	}
-	for _, item := range []reader.Article{first, second} {
+	// The first article misses both paragraph caches. The second article's
+	// prepared input now carries the candidates the first run published into
+	// the local lexicon, so its exact prepared input differs and it misses
+	// once too. The third run then faces a stable lexicon: its prepared input
+	// matches the second run's exactly and both paragraphs are republished
+	// from the exact caches without a provider call.
+	if got := provider.Calls(); len(got) != 4 || got[0] != 0 || got[1] != 1 || got[2] != 0 || got[3] != 1 {
+		t.Fatalf("provider calls = %v, want one miss per paragraph per lexicon state", got)
+	}
+	for _, item := range []reader.Article{first, second, third} {
 		loaded, err := articles.GetArticle(ctx, item.ID)
 		if err != nil {
 			t.Fatal(err)
@@ -288,7 +352,7 @@ func TestRunnerReusesExactValidatedCacheAcrossArticles(t *testing.T) {
 	if err := db.QueryRow(ctx, `SELECT COUNT(*) FROM job WHERE execution_target = 'server' AND state = 'succeeded'`).Scan(&serverSucceeded); err != nil {
 		t.Fatal(err)
 	}
-	if wholeCacheRows != 0 || chunkCacheRows != 2 || serverSucceeded != 2 {
+	if wholeCacheRows != 0 || chunkCacheRows != 4 || serverSucceeded != 3 {
 		t.Fatalf("cache/server rows = %d/%d/%d", wholeCacheRows, chunkCacheRows, serverSucceeded)
 	}
 }
@@ -329,8 +393,16 @@ func (p *gatedChunkProvider) AnalyzeChunk(_ context.Context, chunk semantics.Pre
 		Version: semantics.AnalysisContractVersion,
 		Tokens:  make([]semantics.TokenResult, 0, len(chunk.Tokens)), NewSenses: []semantics.NewSense{}, Constructions: []semantics.Construction{},
 	}
-	for _, token := range chunk.Tokens {
-		response.Tokens = append(response.Tokens, semantics.TokenResult{TokenID: token.ID, Classification: "unchanged", Kind: semantics.KindWord, ConfidenceMilli: 1000})
+	for index, token := range chunk.Tokens {
+		ref := fmt.Sprintf("fill-%d", index)
+		response.NewSenses = append(response.NewSenses, semantics.NewSense{
+			Ref: ref, Kind: semantics.KindWord, CanonicalForm: token.SourceText, NormalizedForm: token.SourceText,
+			Lemma: token.SourceText, SenseDiscriminator: "gloss", PrimaryTranslation: "gloss",
+		})
+		response.Tokens = append(response.Tokens, semantics.TokenResult{
+			TokenID: token.ID, Classification: "word", Kind: semantics.KindWord,
+			NewSenseRef: ref, ShadowText: "gloss", ConfidenceMilli: 1000,
+		})
 	}
 	raw, _ := json.Marshal(response)
 	attempt := annotator.ChunkAttempt{
@@ -558,10 +630,11 @@ func TestRunnerSchedulerRetryReinitializesBlocks(t *testing.T) {
 			t.Fatalf("block %d after automatic retry = %+v", index, block)
 		}
 	}
-	// First attempt called the provider for paragraphs one and two; the retry
-	// republished paragraph one from its exact cache hit and reprocessed
-	// paragraph two.
-	if calls := provider.Calls(); len(calls) != 3 || calls[0] != 0 || calls[1] != 1 || calls[2] != 1 {
+	// First attempt called the provider for paragraphs one and two. The retry
+	// reprocesses both paragraphs: the first attempt's published senses gave
+	// this article's prepared input candidates, so the exact cache misses and
+	// the retry re-analyzes them under the reset block lifecycle.
+	if calls := provider.Calls(); len(calls) != 4 || calls[2] != 0 || calls[3] != 1 {
 		t.Fatalf("provider calls = %v", calls)
 	}
 }
@@ -623,15 +696,26 @@ func TestRunnerPersistsPriorSenseReferencesAndAuditsRawChunks(t *testing.T) {
 			PrimaryTranslation: "sofa",
 		}},
 	}
+	block0.NewSenses = append(block0.NewSenses, semantics.NewSense{
+		Ref: "fill-b0-t0", Kind: semantics.KindWord, CanonicalForm: "De", NormalizedForm: "de",
+		Lemma: "de", SenseDiscriminator: "article", PrimaryTranslation: "The",
+	})
 	block0.Tokens = []semantics.TokenResult{
-		{TokenID: "b0:t0", Classification: "unchanged", Kind: semantics.KindWord, ConfidenceMilli: 1000},
+		{TokenID: "b0:t0", Classification: "word", Kind: semantics.KindWord, NewSenseRef: "fill-b0-t0", ShadowText: "The", ConfidenceMilli: 1000},
 		{TokenID: "b0:t1", Classification: "lexical", Kind: semantics.KindWord, NewSenseRef: "bank-sofa", ShadowText: "sofa", ConfidenceMilli: 950},
 	}
 	// Paragraph two references the earlier paragraph's namespaced sense
 	// exactly as the provider sees it in PRIOR_VALIDATED_SENSES.
 	block1 := semantics.Response{Version: semantics.AnalysisContractVersion}
+	// Paragraph two references the earlier paragraph's namespaced sense
+	// exactly as the provider sees it in PRIOR_VALIDATED_SENSES and glosses
+	// its own ordinary words.
+	block1.NewSenses = []semantics.NewSense{
+		{Ref: "fill-b1-t2", Kind: semantics.KindWord, CanonicalForm: "De", NormalizedForm: "de",
+			Lemma: "de", SenseDiscriminator: "article", PrimaryTranslation: "The"},
+	}
 	block1.Tokens = []semantics.TokenResult{
-		{TokenID: "b1:t2", Classification: "unchanged", Kind: semantics.KindWord, ConfidenceMilli: 1000},
+		{TokenID: "b1:t2", Classification: "word", Kind: semantics.KindWord, NewSenseRef: "fill-b1-t2", ShadowText: "The", ConfidenceMilli: 1000},
 		{TokenID: "b1:t3", Classification: "lexical", Kind: semantics.KindWord, NewSenseRef: "b0:bank-sofa", ShadowText: "sofa", ConfidenceMilli: 950},
 	}
 	provider := &scriptedChunkProvider{responses: map[int]semantics.Response{0: block0, 1: block1}}

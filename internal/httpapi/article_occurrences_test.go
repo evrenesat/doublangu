@@ -49,30 +49,41 @@ func TestArticleHTTPResponseCarriesWordGlossesAndMembers(t *testing.T) {
 	response := semantics.Response{
 		Version: semantics.AnalysisContractVersion,
 		NewSenses: []semantics.NewSense{
+			wordSense("he", "hij", "He"),
 			wordSense("gave", "geven", "gave"),
+			wordSense("the", "het", "the"),
 			wordSense("plan", "plan", "plan"),
+			wordSense("not", "niet", "not"),
 			wordSense("up", "op", "up"),
 			{
 				Ref: "give-up", Kind: semantics.KindExpression, CanonicalForm: "opgeven",
 				NormalizedForm: "opgeven", SenseDiscriminator: "abandon", PrimaryTranslation: "give up",
+				MeaningNote: "Opgeven splits around the object: gaf (gave) … op (up). Here he did not give the plan up.",
+				PartsNote:   "gaf: gave · op: up",
 			},
 		},
 	}
 	memberBySource := map[string]string{}
 	for _, token := range chunk.Tokens {
-		result := semantics.TokenResult{TokenID: token.ID, Classification: "unchanged", Kind: semantics.KindWord, ConfidenceMilli: 900}
+		result := semantics.TokenResult{TokenID: token.ID, Classification: "word", Kind: semantics.KindWord, ConfidenceMilli: 900}
 		switch token.SourceText {
+		case "Hij":
+			result.NewSenseRef = "he"
+			result.ShadowText = "He"
 		case "gaf":
-			result.Classification = "word"
 			result.NewSenseRef = "gave"
 			result.ShadowText = "gave"
 			memberBySource["gaf"] = token.ID
+		case "het":
+			result.NewSenseRef = "the"
+			result.ShadowText = "the"
 		case "plan":
-			result.Classification = "word"
 			result.NewSenseRef = "plan"
 			result.ShadowText = "plan"
+		case "niet":
+			result.NewSenseRef = "not"
+			result.ShadowText = "not"
 		case "op":
-			result.Classification = "word"
 			result.NewSenseRef = "up"
 			result.ShadowText = "up"
 			memberBySource["op"] = token.ID
@@ -130,22 +141,25 @@ func TestArticleHTTPResponseCarriesWordGlossesAndMembers(t *testing.T) {
 	if len(got.Sentences) != 1 || len(got.Blocks[0].Sentences) != 1 {
 		t.Fatalf("sentences = %d/%d, want the deterministic sentence path", len(got.Sentences), len(got.Blocks[0].Sentences))
 	}
-	// Function words that were left unchanged carry no subtitle, but every
-	// translated word — including the construction members and the
-	// same-spelling plan — carries its real individual gloss.
-	wantSubtitles := map[string]string{"gaf": "gave", "plan": "plan", "op": "up"}
+	// Every word — function words included — carries its real individual
+	// gloss over the wire, including the construction members and the
+	// same-spelling plan.
+	wantSubtitles := map[string]string{
+		"Hij": "He", "gaf": "gave", "het": "the",
+		"plan": "plan", "niet": "not", "op": "up",
+	}
 	for source, want := range wantSubtitles {
 		if subtitleBySource[source] != want {
 			t.Fatalf("token %q subtitle = %q, want %q", source, subtitleBySource[source], want)
 		}
 	}
-	for _, unchangedSource := range []string{"Hij", "het", "niet"} {
-		if subtitleBySource[unchangedSource] != "" {
-			t.Fatalf("unchanged token %q stores subtitle %q", unchangedSource, subtitleBySource[unchangedSource])
-		}
-	}
 	if construction.ShadowText != "give up" || memberIDs != 2 {
 		t.Fatalf("construction response = %+v", construction)
+	}
+	// The construction's meaning and member-parts notes survive the round
+	// trip so the popover can show them.
+	if construction.Sense == nil || construction.Sense.MeaningNote == "" || construction.Sense.PartsNote == "" {
+		t.Fatalf("construction sense notes = %+v", construction.Sense)
 	}
 	// The wire format carries the exact member occurrence ids.
 	if !strings.Contains(getResponse.Body.String(), `"member_occurrence_ids":[`) {

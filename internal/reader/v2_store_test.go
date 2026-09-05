@@ -2,6 +2,8 @@ package reader
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 
 	"doublangu/internal/jobs"
@@ -10,13 +12,23 @@ import (
 	"doublangu/internal/store"
 )
 
-func validUnchangedResponse(input semantics.PreparedArticle) semantics.Response {
+// validGlossedResponse authors a response in which every token is an ordinary
+// glossed word: validation rejects unchanged classifications.
+func validGlossedResponse(input semantics.PreparedArticle) semantics.Response {
 	response := semantics.Response{
 		Version: semantics.AnalysisContractVersion,
 		Tokens:  make([]semantics.TokenResult, 0, len(input.Tokens)), NewSenses: []semantics.NewSense{}, Constructions: []semantics.Construction{},
 	}
-	for _, token := range input.Tokens {
-		response.Tokens = append(response.Tokens, semantics.TokenResult{TokenID: token.ID, Classification: "unchanged", Kind: semantics.KindWord, ConfidenceMilli: 1000})
+	for index, token := range input.Tokens {
+		ref := fmt.Sprintf("fill-%d", index)
+		response.NewSenses = append(response.NewSenses, semantics.NewSense{
+			Ref: ref, Kind: semantics.KindWord, CanonicalForm: token.SourceText, NormalizedForm: token.SourceText,
+			Lemma: token.SourceText, SenseDiscriminator: "gloss", PrimaryTranslation: "gloss",
+		})
+		response.Tokens = append(response.Tokens, semantics.TokenResult{
+			TokenID: token.ID, Classification: "word", Kind: semantics.KindWord,
+			NewSenseRef: ref, ShadowText: "gloss", ConfidenceMilli: 1000,
+		})
 	}
 	return response
 }
@@ -42,20 +54,27 @@ func TestPersistAnalysisMaterializesLayeredRowsAndSpeechJobs(t *testing.T) {
 	}
 	response := semantics.Response{
 		Version: semantics.AnalysisContractVersion,
-		NewSenses: []semantics.NewSense{{
-			Ref: "bank-sofa", Kind: semantics.KindWord, CanonicalForm: "bank", NormalizedForm: "bank", Lemma: "bank",
-			SenseDiscriminator: "sofa", PrimaryTranslation: "sofa", Alternatives: []string{"couch"},
-			CanonicalPronunciationText: "bank",
-		}},
+		NewSenses: []semantics.NewSense{
+			{
+				Ref: "bank-sofa", Kind: semantics.KindWord, CanonicalForm: "bank", NormalizedForm: "bank", Lemma: "bank",
+				SenseDiscriminator: "sofa", PrimaryTranslation: "sofa", Alternatives: []string{"couch"},
+				CanonicalPronunciationText: "bank",
+			},
+			wordSenseFixture("w-de", "de", "The"),
+			wordSenseFixture("w-staat", "staat", "stands"),
+		},
 	}
+	glosses := map[string]string{"De": "The", "staat": "stands"}
 	for _, token := range prepared.Tokens {
-		result := semantics.TokenResult{TokenID: token.ID, Classification: "unchanged", Kind: semantics.KindWord, ConfidenceMilli: 1000}
+		result := semantics.TokenResult{TokenID: token.ID, Classification: "word", Kind: semantics.KindWord, ConfidenceMilli: 1000}
 		if token.NormalizedForm == "bank" {
-			result.Classification = "lexical"
 			result.NewSenseRef = "bank-sofa"
 			result.ShadowText = "sofa"
 			result.CanonicalPronunciation = "bank-sound"
 			result.ContextPronunciationKey = "sofa-context"
+		} else {
+			result.NewSenseRef = "w-" + strings.ToLower(token.SourceText)
+			result.ShadowText = glosses[token.SourceText]
 		}
 		response.Tokens = append(response.Tokens, result)
 	}
@@ -143,7 +162,7 @@ func TestAnalysisCachesRequirePreparedInputAndProviderSelection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	response := validUnchangedResponse(prepared)
+	response := validGlossedResponse(prepared)
 	validated, err := semantics.ValidateResponse(prepared, response)
 	if err != nil {
 		t.Fatal(err)

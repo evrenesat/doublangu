@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -106,8 +107,16 @@ func executorChunk(t *testing.T) semantics.PreparedChunk {
 func validLinguisticRaw(t *testing.T, chunk semantics.PreparedChunk) string {
 	t.Helper()
 	artifact := semantics.LinguisticArtifact{Version: pipeline.LinguisticContractVersion}
-	for _, token := range chunk.Tokens {
-		artifact.Tokens = append(artifact.Tokens, semantics.LinguisticTokenResult{TokenID: token.ID, Classification: "unchanged", Kind: semantics.KindWord, ConfidenceMilli: 1000})
+	for index, token := range chunk.Tokens {
+		ref := fmt.Sprintf("fill-%d", index)
+		artifact.NewSenses = append(artifact.NewSenses, semantics.LinguisticNewSense{
+			Ref: ref, Kind: semantics.KindWord, CanonicalForm: token.SourceText, NormalizedForm: token.SourceText,
+			Lemma: token.SourceText, SenseDiscriminator: "gloss",
+		})
+		artifact.Tokens = append(artifact.Tokens, semantics.LinguisticTokenResult{
+			TokenID: token.ID, Classification: "word", Kind: semantics.KindWord,
+			NewSenseRef: ref, ConfidenceMilli: 1000,
+		})
 	}
 	encoded, err := json.Marshal(artifact)
 	if err != nil {

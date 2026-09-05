@@ -171,7 +171,7 @@ func TestChunkPromptExplainsCrossFieldReferencesAndSpanOccurrences(t *testing.T)
 		"Zij grijpt het je jaren later met beide handen aan",
 		"never output sentences",
 		"at least two separate runs",
-		"unchanged tokens never reference a sense",
+		"Never classify a word as unchanged",
 		"SENTENCES_BEGIN",
 	} {
 		if !strings.Contains(prompt, expected) {
@@ -184,6 +184,7 @@ func TestChunkValidationFeedbackReportsIndependentRelationalErrors(t *testing.T)
 	chunk := testPreparedChunk(t)
 	response := testValidChunkResponse(chunk)
 	response.Tokens[0].Classification = "article"
+	response.Tokens[0].NewSenseRef = ""
 	response.Tokens[0].ShadowText = ""
 	response.Constructions = []semantics.Construction{{
 		Kind: semantics.KindExpression, Role: "contiguous_construction",
@@ -218,7 +219,7 @@ func TestBuildV2CorrectionPromptRestatesRelationalChecklist(t *testing.T) {
 		"never blank unrelated shadow_text fields",
 		"never copy Dutch source text",
 		"such as 'bijna' or 'je jaren later'",
-		"Unchanged tokens never reference a sense",
+		"never classify a word as unchanged",
 	} {
 		if !strings.Contains(prompt, expected) {
 			t.Errorf("correction prompt missing %q", expected)

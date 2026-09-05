@@ -1,11 +1,26 @@
 package semantics
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
 	"doublangu/internal/pipeline"
 )
+
+// glossedLinguisticTokens returns glossed word token results for every chunk
+// token, referencing per-token word senses: the linguistic stage no longer
+// accepts unchanged classifications.
+func glossedLinguisticTokens(chunk PreparedChunk) ([]LinguisticNewSense, []LinguisticTokenResult) {
+	senses := make([]LinguisticNewSense, 0, len(chunk.Tokens))
+	tokens := make([]LinguisticTokenResult, 0, len(chunk.Tokens))
+	for index, token := range chunk.Tokens {
+		ref := fmt.Sprintf("fill-%d", index)
+		senses = append(senses, LinguisticNewSense{Ref: ref, Kind: KindWord, CanonicalForm: token.SourceText, NormalizedForm: token.SourceText, Lemma: token.SourceText, SenseDiscriminator: "gloss", CanonicalPronunciationText: token.SourceText})
+		tokens = append(tokens, LinguisticTokenResult{TokenID: token.ID, Classification: "word", Kind: KindWord, NewSenseRef: ref, ConfidenceMilli: 1000})
+	}
+	return senses, tokens
+}
 
 // linguisticFixtureParagraph builds a two-sentence paragraph chunk and a
 // fully valid linguistic artifact for it.
@@ -24,6 +39,11 @@ func linguisticFixtureParagraph(t *testing.T) (PreparedChunk, *ValidatedLinguist
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Every ordinary word — function words included — references a sense.
+	wordSense := func(ref, canonical, translation string) LinguisticNewSense {
+		return LinguisticNewSense{Ref: ref, Kind: KindWord, CanonicalForm: canonical, NormalizedForm: canonical,
+			Lemma: canonical, SenseDiscriminator: translation, CanonicalPronunciationText: canonical}
+	}
 	artifact := LinguisticArtifact{
 		Version: pipeline.LinguisticContractVersion,
 		NewSenses: []LinguisticNewSense{
@@ -36,6 +56,14 @@ func linguisticFixtureParagraph(t *testing.T) (PreparedChunk, *ValidatedLinguist
 				Ref: "bijltje-sense", Kind: KindWord, CanonicalForm: "bijltje", NormalizedForm: "bijltje",
 				Lemma: "bijltje", SenseDiscriminator: "tool", MeaningNote: "a small axe", CanonicalPronunciationText: "bijltje",
 			},
+			wordSense("hij", "Hij", "He"),
+			wordSense("gooit", "gooit", "throws"),
+			wordSense("het", "het", "the"),
+			wordSense("erbij", "erbij", "therewith"),
+			wordSense("neer", "neer", "down"),
+			wordSense("zij", "Zij", "She"),
+			wordSense("kijkt", "kijkt", "looks"),
+			wordSense("uit", "uit", "out"),
 		},
 		Constructions: []LinguisticConstruction{{
 			Kind: KindExpression, Role: "discontinuous_construction", NewSenseRef: "gooi-ref",
@@ -48,13 +76,15 @@ func linguisticFixtureParagraph(t *testing.T) (PreparedChunk, *ValidatedLinguist
 			},
 		}},
 	}
+	senseBySource := map[string]string{
+		"Hij": "hij", "gooit": "gooit", "het": "het", "bijltje": "bijltje-sense",
+		"erbij": "erbij", "neer": "neer", "Zij": "zij", "kijkt": "kijkt", "uit": "uit",
+	}
 	for _, token := range chunk.Tokens {
-		result := LinguisticTokenResult{TokenID: token.ID, Classification: "unchanged", Kind: KindWord, ConfidenceMilli: 1000}
-		if token.NormalizedForm == "bijltje" {
-			result.Classification = "lexical"
-			result.NewSenseRef = "bijltje-sense"
-		}
-		artifact.Tokens = append(artifact.Tokens, result)
+		artifact.Tokens = append(artifact.Tokens, LinguisticTokenResult{
+			TokenID: token.ID, Classification: "word", Kind: KindWord,
+			NewSenseRef: senseBySource[token.SourceText], ConfidenceMilli: 1000,
+		})
 	}
 	validated, err := ValidateLinguistic(chunk, artifact)
 	if err != nil {
@@ -64,18 +94,30 @@ func linguisticFixtureParagraph(t *testing.T) (PreparedChunk, *ValidatedLinguist
 }
 
 func validTranslationFixture(chunk PreparedChunk, linguistic *ValidatedLinguistic) TranslationArtifact {
+	glosses := map[string]string{
+		"Hij": "He", "gooit": "throws", "het": "the", "bijltje": "little axe",
+		"erbij": "therewith", "neer": "down", "Zij": "She", "kijkt": "looks", "uit": "out",
+	}
+	sourceByToken := make(map[string]string, len(chunk.Tokens))
+	for _, token := range chunk.Tokens {
+		sourceByToken[token.ID] = token.SourceText
+	}
 	artifact := TranslationArtifact{Version: pipeline.TranslationContractVersion}
 	for _, token := range linguistic.Tokens {
-		shadow := ""
-		if token.Classification != "unchanged" {
-			shadow = "little axe"
+		shadow := glosses[sourceByToken[token.TokenID]]
+		if shadow == "" {
+			shadow = "gloss"
 		}
 		artifact.Tokens = append(artifact.Tokens, TranslationTokenResult{TokenID: token.TokenID, ShadowText: shadow})
 	}
 	translations := map[string]string{"gooi-ref": "give up", "bijltje-sense": "little axe"}
 	for _, sense := range linguistic.NewSenses {
+		primary := translations[sense.Ref]
+		if primary == "" {
+			primary = "gloss"
+		}
 		artifact.NewSenses = append(artifact.NewSenses, TranslationNewSense{
-			Ref: sense.Ref, PrimaryTranslation: translations[sense.Ref], Alternatives: []string{"throw in the towel"},
+			Ref: sense.Ref, PrimaryTranslation: primary, Alternatives: []string{"throw in the towel"},
 		})
 	}
 	for _, construction := range linguistic.Constructions {
@@ -132,14 +174,12 @@ func TestValidateLinguisticAssignsSortedConstructionIDs(t *testing.T) {
 		t.Fatal(err)
 	}
 	artifact := LinguisticArtifact{Version: pipeline.LinguisticContractVersion}
-	artifact.Tokens = make([]LinguisticTokenResult, 0, len(twoChunk.Tokens))
-	for _, token := range twoChunk.Tokens {
-		artifact.Tokens = append(artifact.Tokens, LinguisticTokenResult{TokenID: token.ID, Classification: "unchanged", Kind: KindWord, ConfidenceMilli: 1000})
-	}
-	artifact.NewSenses = []LinguisticNewSense{
-		{Ref: "give-up", Kind: KindExpression, CanonicalForm: "opgeven", NormalizedForm: "opgeven", SenseDiscriminator: "resign", CanonicalPronunciationText: "opgeven"},
-		{Ref: "look-out", Kind: KindExpression, CanonicalForm: "uitkijken", NormalizedForm: "uitkijken", SenseDiscriminator: "watch", CanonicalPronunciationText: "uitkijken"},
-	}
+	twoSenses, twoTokens := glossedLinguisticTokens(twoChunk)
+	artifact.Tokens = twoTokens
+	artifact.NewSenses = append(twoSenses,
+		LinguisticNewSense{Ref: "give-up", Kind: KindExpression, CanonicalForm: "opgeven", NormalizedForm: "opgeven", SenseDiscriminator: "resign", CanonicalPronunciationText: "opgeven"},
+		LinguisticNewSense{Ref: "look-out", Kind: KindExpression, CanonicalForm: "uitkijken", NormalizedForm: "uitkijken", SenseDiscriminator: "watch", CanonicalPronunciationText: "uitkijken"},
+	)
 	// Provider order: look-out (later in source) first.
 	artifact.Constructions = []LinguisticConstruction{
 		{Kind: KindExpression, Role: "contiguous_construction", NewSenseRef: "look-out", ConfidenceMilli: 900, TokenIDs: []string{"b0:t5", "b0:t6"}, Spans: []SpanRef{{BlockIndex: 0, SourceText: "kijkt uit", Occurrence: 0}}},
@@ -163,45 +203,40 @@ func TestValidateLinguisticAssignsSortedConstructionIDs(t *testing.T) {
 func TestValidateLinguisticRejectsCoverageAndMembershipViolations(t *testing.T) {
 	chunk, _ := linguisticFixtureParagraph(t)
 
+	fillSenses, fillTokens := glossedLinguisticTokens(chunk)
+
 	missing := LinguisticArtifact{Version: pipeline.LinguisticContractVersion}
-	for _, token := range chunk.Tokens {
-		missing.Tokens = append(missing.Tokens, LinguisticTokenResult{TokenID: token.ID, Classification: "unchanged", Kind: KindWord, ConfidenceMilli: 1000})
-	}
+	missing.NewSenses = fillSenses
+	missing.Tokens = append([]LinguisticTokenResult(nil), fillTokens...)
 	missing.Tokens = missing.Tokens[1:]
 	if _, err := ValidateLinguistic(chunk, missing); err == nil {
 		t.Fatal("missing token coverage accepted")
 	}
 
 	duplicate := LinguisticArtifact{Version: pipeline.LinguisticContractVersion}
-	for _, token := range chunk.Tokens {
-		duplicate.Tokens = append(duplicate.Tokens, LinguisticTokenResult{TokenID: token.ID, Classification: "unchanged", Kind: KindWord, ConfidenceMilli: 1000})
-	}
-	duplicate.Tokens = append(duplicate.Tokens, duplicate.Tokens[0])
+	duplicate.NewSenses = fillSenses
+	duplicate.Tokens = append(append([]LinguisticTokenResult(nil), fillTokens...), fillTokens[0])
 	if _, err := ValidateLinguistic(chunk, duplicate); err == nil {
 		t.Fatal("duplicate token accepted")
 	}
 
-	sensedUnchanged := LinguisticArtifact{Version: pipeline.LinguisticContractVersion}
-	for _, token := range chunk.Tokens {
-		sensedUnchanged.Tokens = append(sensedUnchanged.Tokens, LinguisticTokenResult{TokenID: token.ID, Classification: "unchanged", Kind: KindWord, ConfidenceMilli: 1000})
-	}
-	sensedUnchanged.NewSenses = []LinguisticNewSense{{
-		Ref: "een-article", Kind: KindWord, CanonicalForm: "hij", NormalizedForm: "hij",
-		SenseDiscriminator: "article", CanonicalPronunciationText: "hij",
-	}}
-	sensedUnchanged.Tokens[0].NewSenseRef = "een-article"
-	if _, err := ValidateLinguistic(chunk, sensedUnchanged); err == nil {
-		t.Fatal("sensed unchanged token accepted")
+	// An ordinary word classified unchanged is rejected outright: it would
+	// bypass the required sense and gloss.
+	plainUnchanged := LinguisticArtifact{Version: pipeline.LinguisticContractVersion}
+	plainUnchanged.NewSenses = fillSenses
+	plainUnchanged.Tokens = append([]LinguisticTokenResult(nil), fillTokens...)
+	plainUnchanged.Tokens[0].Classification = "unchanged"
+	plainUnchanged.Tokens[0].NewSenseRef = ""
+	if _, err := ValidateLinguistic(chunk, plainUnchanged); err == nil {
+		t.Fatal("unchanged token accepted")
 	}
 
 	splitRun := LinguisticArtifact{Version: pipeline.LinguisticContractVersion}
-	for _, token := range chunk.Tokens {
-		splitRun.Tokens = append(splitRun.Tokens, LinguisticTokenResult{TokenID: token.ID, Classification: "unchanged", Kind: KindWord, ConfidenceMilli: 1000})
-	}
-	splitRun.NewSenses = []LinguisticNewSense{{
+	splitRun.NewSenses = append(append([]LinguisticNewSense(nil), fillSenses...), LinguisticNewSense{
 		Ref: "run-fast", Kind: KindExpression, CanonicalForm: "uitkijken", NormalizedForm: "uitkijken",
 		SenseDiscriminator: "watch", CanonicalPronunciationText: "uitkijken",
-	}}
+	})
+	splitRun.Tokens = fillTokens
 	splitRun.Constructions = []LinguisticConstruction{{
 		Kind: KindExpression, Role: "contiguous_construction", NewSenseRef: "run-fast", ConfidenceMilli: 900,
 		TokenIDs: []string{"b0:t4", "b0:t6"},
@@ -212,13 +247,11 @@ func TestValidateLinguisticRejectsCoverageAndMembershipViolations(t *testing.T) 
 	}
 
 	crossSentence := LinguisticArtifact{Version: pipeline.LinguisticContractVersion}
-	for _, token := range chunk.Tokens {
-		crossSentence.Tokens = append(crossSentence.Tokens, LinguisticTokenResult{TokenID: token.ID, Classification: "unchanged", Kind: KindWord, ConfidenceMilli: 1000})
-	}
-	crossSentence.NewSenses = []LinguisticNewSense{{
+	crossSentence.NewSenses = append(append([]LinguisticNewSense(nil), fillSenses...), LinguisticNewSense{
 		Ref: "mix", Kind: KindExpression, CanonicalForm: "gooien kijken", NormalizedForm: "gooien kijken",
 		SenseDiscriminator: "test", CanonicalPronunciationText: "gooien kijken",
-	}}
+	})
+	crossSentence.Tokens = fillTokens
 	crossSentence.Constructions = []LinguisticConstruction{{
 		Kind: KindExpression, Role: "discontinuous_construction", NewSenseRef: "mix", ConfidenceMilli: 900,
 		TokenIDs: []string{"b0:t1", "b0:t5"},
@@ -267,12 +300,6 @@ func TestValidateTranslationEnforcesExactCorrespondence(t *testing.T) {
 	}
 	if err := ValidateTranslation(chunk, linguistic, blankOrdinary); err == nil {
 		t.Fatal("blank ordinary translation accepted")
-	}
-
-	unchangedTranslation := valid
-	unchangedTranslation.Tokens[0].ShadowText = "a real translation"
-	if err := ValidateTranslation(chunk, linguistic, unchangedTranslation); err == nil {
-		t.Fatal("translated unchanged token accepted")
 	}
 
 	dutchCopy := valid
@@ -326,7 +353,7 @@ func TestMergeLinguisticTranslationPassesChunkValidation(t *testing.T) {
 	if merged.Version != AnalysisContractVersion {
 		t.Fatalf("merged version = %q", merged.Version)
 	}
-	if len(merged.Tokens) != len(chunk.Tokens) || len(merged.Constructions) != 1 || len(merged.NewSenses) != 2 {
+	if len(merged.Tokens) != len(chunk.Tokens) || len(merged.Constructions) != 1 || len(merged.NewSenses) != len(linguistic.NewSenses) {
 		t.Fatalf("merged = %d tokens %d constructions %d senses", len(merged.Tokens), len(merged.Constructions), len(merged.NewSenses))
 	}
 	// Identity is unchanged: token ids/spans and construction members equal
