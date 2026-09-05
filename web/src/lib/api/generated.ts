@@ -3619,6 +3619,22 @@ export interface components {
             capabilities: components["schemas"]["WorkerCapability"][];
             llm_relay_capabilities?: components["schemas"]["RelayCapability"][];
             relay_last_seen_at?: string;
+            /** @description Common ailocals.v1 presence snapshot for universal workers; omitted (never null) for legacy workers. */
+            ailocals_presence?: {
+                /** @constant */
+                protocol: "ailocals.v1";
+                enrolled_capability_ids: string[];
+                server_time: string;
+                capabilities: {
+                    id: string;
+                    /** @enum {string} */
+                    state: "ready" | "busy" | "paused" | "setup_required" | "error";
+                    accepting: boolean;
+                    active_jobs: number;
+                    /** @enum {string|null} */
+                    reason: "slot_busy" | "memory_pressure" | "insufficient_memory" | "storage_unavailable" | "local_service_unreachable" | "setup_missing" | "user_paused" | null;
+                }[];
+            } | null;
             software_version: string;
             created_at: string;
             updated_at: string;

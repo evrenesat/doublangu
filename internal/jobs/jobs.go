@@ -85,11 +85,14 @@ type Job struct {
 	LeaseExpiresAt  string       `json:"lease_expires_at"`
 	ProgressPercent int          `json:"progress_percent"`
 	ErrorCode       string       `json:"error_code"`
-	CreatedAt       string       `json:"created_at"`
-	UpdatedAt       string       `json:"updated_at"`
-	StartedAt       string       `json:"started_at"`
-	CompletedAt     string       `json:"completed_at"`
-	leaseTokenHash  string
+	// AilocalsResultSHA256 is written atomically with common-protocol
+	// completion and is not used by legacy clients.
+	AilocalsResultSHA256 string `json:"-"`
+	CreatedAt            string `json:"created_at"`
+	UpdatedAt            string `json:"updated_at"`
+	StartedAt            string `json:"started_at"`
+	CompletedAt          string `json:"completed_at"`
+	leaseTokenHash       string
 }
 
 type Spec struct {
@@ -354,6 +357,104 @@ func (s *Store) ClaimMatching(ctx context.Context, executionTarget, leaseOwner s
 				WHERE jd.job_id = job.id AND d.state <> 'succeeded'
 			  )
 		`, leaseOwner, hash, expires, now, now, id, executionTarget, now)
+		if err != nil {
+			return fmt.Errorf("jobs claim update: %w", err)
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if affected != 1 {
+			noWork = true
+			return nil
+		}
+		job, err := scanJob(tx.QueryRowContext(ctx, jobSelect+" WHERE id = ?", id))
+		if err != nil {
+			return err
+		}
+		lease = &Lease{Job: *job, LeaseToken: token}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if noWork {
+		return nil, ErrNoWork
+	}
+	return lease, nil
+}
+
+// ClaimMatchingCapability is ClaimMatching restricted to one exact job type,
+// with one active lease per (worker, job type) enforced inside the claim
+// transaction by SQL state checks. Legacy ClaimMatching behavior is
+// unchanged; common-protocol admission uses this method so Apple speech and
+// Chatterbox remain independent admission lanes and no worker collects two
+// active leases of the same capability.
+func (s *Store) ClaimMatchingCapability(ctx context.Context, executionTarget, leaseOwner, jobType string) (*Lease, error) {
+	if s == nil || s.db == nil {
+		return nil, errors.New("jobs: nil database")
+	}
+	if executionTarget != TargetServer && executionTarget != TargetMacOS || strings.TrimSpace(leaseOwner) == "" {
+		return nil, &Error{Op: "claim", Kind: "validation", Err: ErrInvalidJob}
+	}
+	token, err := randomToken()
+	if err != nil {
+		return nil, fmt.Errorf("jobs claim token: %w", err)
+	}
+	now := store.NowUTC()
+	expires := time.Now().UTC().Add(LeaseDuration).Format("2006-01-02T15:04:05.000Z")
+	hash := hashToken(token)
+	var lease *Lease
+	noWork := false
+	err = s.db.WithTransaction(ctx, func(tx *sql.Tx) error {
+		if err := reconcileDependencyFailuresTx(ctx, tx, now); err != nil {
+			return err
+		}
+		rows, err := tx.QueryContext(ctx, jobSelect+`
+			WHERE execution_target = ? AND state = 'queued' AND job_type = ?
+			  AND available_at <= ? AND attempt_count < max_attempts
+			  AND NOT EXISTS (
+				SELECT 1 FROM job_dependency jd JOIN job d ON d.id = jd.dependency_job_id
+				WHERE jd.job_id = job.id AND d.state <> 'succeeded'
+			  )
+			  AND NOT EXISTS (
+				SELECT 1 FROM job active WHERE active.lease_owner = ?
+				  AND active.job_type = ? AND active.state IN ('leased', 'running')
+			  )
+			ORDER BY priority DESC, created_at ASC, id ASC`, executionTarget, jobType, now, leaseOwner, jobType)
+		if err != nil {
+			return fmt.Errorf("jobs choose claim: %w", err)
+		}
+		var candidate *Job
+		for rows.Next() {
+			job, scanErr := scanJob(rows)
+			if scanErr != nil {
+				rows.Close()
+				return fmt.Errorf("jobs scan claim candidate: %w", scanErr)
+			}
+			candidate = job
+			break
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		if candidate == nil {
+			noWork = true
+			return nil
+		}
+		id := candidate.ID.String()
+		result, err := tx.ExecContext(ctx, `
+			UPDATE job SET state = 'leased', attempt_count = attempt_count + 1,
+				lease_owner = ?, lease_token_hash = ?, lease_expires_at = ?,
+				progress_percent = 0, started_at = CASE WHEN started_at = '' THEN ? ELSE started_at END,
+				updated_at = ?
+			WHERE id = ? AND execution_target = ? AND state = 'queued' AND job_type = ?
+			  AND available_at <= ? AND attempt_count < max_attempts
+			  AND NOT EXISTS (
+				SELECT 1 FROM job active WHERE active.lease_owner = ?
+				  AND active.job_type = ? AND active.state IN ('leased', 'running') AND active.id <> ?
+			  )
+		`, leaseOwner, hash, expires, now, now, id, executionTarget, jobType, now, leaseOwner, jobType, id)
 		if err != nil {
 			return fmt.Errorf("jobs claim update: %w", err)
 		}
@@ -817,7 +918,8 @@ func constantTokenMatch(token, expectedHash string) bool {
 const jobSelect = `SELECT id, job_type, execution_target, owner_type, owner_id,
 	idempotency_key, input_hash, payload_json, state, priority, attempt_count,
 	max_attempts, available_at, lease_owner, lease_token_hash, lease_expires_at,
-	progress_percent, error_code, created_at, updated_at, started_at, completed_at FROM job`
+	progress_percent, error_code, created_at, updated_at, started_at, completed_at,
+	ailocals_result_sha256 FROM job`
 
 type rowScanner interface{ Scan(...any) error }
 
@@ -828,7 +930,7 @@ func scanJob(row rowScanner) (*Job, error) {
 		&job.IdempotencyKey, &job.InputHash, &job.PayloadJSON, &job.State, &job.Priority,
 		&job.AttemptCount, &job.MaxAttempts, &job.AvailableAt, &job.LeaseOwner, &job.leaseTokenHash,
 		&job.LeaseExpiresAt, &job.ProgressPercent, &job.ErrorCode, &job.CreatedAt, &job.UpdatedAt,
-		&job.StartedAt, &job.CompletedAt); err != nil {
+		&job.StartedAt, &job.CompletedAt, &job.AilocalsResultSHA256); err != nil {
 		return nil, err
 	}
 	job.ID = library.ULID(id)

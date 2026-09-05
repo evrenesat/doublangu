@@ -97,6 +97,9 @@ type Worker struct {
 	// their existing responses.
 	LLMRelayCapabilities []llmrelay.RelayCapability `json:"llm_relay_capabilities,omitempty"`
 	RelayLastSeenAt      string                     `json:"relay_last_seen_at,omitempty"`
+	// AilocalsPresence is nil (omitted) for legacy workers so strict old
+	// clients never see new fields.
+	AilocalsPresence *AilocalsPresence `json:"ailocals_presence,omitempty"`
 }
 
 type LeaseRequest struct {
@@ -186,7 +189,7 @@ func (s *Service) ListWorkers(ctx context.Context) ([]Worker, error) {
 	if s == nil || s.db == nil {
 		return nil, errors.New("workers: nil database")
 	}
-	rows, err := s.db.Query(ctx, `SELECT id, name, protocol_version, revoked_at, last_seen_at, capabilities_json, software_version, created_at, updated_at, llm_relay_capabilities_json, relay_last_seen_at FROM speech_worker ORDER BY created_at, id`)
+	rows, err := s.db.Query(ctx, `SELECT id, name, protocol_version, revoked_at, last_seen_at, capabilities_json, software_version, created_at, updated_at, llm_relay_capabilities_json, relay_last_seen_at, ailocals_presence_json FROM speech_worker ORDER BY created_at, id`)
 	if err != nil {
 		return nil, err
 	}
@@ -194,9 +197,15 @@ func (s *Service) ListWorkers(ctx context.Context) ([]Worker, error) {
 	result := make([]Worker, 0)
 	for rows.Next() {
 		var worker Worker
-		var capabilities, relayCapabilities string
-		if err := rows.Scan(&worker.ID, &worker.Name, &worker.ProtocolVersion, &worker.RevokedAt, &worker.LastSeenAt, &capabilities, &worker.SoftwareVersion, &worker.CreatedAt, &worker.UpdatedAt, &relayCapabilities, &worker.RelayLastSeenAt); err != nil {
+		var capabilities, relayCapabilities, ailocalsPresence string
+		if err := rows.Scan(&worker.ID, &worker.Name, &worker.ProtocolVersion, &worker.RevokedAt, &worker.LastSeenAt, &capabilities, &worker.SoftwareVersion, &worker.CreatedAt, &worker.UpdatedAt, &relayCapabilities, &worker.RelayLastSeenAt, &ailocalsPresence); err != nil {
 			return nil, err
+		}
+		if strings.Contains(ailocalsPresence, ailocalsProtocolMarker) {
+			var presence AilocalsPresence
+			if err := json.Unmarshal([]byte(ailocalsPresence), &presence); err == nil && presence.Protocol == ailocalsMarkerProtocol() {
+				worker.AilocalsPresence = &presence
+			}
 		}
 		if err := json.Unmarshal([]byte(capabilities), &worker.Capabilities); err != nil {
 			return nil, err

@@ -2872,6 +2872,29 @@ components:
         capabilities: { type: array, items: { $ref: "#/components/schemas/WorkerCapability" } }
         llm_relay_capabilities: { type: array, maxItems: 1, items: { $ref: "#/components/schemas/RelayCapability" } }
         relay_last_seen_at: { type: string }
+        ailocals_presence:
+          type: object
+          nullable: true
+          description: >-
+            Common ailocals.v1 presence snapshot for universal workers;
+            omitted (never null) for legacy workers.
+          required: [protocol, enrolled_capability_ids, server_time, capabilities]
+          properties:
+            protocol: { type: string, const: ailocals.v1 }
+            enrolled_capability_ids: { type: array, items: { type: string } }
+            server_time: { type: string }
+            capabilities:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                required: [id, state, accepting, active_jobs, reason]
+                properties:
+                  id: { type: string }
+                  state: { type: string, enum: [ready, busy, paused, setup_required, error] }
+                  accepting: { type: boolean }
+                  active_jobs: { type: integer, minimum: 0, maximum: 1 }
+                  reason: { type: [string, "null"], enum: [slot_busy, memory_pressure, insufficient_memory, storage_unavailable, local_service_unreachable, setup_missing, user_paused, null] }
         software_version: { type: string }
         created_at: { type: string }
         updated_at: { type: string }
