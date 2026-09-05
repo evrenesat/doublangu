@@ -147,8 +147,16 @@ func testValidChunkResponse(chunk semantics.PreparedChunk) semantics.Response {
 		Version: semantics.AnalysisContractVersion,
 		Tokens:  make([]semantics.TokenResult, 0, len(chunk.Tokens)), NewSenses: []semantics.NewSense{}, Constructions: []semantics.Construction{},
 	}
-	for _, token := range chunk.Tokens {
-		response.Tokens = append(response.Tokens, semantics.TokenResult{TokenID: token.ID, Classification: "unchanged", Kind: semantics.KindWord, ConfidenceMilli: 1000})
+	for index, token := range chunk.Tokens {
+		ref := fmt.Sprintf("fill-%d", index)
+		response.NewSenses = append(response.NewSenses, semantics.NewSense{
+			Ref: ref, Kind: semantics.KindWord, CanonicalForm: token.SourceText, NormalizedForm: token.SourceText,
+			Lemma: token.SourceText, SenseDiscriminator: "gloss", PrimaryTranslation: "gloss",
+		})
+		response.Tokens = append(response.Tokens, semantics.TokenResult{
+			TokenID: token.ID, Classification: "word", Kind: semantics.KindWord,
+			NewSenseRef: ref, ShadowText: "gloss", ConfidenceMilli: 1000,
+		})
 	}
 	return response
 }

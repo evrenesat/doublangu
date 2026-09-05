@@ -1,9 +1,30 @@
 package semantics
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
+
+// glossedTokens authors glossed ordinary-word token results (and their
+// backing senses) for every supplied token, replacing the former unchanged
+// fillers: validation no longer accepts a word without a sense and gloss.
+func glossedTokens(input PreparedArticle, translation string) ([]NewSense, []TokenResult) {
+	senses := make([]NewSense, 0, len(input.Tokens))
+	tokens := make([]TokenResult, 0, len(input.Tokens))
+	for index, token := range input.Tokens {
+		ref := fmt.Sprintf("fill-%d", index)
+		senses = append(senses, NewSense{
+			Ref: ref, Kind: KindWord, CanonicalForm: token.SourceText, NormalizedForm: token.SourceText,
+			Lemma: token.SourceText, SenseDiscriminator: translation, PrimaryTranslation: translation,
+		})
+		tokens = append(tokens, TokenResult{
+			TokenID: token.ID, Classification: "word", Kind: KindWord,
+			NewSenseRef: ref, ShadowText: translation, ConfidenceMilli: 900,
+		})
+	}
+	return senses, tokens
+}
 
 func TestPrepareUsesExactContentIdentityAndUTF16TokenAnchors(t *testing.T) {
 	input, err := Prepare("Leesles", "nl", "en", []Block{{BlockIndex: 0, SourceText: "😀 bank café"}}, nil)
@@ -97,11 +118,9 @@ func TestValidateResponseAcceptsContiguousAndDiscontinuousLayers(t *testing.T) {
 			},
 		},
 	}
-	for _, token := range input.Tokens {
-		response.Tokens = append(response.Tokens, TokenResult{
-			TokenID: token.ID, Classification: "unchanged", Kind: KindWord, ConfidenceMilli: 1000,
-		})
-	}
+	layerSenses, layerTokens := glossedTokens(input, "gloss")
+	response.Tokens = layerTokens
+	response.NewSenses = append(response.NewSenses, layerSenses...)
 	validated, err := ValidateResponse(input, response)
 	if err != nil {
 		t.Fatal(err)
@@ -117,9 +136,9 @@ func TestValidateResponseAcceptsContiguousAndDiscontinuousLayers(t *testing.T) {
 func TestValidateResponseRejectsSourceCopiesAndRuleViolations(t *testing.T) {
 	input := anchoredFixture(t, "Een bank.")
 	base := Response{Version: AnalysisContractVersion}
-	for _, token := range input.Tokens {
-		base.Tokens = append(base.Tokens, TokenResult{TokenID: token.ID, Classification: "unchanged", Kind: KindWord, ConfidenceMilli: 1000})
-	}
+	baseSenses, baseTokens := glossedTokens(input, "gloss")
+	base.Tokens = baseTokens
+	base.NewSenses = baseSenses
 	assertInvalid := func(name string, response Response) {
 		t.Helper()
 		if _, err := ValidateResponse(input, response); err == nil {
@@ -138,47 +157,45 @@ func TestValidateResponseRejectsSourceCopiesAndRuleViolations(t *testing.T) {
 	assertInvalid("unsafe subtitle", unsafe)
 
 	missingSubtitle := base
-	missingSubtitle.NewSenses = []NewSense{{
-		Ref: "translated", Kind: KindWord, CanonicalForm: "Een", NormalizedForm: "een",
-		SenseDiscriminator: "article", PrimaryTranslation: "a",
-	}}
+	missingSubtitle.Tokens = append([]TokenResult(nil), base.Tokens...)
 	missingSubtitle.Tokens[0] = TokenResult{
 		TokenID: input.Tokens[0].ID, Classification: "article", Kind: KindWord,
-		NewSenseRef: "translated", ConfidenceMilli: 900,
+		NewSenseRef: "fill-0", ConfidenceMilli: 900,
 	}
 	assertInvalid("missing translated token subtitle", missingSubtitle)
 
 	// An ordinary token whose subtitle copies its own Dutch source spelling is
 	// a source copy, never an English subtitle, unless the referenced sense's
-	// own translation is spelled the same. Tokens are copied defensively so
-	// this mutation cannot leak into the later variants.
+	// own translation is spelled the same.
 	dutchCopyOrdinary := base
 	dutchCopyOrdinary.Tokens = append([]TokenResult(nil), base.Tokens...)
-	dutchCopyOrdinary.NewSenses = []NewSense{{
+	dutchCopyOrdinary.NewSenses = append(append([]NewSense(nil), base.NewSenses...), NewSense{
 		Ref: "bank-sofa", Kind: KindWord, CanonicalForm: "bank", NormalizedForm: "bank",
 		SenseDiscriminator: "sofa", PrimaryTranslation: "sofa",
-	}}
+	})
 	dutchCopyOrdinary.Tokens[1] = TokenResult{
 		TokenID: input.Tokens[1].ID, Classification: "word", Kind: KindWord,
 		NewSenseRef: "bank-sofa", ShadowText: "bank", ConfidenceMilli: 900,
 	}
 	assertInvalid("ordinary source-copy subtitle", dutchCopyOrdinary)
 
-	// An unchanged token with a real English subtitle is a translated
-	// unchanged token and must enter correction.
-	translatedUnchanged := base
-	translatedUnchanged.Tokens[0] = TokenResult{
-		TokenID: input.Tokens[0].ID, Classification: "unchanged", Kind: KindWord,
-		ShadowText: "a", ConfidenceMilli: 1000,
+	// An ordinary word classified unchanged is rejected outright: it would
+	// bypass the required individual gloss, and same-spelling senses cover
+	// words that legitimately read the same in English.
+	plainUnchanged := base
+	plainUnchanged.Tokens = append([]TokenResult(nil), base.Tokens...)
+	plainUnchanged.Tokens[0] = TokenResult{
+		TokenID: input.Tokens[0].ID, Classification: "unchanged", Kind: KindWord, ConfidenceMilli: 1000,
 	}
-	assertInvalid("translated unchanged token", translatedUnchanged)
+	assertInvalid("ordinary word classified unchanged", plainUnchanged)
 
-	// An unchanged token may not reference a sense.
+	// The same rejection applies when the unchanged token carries a sense.
 	sensedUnchanged := base
-	sensedUnchanged.NewSenses = []NewSense{{
+	sensedUnchanged.Tokens = append([]TokenResult(nil), base.Tokens...)
+	sensedUnchanged.NewSenses = append(append([]NewSense(nil), base.NewSenses...), NewSense{
 		Ref: "een-article", Kind: KindWord, CanonicalForm: "een", NormalizedForm: "een",
 		SenseDiscriminator: "article", PrimaryTranslation: "a",
-	}}
+	})
 	sensedUnchanged.Tokens[0] = TokenResult{
 		TokenID: input.Tokens[0].ID, Classification: "unchanged", Kind: KindWord,
 		NewSenseRef: "een-article", ConfidenceMilli: 1000,
@@ -188,8 +205,6 @@ func TestValidateResponseRejectsSourceCopiesAndRuleViolations(t *testing.T) {
 	// A special token may now display its visible identity label: a proper
 	// name displays its name and a number its value, so a same-spelling
 	// subtitle is a legitimate label rather than an untranslated copy.
-	// Tokens are copied defensively because earlier variants in this test
-	// mutate the shared backing array.
 	specialIdentity := base
 	specialIdentity.Tokens = append([]TokenResult(nil), base.Tokens...)
 	specialIdentity.Tokens[0] = TokenResult{
@@ -203,12 +218,11 @@ func TestValidateResponseRejectsSourceCopiesAndRuleViolations(t *testing.T) {
 	// A construction subtitle that copies the joined Dutch member text must
 	// enter correction.
 	dutchCopyConstruction := base
-	dutchCopyConstruction.NewSenses = []NewSense{{
+	dutchCopyConstruction.Tokens = append([]TokenResult(nil), base.Tokens...)
+	dutchCopyConstruction.NewSenses = append(append([]NewSense(nil), base.NewSenses...), NewSense{
 		Ref: "bank-phrase", Kind: KindExpression, CanonicalForm: "een bank", NormalizedForm: "een bank",
 		SenseDiscriminator: "sofa", PrimaryTranslation: "a bench",
-	}}
-	dutchCopyConstruction.Tokens[0] = TokenResult{TokenID: input.Tokens[0].ID, Classification: "unchanged", Kind: KindWord, ConfidenceMilli: 1000}
-	dutchCopyConstruction.Tokens[1] = TokenResult{TokenID: input.Tokens[1].ID, Classification: "unchanged", Kind: KindWord, ConfidenceMilli: 1000}
+	})
 	dutchCopyConstruction.Constructions = []Construction{{
 		Kind: KindExpression, Role: "contiguous_construction", NewSenseRef: "bank-phrase",
 		ShadowText: "een bank", ConfidenceMilli: 900,
@@ -217,7 +231,7 @@ func TestValidateResponseRejectsSourceCopiesAndRuleViolations(t *testing.T) {
 	assertInvalid("Dutch-copy construction subtitle", dutchCopyConstruction)
 
 	badConstruction := base
-	badConstruction.NewSenses = []NewSense{{Ref: "bad", Kind: KindExpression, CanonicalForm: "bank", NormalizedForm: "bank", SenseDiscriminator: "bad", PrimaryTranslation: "bad", CanonicalPronunciationText: "bank"}}
+	badConstruction.NewSenses = append(append([]NewSense(nil), base.NewSenses...), NewSense{Ref: "bad", Kind: KindExpression, CanonicalForm: "bank", NormalizedForm: "bank", SenseDiscriminator: "bad", PrimaryTranslation: "bad", CanonicalPronunciationText: "bank"})
 	badConstruction.Constructions = []Construction{{Kind: KindExpression, Role: "contiguous_construction", NewSenseRef: "bad", ShadowText: "bad", TokenIDs: []string{"b0:t0"}, Spans: []SpanRef{{BlockIndex: 0, SourceText: "bank", Occurrence: 0}}}}
 	// A construction with two references is not a legal provider identity.
 	badConstruction.Constructions[0].SemanticSenseID = "candidate"
@@ -242,9 +256,9 @@ func TestValidateResponseRejectsDiscontinuousSingleRunAndCrossSentenceMembers(t 
 			},
 		}},
 	}
-	for _, token := range input.Tokens {
-		response.Tokens = append(response.Tokens, TokenResult{TokenID: token.ID, Classification: "unchanged", Kind: KindWord, ConfidenceMilli: 1000})
-	}
+	fillSenses, fillTokens := glossedTokens(input, "gloss")
+	response.Tokens = fillTokens
+	response.NewSenses = append(response.NewSenses, fillSenses...)
 	if _, err := ValidateResponse(input, response); err != nil {
 		t.Fatalf("valid discontinuous construction rejected: %v", err)
 	}
@@ -277,9 +291,9 @@ func TestValidateResponseRejectsDiscontinuousSingleRunAndCrossSentenceMembers(t 
 		crossSentenceInput.Sentences = append(crossSentenceInput.Sentences, ResolvedSentence{Index: index, Span: span})
 	}
 	cross := Response{Version: AnalysisContractVersion}
-	for _, token := range crossSentenceInput.Tokens {
-		cross.Tokens = append(cross.Tokens, TokenResult{TokenID: token.ID, Classification: "unchanged", Kind: KindWord, ConfidenceMilli: 1000})
-	}
+	crossSenses, crossTokens := glossedTokens(crossSentenceInput, "gloss")
+	cross.Tokens = crossTokens
+	cross.NewSenses = append(cross.NewSenses, crossSenses...)
 	cross.NewSenses = []NewSense{{
 		Ref: "give-up", Kind: KindExpression, CanonicalForm: "opgeven", NormalizedForm: "opgeven",
 		SenseDiscriminator: "resign", PrimaryTranslation: "give up",
@@ -301,13 +315,12 @@ func TestValidateResponseRejectsDiscontinuousSingleRunAndCrossSentenceMembers(t 
 func TestValidateResponseRejectsContiguousSplitRuns(t *testing.T) {
 	input := anchoredFixture(t, "Hij loopt snel.")
 	response := Response{Version: AnalysisContractVersion}
-	for _, token := range input.Tokens {
-		response.Tokens = append(response.Tokens, TokenResult{TokenID: token.ID, Classification: "unchanged", Kind: KindWord, ConfidenceMilli: 1000})
-	}
-	response.NewSenses = []NewSense{{
+	runSenses, runTokens := glossedTokens(input, "gloss")
+	response.Tokens = runTokens
+	response.NewSenses = append(runSenses, NewSense{
 		Ref: "run-fast", Kind: KindExpression, CanonicalForm: "snel lopen", NormalizedForm: "snel lopen",
 		SenseDiscriminator: "speed", PrimaryTranslation: "run fast",
-	}}
+	})
 	// Members Hij and snel are not adjacent: loopt sits between them, so a
 	// contiguous construction may never list them together.
 	response.Constructions = []Construction{{
@@ -324,9 +337,9 @@ func TestValidateResponseRejectsContiguousSplitRuns(t *testing.T) {
 func TestValidateResponseRejectsAnchorGapsAndOverlaps(t *testing.T) {
 	input := anchoredFixture(t, "Een bank.")
 	base := Response{Version: AnalysisContractVersion}
-	for _, token := range input.Tokens {
-		base.Tokens = append(base.Tokens, TokenResult{TokenID: token.ID, Classification: "unchanged", Kind: KindWord, ConfidenceMilli: 1000})
-	}
+	baseSenses, baseTokens := glossedTokens(input, "gloss")
+	base.Tokens = baseTokens
+	base.NewSenses = baseSenses
 	// Dropping the anchor that covers the second token makes it uncovered.
 	partial := input
 	partial.Sentences = partial.Sentences[:0]

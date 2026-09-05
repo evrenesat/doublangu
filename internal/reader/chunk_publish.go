@@ -194,28 +194,24 @@ func persistAnalysisChunkTx(ctx context.Context, tx *sql.Tx, id library.ULID, bl
 		if token.BlockIndex != blockIndex {
 			continue
 		}
-		// Deliberately untranslated tokens never store a subtitle: their only
-		// legal shadow_text is a copy of the Dutch source, which is not a
-		// translation and must not surface as one.
-		authored := resolved.Result.ShadowText
-		if resolved.Result.Classification == "unchanged" {
-			authored = ""
-		}
-		entry := blockToken{token: token, result: resolved.Result, occID: library.NewULID().String(), occPolicy: ShadowNone}
+		// Validation guarantees every word references a sense and carries a
+		// real English gloss, so the authored subtitle is always safe to
+		// store; construction members keep theirs under the
+		// persistent-visible display policy.
+		entry := blockToken{token: token, result: resolved.Result, occID: library.NewULID().String(), occPolicy: ShadowNone, authored: resolved.Result.ShadowText}
 		sense, err := resolveSense(resolved.Result.SemanticSenseID, resolved.Result.NewSenseRef, resolved.Result.Kind)
 		if err != nil {
 			return &Error{Op: op, Kind: KindValidation, Err: err}
 		}
 		entry.sense = sense
 		entry.sentence = sentenceForSpanTx(sentenceByBlock, semantics.ResolvedSpan{BlockIndex: token.BlockIndex, StartUTF16: token.StartUTF16, EndUTF16: token.EndUTF16, SourceText: token.SourceText})
-		effective := authored
+		effective := entry.authored
 		if effective == "" && sense != nil {
 			effective = sense.PrimaryTranslation
 		}
 		if effective != "" {
 			entry.occPolicy = ShadowToken
 		}
-		entry.authored = authored
 		tokens = append(tokens, entry)
 	}
 	occurrenceIDByTokenID := make(map[string]string, len(tokens))

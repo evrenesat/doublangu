@@ -1146,15 +1146,11 @@ func (s *Store) PersistAnalysis(ctx context.Context, id library.ULID, prepared s
 			if err != nil {
 				return &Error{Op: "persist analysis", Kind: KindValidation, Err: err}
 			}
-			// Every word keeps its authored subtitle, including construction
-			// members and visible identity labels; unchanged tokens never
-			// store a Dutch source copy as a subtitle.
-			authored := result.ShadowText
-			if result.Classification == "unchanged" {
-				authored = ""
-			}
+			// Validation guarantees every word carries a real English gloss;
+			// construction members and identity labels keep theirs under the
+			// persistent-visible display policy.
 			shadowPolicy := ShadowNone
-			if authored != "" {
+			if result.ShadowText != "" {
 				shadowPolicy = ShadowToken
 			}
 			occurrenceID := library.NewULID().String()
@@ -1166,7 +1162,7 @@ func (s *Store) PersistAnalysis(ctx context.Context, id library.ULID, prepared s
 			if sense != nil {
 				senseID = sense.ID.String()
 			}
-			if _, err := tx.ExecContext(ctx, `INSERT INTO article_occurrence (id, article_block_id, article_sentence_id, semantic_sense_id, kind, role, shadow_policy, shadow_text, canonical_pronunciation_text, context_pronunciation_key, confidence_milli) VALUES (?, ?, ?, ?, ?, 'token', ?, ?, ?, ?, ?)`, occurrenceID, blockByIndex[token.Token.BlockIndex].id.String(), sentenceID, senseID, result.Kind, shadowPolicy, authored, result.CanonicalPronunciation, result.ContextPronunciationKey, result.ConfidenceMilli); err != nil {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO article_occurrence (id, article_block_id, article_sentence_id, semantic_sense_id, kind, role, shadow_policy, shadow_text, canonical_pronunciation_text, context_pronunciation_key, confidence_milli) VALUES (?, ?, ?, ?, ?, 'token', ?, ?, ?, ?, ?)`, occurrenceID, blockByIndex[token.Token.BlockIndex].id.String(), sentenceID, senseID, result.Kind, shadowPolicy, result.ShadowText, result.CanonicalPronunciation, result.ContextPronunciationKey, result.ConfidenceMilli); err != nil {
 				return err
 			}
 			if _, err := tx.ExecContext(ctx, `INSERT INTO article_occurrence_span (id, article_occurrence_id, span_index, start_utf16, end_utf16, source_text) VALUES (?, ?, 0, ?, ?, ?)`, library.NewULID().String(), occurrenceID, token.Token.StartUTF16, token.Token.EndUTF16, token.Token.SourceText); err != nil {

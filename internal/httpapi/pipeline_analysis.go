@@ -801,8 +801,8 @@ func sanitizedProviderError(err error) string {
 
 // runProviderFixture runs one stage against the fixed safe fixture source
 // "De kat zit op de mat." with server-prepared tokens/sentences. For the
-// translation stage the checked-in server-built linguistic artifact (all
-// unchanged tokens) is used.
+// translation stage the checked-in server-built glossed linguistic artifact
+// is used.
 func runProviderFixture(ctx context.Context, provider annotator.Provider, input providerTestRequest) error {
 	canonicalOptions, err := canonicalizeForProvider(provider.Descriptor().Type, input.Options)
 	if err != nil {
@@ -871,12 +871,26 @@ func fixtureChunk(ctx context.Context) (semantics.PreparedChunk, error) {
 	return semantics.PrepareChunk(input, 0, nil)
 }
 
-// fixtureLinguistic builds the checked-in unchanged-token linguistic artifact
-// for the fixed conformance source.
+// fixtureLinguistic builds the checked-in glossed linguistic artifact for the
+// fixed conformance source: every word references a server-authored sense,
+// exactly as the linguistic stage must now produce.
 func fixtureLinguistic(chunk semantics.PreparedChunk) (*semantics.ValidatedLinguistic, error) {
+	glosses := []string{"The", "cat", "sits", "on", "the", "mat"}
 	artifact := semantics.LinguisticArtifact{Version: pipeline.LinguisticContractVersion}
-	for _, token := range chunk.Tokens {
-		artifact.Tokens = append(artifact.Tokens, semantics.LinguisticTokenResult{TokenID: token.ID, Classification: "unchanged", Kind: semantics.KindWord, ConfidenceMilli: 1000})
+	for index, token := range chunk.Tokens {
+		if index >= len(glosses) {
+			return nil, fmt.Errorf("conformance fixture has no gloss for token %q", token.SourceText)
+		}
+		ref := fmt.Sprintf("w%d", index)
+		artifact.Tokens = append(artifact.Tokens, semantics.LinguisticTokenResult{
+			TokenID: token.ID, Classification: "word", Kind: semantics.KindWord,
+			NewSenseRef: ref, ConfidenceMilli: 1000,
+		})
+		artifact.NewSenses = append(artifact.NewSenses, semantics.LinguisticNewSense{
+			Ref: ref, Kind: semantics.KindWord, CanonicalForm: token.SourceText,
+			NormalizedForm: token.SourceText, Lemma: token.SourceText,
+			SenseDiscriminator: glosses[index],
+		})
 	}
 	return semantics.ValidateLinguistic(chunk, artifact)
 }

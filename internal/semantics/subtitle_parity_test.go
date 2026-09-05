@@ -529,13 +529,23 @@ func TestTranslationStageAcceptsSameSpellingSenses(t *testing.T) {
 				Lemma: canonical, SenseDiscriminator: discriminator, CanonicalPronunciationText: canonical,
 			}},
 		}
-		for _, token := range chunk.Tokens {
-			result := LinguisticTokenResult{TokenID: token.ID, Classification: "unchanged", Kind: KindWord, ConfidenceMilli: 1000}
+		// Every ordinary word references a sense; the other tokens get filler
+		// senses so the artifact satisfies the always-glossed contract.
+		fillSenses, fillTokens := glossedLinguisticTokens(chunk)
+		senseByToken := make(map[string]string, len(chunk.Tokens))
+		for index, token := range chunk.Tokens {
 			if token.NormalizedForm == canonical {
-				result.Classification = "lexical"
-				result.NewSenseRef = "sense"
+				senseByToken[token.ID] = "sense"
+			} else {
+				senseByToken[token.ID] = fillTokens[index].NewSenseRef
 			}
-			artifact.Tokens = append(artifact.Tokens, result)
+		}
+		artifact.NewSenses = append(artifact.NewSenses, fillSenses...)
+		for _, token := range chunk.Tokens {
+			artifact.Tokens = append(artifact.Tokens, LinguisticTokenResult{
+				TokenID: token.ID, Classification: "word", Kind: KindWord,
+				NewSenseRef: senseByToken[token.ID], ConfidenceMilli: 1000,
+			})
 		}
 		validated, err := ValidateLinguistic(chunk, artifact)
 		if err != nil {
@@ -546,10 +556,15 @@ func TestTranslationStageAcceptsSameSpellingSenses(t *testing.T) {
 			item := TranslationTokenResult{TokenID: token.TokenID}
 			if token.NewSenseRef == "sense" {
 				item.ShadowText = shadow
+			} else {
+				item.ShadowText = "gloss"
 			}
 			translation.Tokens = append(translation.Tokens, item)
 		}
 		translation.NewSenses = []TranslationNewSense{{Ref: "sense", PrimaryTranslation: primary}}
+		for _, fill := range fillSenses {
+			translation.NewSenses = append(translation.NewSenses, TranslationNewSense{Ref: fill.Ref, PrimaryTranslation: "gloss"})
+		}
 		return chunk, validated, translation
 	}
 

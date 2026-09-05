@@ -30,7 +30,7 @@ const (
 	// v3 supplies stable server-owned source sentence anchors in every
 	// prepared chunk; caches from earlier contracts never satisfy v3 work.
 	AnalysisContractVersion = "reader.analysis.v3"
-	PromptVersion           = "reader-analysis-prompt.v7"
+	PromptVersion           = "reader-analysis-prompt.v8"
 	ProviderID              = "codex-app-server"
 	MaxAlternatives         = 3
 	MaxShadowScalars        = 160
@@ -676,7 +676,15 @@ func validateTokenResult(result TokenResult, token Token, sourceLanguage, target
 	if result.SemanticSenseID != "" && result.NewSenseRef != "" {
 		return errors.New("semantic_sense_id and new_sense_ref are mutually exclusive")
 	}
-	special := result.Classification == "proper_name" || result.Classification == "number" || result.Classification == "acronym" || result.Classification == "unchanged"
+	// Every ordinary word must reference a semantic sense and carry its own
+	// English gloss. Same-spelling senses (plan, financial bank, in) make a
+	// deliberate "unchanged" classification unnecessary: a word that reads the
+	// same in English still gets its sense and same-spelling subtitle, so
+	// unchanged can never bypass a missing gloss.
+	if result.Classification == "unchanged" {
+		return errors.New("unchanged is not accepted for a word: reference a semantic sense and carry an English gloss")
+	}
+	special := result.Classification == "proper_name" || result.Classification == "number" || result.Classification == "acronym"
 	if result.SemanticSenseID == "" && result.NewSenseRef == "" && !special {
 		return errors.New("a semantic sense reference is required")
 	}
@@ -700,18 +708,6 @@ func validateTokenResult(result TokenResult, token Token, sourceLanguage, target
 		}
 	}
 	switch result.Classification {
-	case "unchanged":
-		// Deliberately untranslated: a real English translation is invalid,
-		// and so is a sense reference (a sense would imply a translation).
-		if result.SemanticSenseID != "" || result.NewSenseRef != "" {
-			return errors.New("an unchanged token must not reference a semantic sense")
-		}
-		if shadowErr != nil {
-			return shadowErr
-		}
-		if sourceErr == nil && normalizedShadow != "" && normalizedShadow != normalizedSource {
-			return errors.New("an unchanged token shadow_text must be empty or match the source text")
-		}
 	case "proper_name", "number", "acronym":
 		// These may omit a subtitle, display their visible identity label (a
 		// name displays its name, a number its value), or carry a real

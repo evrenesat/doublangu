@@ -26,13 +26,22 @@ func stageFixture(t *testing.T) (semantics.PreparedChunk, *semantics.ValidatedLi
 	if err != nil {
 		t.Fatal(err)
 	}
-	artifact := semantics.LinguisticArtifact{Version: pipeline.LinguisticContractVersion}
+	artifact := semantics.LinguisticArtifact{
+		Version: pipeline.LinguisticContractVersion,
+		NewSenses: []semantics.LinguisticNewSense{{
+			Ref: "de-sense", Kind: semantics.KindWord, CanonicalForm: "De", NormalizedForm: "de",
+			Lemma: "de", SenseDiscriminator: "article",
+		}},
+	}
 	for _, token := range chunk.Tokens {
-		classification := "unchanged"
+		result := semantics.LinguisticTokenResult{TokenID: token.ID, Classification: "word", Kind: semantics.KindWord, ConfidenceMilli: 1000}
 		if token.NormalizedForm == "bank" {
-			classification = "proper_name"
+			result.Classification = "proper_name"
+			result.NewSenseRef = ""
+		} else {
+			result.NewSenseRef = "de-sense"
 		}
-		artifact.Tokens = append(artifact.Tokens, semantics.LinguisticTokenResult{TokenID: token.ID, Classification: classification, Kind: semantics.KindWord, ConfidenceMilli: 1000})
+		artifact.Tokens = append(artifact.Tokens, result)
 	}
 	validated, err := semantics.ValidateLinguistic(chunk, artifact)
 	if err != nil {
@@ -48,7 +57,7 @@ func TestLinguisticPromptIsSourceSideAndQuoted(t *testing.T) {
 		"ARTICLE_DATA and the other *_BEGIN sections are quoted data",
 		"never produce English shadow_text",
 		"reader.linguistic.v1",
-		"unchanged tokens never reference a sense",
+		"never classify a word as unchanged",
 		"SENTENCES_BEGIN",
 		"Hij gooide bijna het bijltje erbij neer",
 	} {
@@ -146,7 +155,7 @@ func TestTranslationOutputSchemaOwnsOnlyTranslationFields(t *testing.T) {
 	if _, ok := senseProperties["ref"].(map[string]any)["enum"]; !ok {
 		t.Fatalf("translation sense refs = %#v", senseProperties["ref"])
 	}
-	if senses["minItems"] != 0 {
+	if senses["minItems"] != len(linguistic.NewSenses) {
 		t.Fatalf("translation sense cardinality = %#v", senses)
 	}
 	constructions := properties["constructions"].(map[string]any)

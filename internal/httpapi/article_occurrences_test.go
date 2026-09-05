@@ -58,7 +58,7 @@ func TestArticleHTTPResponseCarriesWordGlossesAndMembers(t *testing.T) {
 			{
 				Ref: "give-up", Kind: semantics.KindExpression, CanonicalForm: "opgeven",
 				NormalizedForm: "opgeven", SenseDiscriminator: "abandon", PrimaryTranslation: "give up",
-				MeaningNote: "\"opgeven\" means \"give up\" here: the connected words form one expression, and each member keeps its own literal subtitle.",
+				MeaningNote: "Opgeven splits around the object: gaf (gave) … op (up). Here he did not give the plan up.",
 				PartsNote:   "gaf: gave · op: up",
 			},
 		},

@@ -184,7 +184,7 @@ func TestPersistAnalysisMarksReplacedSentencesAsLegacy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	response := validUnchangedResponse(prepared)
+	response := validGlossedResponse(prepared)
 	validated, err := semantics.ValidateResponse(prepared, response)
 	if err != nil {
 		t.Fatal(err)

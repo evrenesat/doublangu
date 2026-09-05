@@ -259,8 +259,9 @@ const (
 	// SubtitleNone means the occurrence's effective subtitle is visible.
 	SubtitleNone SubtitleSuppressionReason = "none"
 	// SubtitleSpecialToken marks tokens that have no effective subtitle
-	// (deliberately unchanged tokens, and special tokens without an authored
-	// identity label or translation). Only such tokens produce it.
+	// (special tokens without an authored identity label or translation, and
+	// legacy rows stored before ordinary-word glosses were required). Only
+	// such tokens produce it.
 	SubtitleSpecialToken SubtitleSuppressionReason = "special_token"
 	// SubtitleContiguousGroupMember is a legacy value the current server never
 	// produces: exact lexical members of a contiguous construction keep their
