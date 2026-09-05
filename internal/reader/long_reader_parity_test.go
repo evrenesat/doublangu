@@ -121,19 +121,25 @@ func authorLongBlockResponse(t *testing.T, chunk semantics.PreparedChunk, blockI
 	}
 	for constructionIndex, construction := range fixture.Constructions {
 		ref := fmt.Sprintf("c%d", constructionIndex)
-		response.NewSenses = append(response.NewSenses, semantics.NewSense{
-			Ref: ref, Kind: semantics.Kind(construction.Kind), CanonicalForm: construction.Label,
-			NormalizedForm: construction.Label, Lemma: construction.Label,
-			SenseDiscriminator: construction.Meaning, PrimaryTranslation: construction.Meaning,
-		})
 		memberIDs := make([]string, 0, len(construction.Members))
+		memberParts := make([]string, 0, len(construction.Members))
 		for _, member := range construction.Members {
 			id, ok := tokenByOffset[[2]int{member.Start, member.End}]
 			if !ok {
 				t.Fatalf("block %d construction %q member %q has no token", blockIndex, construction.Label, member.Source)
 			}
 			memberIDs = append(memberIDs, id)
+			// The popover's parts note lists each member with its literal gloss.
+			memberParts = append(memberParts, fmt.Sprintf("%s: %s", member.Source, glossByToken[id]))
 		}
+		meaningNote := fmt.Sprintf("%q means %q here: the connected words form one expression, and each member keeps its own literal subtitle.", construction.Label, construction.Meaning)
+		response.NewSenses = append(response.NewSenses, semantics.NewSense{
+			Ref: ref, Kind: semantics.Kind(construction.Kind), CanonicalForm: construction.Label,
+			NormalizedForm: construction.Label, Lemma: construction.Label,
+			SenseDiscriminator: construction.Meaning, PrimaryTranslation: construction.Meaning,
+			MeaningNote: meaningNote,
+			PartsNote:   strings.Join(memberParts, " · "),
+		})
 		spans := make([]semantics.SpanRef, 0, len(construction.Spans))
 		for _, span := range construction.Spans {
 			spans = append(spans, semantics.SpanRef{
@@ -284,6 +290,11 @@ func assertLongFixtureArticle(t *testing.T, articles *Store, ctx context.Context
 				constructionsSeen++
 				if strings.TrimSpace(occurrence.ShadowText) == "" || len(occurrence.MemberOccurrenceIDs) == 0 {
 					t.Fatalf("block %d construction %q lost its meaning or members: %+v", blockIndex, occurrence.ShadowText, occurrence)
+				}
+				// The popover's meaning and member-parts sections must have
+				// real authored explanations, not blank notes.
+				if occurrence.Sense == nil || strings.TrimSpace(occurrence.Sense.MeaningNote) == "" || strings.TrimSpace(occurrence.Sense.PartsNote) == "" {
+					t.Fatalf("block %d construction %q lost its meaning/parts notes: %+v", blockIndex, occurrence.ShadowText, occurrence.Sense)
 				}
 			}
 		}

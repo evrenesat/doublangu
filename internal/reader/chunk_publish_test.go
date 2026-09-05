@@ -635,10 +635,13 @@ func authorParityResponse(t *testing.T, articles *Store, ctx context.Context, ar
 }
 
 // TestPersistAnalysisChunkKeepsWordSubtitlesVisible proves the
-// persistent-visible display policy end to end: every word's authored subtitle
-// survives publication and rereading, contiguous members keep their own
-// glosses, a learned sense stays visible, unchanged tokens never store a
-// source copy, identity labels survive, and exact membership is retained.
+// persistent-visible display policy end to end: every word — including
+// function words — carries its own authored gloss through publication and
+// rereading, contiguous members keep their own glosses, constructions keep
+// their meaning and member-parts notes, a learned sense stays visible,
+// identity labels survive, and exact membership is retained. (Deliberately
+// unchanged tokens remain covered by
+// TestUnchangedTokensSuppressAndPronunciationsFollowBlocks.)
 func TestPersistAnalysisChunkKeepsWordSubtitlesVisible(t *testing.T) {
 	db, err := store.OpenTest()
 	if err != nil {
@@ -666,21 +669,27 @@ func TestPersistAnalysisChunkKeepsWordSubtitlesVisible(t *testing.T) {
 		}
 	}
 
-	// Block 0: split gaf … op with individual glosses and a same-spelling plan.
+	// Block 0: split gaf … op with individual glosses for every word,
+	// function words included, and a same-spelling plan.
 	block0 := authorParityResponse(t, articles, ctx, article.ID, 0, []semantics.NewSense{
+		wordSense("he", "hij", "He"),
 		wordSense("gave", "geven", "gave"),
+		wordSense("the", "het", "the"),
 		wordSense("plan", "plan", "plan"),
+		wordSense("not", "niet", "not"),
 		wordSense("up", "op", "up"),
 		{
 			Ref: "give-up", Kind: semantics.KindExpression, CanonicalForm: "opgeven",
 			NormalizedForm: "opgeven", SenseDiscriminator: "abandon", PrimaryTranslation: "give up",
+			MeaningNote: "\"opgeven\" means \"give up\" here: the connected words form one expression, and each member keeps its own literal subtitle.",
+			PartsNote:   "gaf: gave · op: up",
 		},
 	}, map[string]parityTokenSpec{
-		"Hij":  {classification: "unchanged"},
+		"Hij":  {classification: "word", senseRef: "he", shadow: "He"},
 		"gaf":  {classification: "word", senseRef: "gave", shadow: "gave"},
-		"het":  {classification: "unchanged"},
+		"het":  {classification: "word", senseRef: "the", shadow: "the"},
 		"plan": {classification: "word", senseRef: "plan", shadow: "plan"},
-		"niet": {classification: "unchanged"},
+		"niet": {classification: "word", senseRef: "not", shadow: "not"},
 		"op":   {classification: "word", senseRef: "up", shadow: "up"},
 	}, &parityConstructionSpec{
 		kind: semantics.KindExpression, role: "discontinuous_construction",
@@ -701,6 +710,8 @@ func TestPersistAnalysisChunkKeepsWordSubtitlesVisible(t *testing.T) {
 			Ref: "couch-sit", Kind: semantics.KindIdiom, CanonicalForm: "op de bank zitten",
 			NormalizedForm: "op de bank zitten", SenseDiscriminator: "sit on the couch",
 			PrimaryTranslation: "sit on the couch",
+			MeaningNote:        "\"op de bank zitten\" means \"sit on the couch\" here: the connected words form one expression, and each member keeps its own literal subtitle.",
+			PartsNote:          "op: on · de: the · bank: sofa · zitten: sit",
 		},
 	}, map[string]parityTokenSpec{
 		"Noor":   {classification: "proper_name", shadow: "Noor"},
@@ -726,7 +737,6 @@ func TestPersistAnalysisChunkKeepsWordSubtitlesVisible(t *testing.T) {
 		if len(loaded.Sentences) != 2 || len(loaded.Blocks[0].Sentences) != 1 || len(loaded.Blocks[1].Sentences) != 1 {
 			t.Fatalf("%s: sentences = %d/%d/%d, want 2/1/1", stage, len(loaded.Sentences), len(loaded.Blocks[0].Sentences), len(loaded.Blocks[1].Sentences))
 		}
-		unchanged := map[string]bool{"Hij": true, "het": true, "niet": true}
 		var bankOccurrence *ArticleOccurrence
 		memberEntries := 0
 		tokenOwners := map[string]int{}
@@ -738,18 +748,19 @@ func TestPersistAnalysisChunkKeepsWordSubtitlesVisible(t *testing.T) {
 					for _, memberID := range occurrence.MemberOccurrenceIDs {
 						tokenOwners[memberID]++
 					}
+					// Construction meaning and member-parts notes must survive
+					// publication and rereading so the popover can show them.
+					if occurrence.Sense == nil || occurrence.Sense.MeaningNote == "" || occurrence.Sense.PartsNote == "" {
+						t.Fatalf("%s: construction %q lost its meaning/parts notes: %+v", stage, occurrence.ShadowText, occurrence.Sense)
+					}
 					continue
 				}
 				source := occurrence.Spans[0].SourceText
 				if source == "bank" {
 					bankOccurrence = occurrence
 				}
-				if unchanged[source] {
-					if occurrence.ShowShadow || occurrence.SubtitleSuppressionReason != SubtitleSpecialToken || occurrence.ShadowText != "" {
-						t.Fatalf("%s: unchanged token %q display = %+v", stage, source, occurrence)
-					}
-					continue
-				}
+				// Every ordinary word — function words included — keeps a
+				// visible individual gloss.
 				if !occurrence.ShowShadow || occurrence.SubtitleSuppressionReason != SubtitleNone || occurrence.ShadowText == "" {
 					t.Fatalf("%s: token %q lost its visible subtitle: %+v", stage, source, occurrence)
 				}
@@ -757,6 +768,9 @@ func TestPersistAnalysisChunkKeepsWordSubtitlesVisible(t *testing.T) {
 				// storage and rereading.
 				if source == "plan" && occurrence.ShadowText != "plan" {
 					t.Fatalf("%s: plan subtitle = %q", stage, occurrence.ShadowText)
+				}
+				if source == "Hij" && occurrence.ShadowText != "He" {
+					t.Fatalf("%s: Hij subtitle = %q", stage, occurrence.ShadowText)
 				}
 				if source == "Noor" && (occurrence.ShadowText != "Noor" || !occurrence.ShowShadow) {
 					t.Fatalf("%s: Noor identity label = %+v", stage, occurrence)

@@ -1,5 +1,36 @@
 # Development Log
 
+## 2026-09-05 — Review fixes: function-word glosses and construction notes
+
+Review of `f2712bd` found two gaps, both fixed on
+`codex/reader-parity-review-fixes`:
+
+1. The chunk-parity and HTTP fixtures still classified *Hij*, *het*, and
+   *niet* as `unchanged` with empty subtitles, accepting dots instead of
+   meanings for ordinary words. Those fixtures now gloss every word through
+   real senses (He / the / not / …) and assert visible subtitles for all of
+   them. Deliberately-`unchanged` display behavior remains covered by
+   `TestUnchangedTokensSuppressAndPronunciationsFollowBlocks`, which keeps that
+   path as its explicit subject.
+2. The seeded long article's constructions carried only the short translation:
+   `EnsureSenseTx` stores `meaning_note`/`parts_note`, but the fixture never
+   supplied them, so all 13 saved popovers hid their Meaning and Parts
+   sections. The long-fixture authoring now derives a Meaning note (label +
+   meaning + how to read the members) and a Parts note (`vroeg: asked · zich:
+   herself · af: off`) per construction, and both the store round-trip and
+   HTTP tests assert the notes survive publication. Re-seeded the isolated
+   local database (senses are shared and never rewritten, so the old note-less
+   sense rows were cleared before reseeding); the new saved article is
+   `/reader/01M1SB7JE9P2V9JBTK151T9ZV8`.
+
+Verification: focused Go tests, race tests, and the three affected tests pass;
+`git diff --check` clean. Browser pass on the real saved article (previous
+review pass was blocked by a 502 from the reviewer's session proxy): 871/871
+subtitles with zero `·` placeholders, function words show real meanings
+(de→the, het→the, om→to, ze→she), and the construction popover's Explore view
+renders Meaning ("zich afvragen" means "wonder" here…) and Parts
+(vroeg: asked · zich: herself · af: off).
+
 ## 2026-09-05 — Reader demo parity: real analysis data path implemented
 
 Implemented `plans/reader-demo-parity-handoff.md` §6 on `codex/reader-demo-design`
