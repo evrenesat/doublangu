@@ -131,7 +131,7 @@ test('paragraphs appear progressively without reload or overlapping subtitles', 
 	// both subtitles are laid out without intersecting boxes.
 	publishedSecond = true;
 	await expect(page.getByText('1 complete', { exact: false })).toHaveCount(0);
-	await expect(page.getByText('Ready', { exact: true }).first()).toBeVisible({ timeout: 5000 });
+	await expect(page.locator('.article-options summary')).toHaveText('Subtitles ready · Article options', { timeout: 5000 });
 	const boxes = await subtitleBoxes(page);
 	expect(boxes).toHaveLength(2);
 	for (let left = 0; left < boxes.length; left += 1) {

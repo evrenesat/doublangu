@@ -1,7 +1,6 @@
 <script lang="ts">
 	import type { ArticleBlock, ArticleOccurrence, ArticleSentence } from '$lib/api/client';
 	import { buildSemanticRuns, type SemanticRun } from './semanticRuns';
-	import ConstructionOverlay from './ConstructionOverlay.svelte';
 	import Sentence from './Sentence.svelte';
 	import TextOccurrence from './TextOccurrence.svelte';
 
@@ -16,6 +15,7 @@
 		onLeaveAudio: (key: string) => void;
 		onConstructionHover: (ids: string[]) => void;
 		onFocusSentence: (sentenceID: string, anchor: HTMLElement) => void;
+		onPlaySentence?: (sentence: ArticleSentence) => void;
 	};
 
 	let {
@@ -28,14 +28,14 @@
 		onHoverAudio,
 		onLeaveAudio,
 		onConstructionHover,
-		onFocusSentence
+		onFocusSentence,
+		onPlaySentence
 	}: Props = $props();
 
 	const sentences = $derived((block.sentences ?? []).slice().sort((left, right) => left.sentence_index - right.sentence_index));
-	const constructions = $derived((block.occurrences ?? []).filter((occurrence) => occurrence.role !== 'token'));
 	const fallbackRuns = $derived.by((): SemanticRun[] => {
 		try {
-			return buildSemanticRuns(block);
+			return buildSemanticRuns(block, true);
 		} catch {
 			return [{ kind: 'plain', text: block.source_text }];
 		}
@@ -107,23 +107,23 @@
 					onLeaveAudio={onLeaveAudio}
 					onConstructionHover={onConstructionHover}
 					onFocus={onFocusSentence}
+					onPlay={onPlaySentence}
 				/>
 			{/each}
 			{@const last = ordered[ordered.length - 1]}
 			{#if last && last.end_utf16 < block.source_text.length}{block.source_text.slice(last.end_utf16)}{/if}
 		{/if}
-			<ConstructionOverlay constructions={constructions} activeIDs={activeConstructionIDs} />
 	</p>
 </div>
 
 <style>
-	.paragraph-zone { margin: 0 0 2rem; }
+	.paragraph-zone { margin: 0 0 1rem; }
 	.reader-paragraph {
-		max-width: 42rem;
+		max-width: none;
 		margin: 0;
 		font-size: clamp(1.08rem, 1rem + 0.22vw, 1.23rem);
 		line-height: 2.18;
-		white-space: pre-wrap;
+		white-space: normal;
 		word-break: normal;
 		transition: opacity 120ms ease;
 	}

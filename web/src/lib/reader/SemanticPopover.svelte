@@ -13,9 +13,10 @@
 		onHear: () => void;
 		hearReady?: boolean;
 		hearPending?: boolean;
+		learningEnabled?: boolean;
 	};
 
-	let { occurrence, anchor, feedback, feedbackIsError, onEnter, onLeave, onClose, onLearningStatus, onHear, hearReady, hearPending }: Props = $props();
+	let { occurrence, anchor, feedback, feedbackIsError, onEnter, onLeave, onClose, onLearningStatus, onHear, hearReady, hearPending, learningEnabled = true }: Props = $props();
 	let popover: HTMLDivElement | null = $state(null);
 	let bottomSheet = $state(false);
 	let explored = $state(false);
@@ -119,7 +120,7 @@
 			<span class="audio-state">Audio preparing…</span>
 		{/if}
 		{#if sense}
-			<button type="button" class="state-action" disabled={saving} onclick={() => void toggleLearning()}>
+			<button type="button" class="state-action" disabled={saving || !learningEnabled} title={learningEnabled ? undefined : 'Learning is available on saved articles'} onclick={() => void toggleLearning()}>
 				{occurrence.learning_state?.status === 'learned' ? 'Mark unlearned' : 'Mark learned'}
 			</button>
 		{/if}

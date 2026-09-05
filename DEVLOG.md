@@ -1,5 +1,86 @@
 # Development Log
 
+## 2026-09-05 — Demo-led reader, realistic mobile sample, and local handoff
+
+1. Recovered the original interactive reader demo from the referenced design
+   discussion and applied its serif/interlinear/card/connector approach to the
+   real Svelte reader. The latest owner request overrides the old demo's reflow:
+   layout always reserves full-size geometry; focus changes only transform and
+   color. Both enlargement (0.94 → 1) and constant-size highlight-only remain
+   available for the owner's comparison. No focus scroll compensation remains.
+2. Every lexical token keeps its own available subtitle, including learned
+   senses and idiom members. Construction meaning is additional; exact member
+   IDs drive highlights and SVG brackets/dashed connections, with numbered
+   margin continuations for wrapped groups. Punctuation stays attached. Missing
+   literal glosses in older saved analysis are not invented by the frontend;
+   that remaining data-path work is specified in the handoff.
+3. Added Ink/Paper/Sepia/Contrast reading palettes and quieter page chrome.
+   Mobile uses smaller gutters and spacing, removes repeated labels/unavailable
+   audio rows, and moves appearance options behind Aa while keeping focus mode
+   visible. Resting Dutch stays >=20px and subtitles >=12px; all four foreground
+   categories meet 4.5:1 on both page and focused surfaces.
+4. Added `tools/local-reader.mjs`: real Go API on loopback 8097, actual Svelte
+   route on 5177, separate SQLite/owner/media in ignored `data/reader-design`,
+   analysis disabled, no remote provider/worker configuration. Explicitly
+   enabled development middleware supplies two read-only sample responses:
+   66 words/six construction examples and an original 871-word article with
+   12 multi-sentence paragraphs and 48 sentences. No fake successful writes or
+   fake audio. Production bundles omit sample prose and middleware.
+5. The Codex in-app browser exercised the authenticated local route, both focus
+   modes, mobile layout, themes, multi-expression cards, and real word/expression
+   popovers. The launcher was stopped/restarted, ports were released, readiness
+   returned database OK, and local owner data/session remained usable. The app
+   is left running for owner reading/visual feedback, not presented as fully
+   integrated production analysis.
+6. Consolidated p100: exact previous dirty state is preserved at `5a5b794` on
+   `codex/p100-drift-preserved-20260905` and on the Mac recovery ref
+   `backup/p100-drift-20260905`. Already-published source fixes were not replayed;
+   four unique deployment-history entries were recovered above the older log,
+   with private endpoint details omitted from the publishable summary. p100
+   main was brought to the same clean `5b27e39` origin base. The active reader
+   design commits are transferred as Git history, not divergent file copies.
+7. Authored the decision-complete `plans/reader-demo-parity-handoff.md` for the
+   receiving implementer: literal token meanings through prompts/validation/
+   storage/API, same-spelling English translations, exact expression membership,
+   real saved-article delivery back to this local app, final owner review and
+   bounded course correction. No production deployment or public push occurred.
+
+Verification on the Mac:
+
+```sh
+go test ./internal/reader ./internal/semantics ./internal/httpapi
+go test -race ./internal/reader ./internal/semantics ./internal/httpapi
+npm --prefix web run validate:openapi
+npm --prefix web run generate:api
+git diff --exit-code -- web/src/lib/api/generated.ts
+npm --prefix web run check
+npm --prefix web run test:unit
+npm --prefix web run build
+npm --prefix web run test:e2e -- reader-design.spec.ts reader.spec.ts reader-progressive.spec.ts reader-preference.spec.ts
+npm --prefix web run test:e2e -- reader-design.spec.ts --repeat-each=3
+DOUBLANGU_TEST_CODEX_LIVE=1 go test ./internal/annotator -run '^TestLiveCodexAppServer$' -count=1 -v
+git diff --check
+```
+
+All above passed: 130 unit tests, 20 reader E2E tests, plus 15 repeated design
+cases. Browser assertions cover every word's unchanging offsets/sizes, every
+sentence card's top/height, and scroll position in both focus modes, including
+the long article's middle/end. At 375px the long body starts before 370px and
+contains >60 words per 1,000 vertical pixels. All 871 subtitles and exact source
+sentences survive 320/375/1360px without overlap or overflow. The saved preference
+test now awaits its successful PUT before reloading instead of racing the
+optimistic UI. Run E2E separately from Svelte generation/build tasks: concurrent
+checks can regenerate the dev server's files and interrupt a focus assertion.
+
+`make verify` passes its vet, network-reference, manifest, configuration, store,
+auth, HTTP API, Svelte, and unit stages, then fails the existing native plugin
+`TestIntegration_FullMatrix` with `host/plugin module graph differs`. The exact
+fingerprint command also fails in a clean ordinary clone of base `5b27e39`
+(`/private/tmp/doublangu-reader-clone.CeHx9g`), with no reader changes. A detached
+worktree of that base passes, so that alternative alone is not a representative
+baseline. `GOFLAGS=-buildvcs=false make verify` still fails the same comparison.
+No plugin code or comparator was changed to mask this checkout-sensitive issue.
+
 ## 2026-09-04 — Hostname-private continuous deployment
 
 - Added a deterministic root-path Linux/ARM64 release builder and a

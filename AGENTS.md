@@ -21,6 +21,12 @@ owner explicitly requests a commit.
   `npm --prefix web run generate:api` and verify the generated diff is empty.
 - Keep plan files read-only during implementation, except for the status line in
   `plans/article-hover-shadows-mvp.md` if that status must be updated.
+- The owner explicitly authorized the isolated Mac reader-design environment
+  described in README. Use `node tools/local-reader.mjs` for this UI iteration;
+  do not attach production databases, provider configuration, or Mac workers.
+  Keep the design branch synchronized with p100 at handoff, and preserve the
+  `codex/p100-drift-preserved-20260905` / `backup/p100-drift-20260905` recovery refs.
+  Do not run Svelte sync/build tasks concurrently with E2E tests in one checkout.
 
 ## Verification
 

@@ -8,6 +8,7 @@
 		speed: number;
 		followFocus: boolean;
 		loading: boolean;
+		readOnly?: boolean;
 		onPlay: () => void;
 		onPause: () => void;
 		onPrevious: () => void;
@@ -26,6 +27,7 @@
 		speed,
 		followFocus,
 		loading,
+		readOnly = false,
 		onPlay,
 		onPause,
 		onPrevious,
@@ -101,7 +103,7 @@
 		<div>
 			<strong>Article narration</strong>
 			<span class="player-status">
-				{#if loading}Loading clips…{:else if narration?.status === 'ready'}Ready{:else if narration?.status === 'partial'}Partly ready{:else if narration?.status === 'purged'}Cleared{:else if narration?.status === 'failed'}Generation failed{:else if hasReadyAudio}Preparing remaining clips…{:else}Waiting for the worker…{/if}
+				{#if readOnly}Audio is not included in this design sample{:else if loading}Loading clips…{:else if narration?.status === 'ready'}Ready{:else if narration?.status === 'partial'}Partly ready{:else if narration?.status === 'purged'}Cleared{:else if narration?.status === 'failed'}Generation failed{:else if hasReadyAudio}Preparing remaining clips…{:else}Waiting for the worker…{/if}
 			</span>
 		</div>
 		{#if narration?.reclaimable_bytes || narration?.size_bytes}<span class="storage">{formatBytes(narration.reclaimable_bytes || narration.size_bytes)} stored</span>{/if}
@@ -129,8 +131,8 @@
 	</div>
 
 	<div class="storage-controls">
-		<button type="button" onclick={onRegenerate} disabled={loading}>Regenerate narration</button>
-		<button type="button" onclick={() => void clear()} disabled={clearing || !narration || narration.sentence_count === 0}>Clear narration</button>
+		<button type="button" onclick={onRegenerate} disabled={loading || readOnly}>Regenerate narration</button>
+		<button type="button" onclick={() => void clear()} disabled={clearing || readOnly || !narration || narration.sentence_count === 0}>Clear narration</button>
 	</div>
 	{#if playbackError}<p class="player-error" role="alert">{playbackError}</p>{/if}
 	<audio bind:this={audio} onended={onEnded} onerror={() => (playbackError = 'This clip could not be played.')} preload="metadata" aria-hidden="true"></audio>

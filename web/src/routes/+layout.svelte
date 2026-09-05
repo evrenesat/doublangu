@@ -14,6 +14,7 @@
 	let requestSequence = 0;
 
 	const isLoginPage = $derived($page.route.id === '/login');
+	const isArticlePage = $derived($page.route.id === '/reader/[id]');
 
 	afterNavigate(() => {
 		void synchronizeSession();
@@ -65,19 +66,24 @@
 
 <UIHostProvider>
 	{#if !isLoginPage && authenticated}
-		<header>
+		<header class:reader-header={isArticlePage}>
 			<nav aria-label="Main navigation">
 				<a class="brand" href={appPath('/reader')} aria-label="Doublangu reader">Doublangu</a>
+				{#if isArticlePage}
+					<span class="article-label">Article reader</span>
+					<a class="reader-settings" href={appPath('/settings')}>Settings</a>
+				{:else}
 				<a href={appPath('/reader')}>Articles</a>
 				<a class="new-article" href={appPath('/reader/new')}>Paste article</a>
 				<a href={appPath('/analysis-runs')}>Analysis runs</a>
 				<a href={appPath('/settings')}>Settings</a>
 				<button class="sign-out" type="button" onclick={() => void signOut()}>Sign out</button>
+				{/if}
 			</nav>
 		</header>
 	{/if}
 
-	<main class:login-main={isLoginPage}>
+	<main class:login-main={isLoginPage} class:reader-main={isArticlePage}>
 		{#if isLoginPage}
 			{@render children()}
 		{:else if checkingSession}
@@ -124,6 +130,8 @@
 		letter-spacing: -0.025em;
 		color: var(--color-text);
 	}
+	.article-label { color: var(--color-muted); }
+	.reader-settings { margin-left: auto; color: var(--color-muted); font-size: 0.85rem; }
 
 	.new-article {
 		margin-left: auto;
@@ -178,6 +186,10 @@
 	}
 
 	@media (max-width: 540px) {
+		main.reader-main { padding: 0.65rem 0.6rem; }
+		.reader-header nav { min-height: 3rem; padding-block: 0.45rem; gap: 0.6rem; }
+		.reader-header .brand { font-size: 1.05rem; }
+		.reader-header .article-label { font-size: 0.8rem; }
 		nav {
 			gap: 0.75rem;
 			padding-inline: 0.85rem;
@@ -191,4 +203,5 @@
 			font-size: 0.9rem;
 		}
 	}
+	@media (max-width: 350px) { .reader-header .article-label { display: none; } }
 </style>

@@ -24,7 +24,7 @@ type Span = { start: number; end: number };
  * returned text is always sliced from the canonical block; provider labels
  * never replace or mutate source text.
  */
-export function buildSemanticRuns(block: ArticleBlock): SemanticRun[] {
+export function buildSemanticRuns(block: ArticleBlock, individualWords = false): SemanticRun[] {
 	const source = block.source_text;
 	const occurrences = block.occurrences ?? [];
 	const tokens = occurrences.filter((item) => item.role === 'token' && item.spans.length === 1);
@@ -35,6 +35,31 @@ export function buildSemanticRuns(block: ArticleBlock): SemanticRun[] {
 		for (const span of occurrence.spans) {
 			assertSpan(source, span.start_utf16, span.end_utf16, span.source_text);
 		}
+	}
+
+	// The reader's individual-word mode keeps lexical occurrences intact.
+	// Constructions annotate membership; they never replace a word's gloss.
+	if (individualWords && tokens.length > 0) {
+		const constructions = [...groups, ...discontinuous];
+		const ordered = tokens.slice().sort((a, b) => spanOf(a).start - spanOf(b).start);
+		const runs: SemanticRun[] = [];
+		let cursor = 0;
+		for (const token of ordered) {
+			const span = spanOf(token);
+			if (span.start < cursor) throw new SemanticRunError('lexical occurrences overlap');
+			if (span.start > cursor) runs.push({ kind: 'plain', text: source.slice(cursor, span.start) });
+			const owners = constructions.filter((construction) => {
+				const members = construction.member_occurrence_ids ?? [];
+				return members.length > 0
+					? members.includes(token.id)
+					: construction.spans.some((part) => inside(span, { start: part.start_utf16, end: part.end_utf16 }));
+			});
+			runs.push({ kind: 'occurrence', text: source.slice(span.start, span.end), occurrence: token,
+				popoverOccurrence: owners[0] ?? token, constructionIDs: owners.map((owner) => owner.id) });
+			cursor = span.end;
+		}
+		if (cursor < source.length) runs.push({ kind: 'plain', text: source.slice(cursor) });
+		return runs;
 	}
 
 	const grouped = groups

@@ -16,15 +16,15 @@
 	--color-danger: #ffb4c3;
 	--color-warning-bg: #342819;
 	--color-warning: #ffd18a;
-	--reader-page-bg: #151827;
-	--reader-page-surface: #1d2131;
-	--reader-page-raised: #252a3d;
-	--reader-page-border: #3b4260;
-	--reader-page-text: #eef0f8;
-	--reader-page-muted: #aeb5cc;
-	--reader-page-accent: #a897ff;
-	--reader-page-construction: #f0b36b;
-	--reader-page-subtitle: #b9c2de;
+	--reader-page-bg: #10121b;
+	--reader-page-surface: #161923;
+	--reader-page-raised: #202431;
+	--reader-page-border: #353b50;
+	--reader-page-text: #eeedf3;
+	--reader-page-muted: #a4abc0;
+	--reader-page-accent: #b9abff;
+	--reader-page-construction: #e5a16c;
+	--reader-page-subtitle: #a4abc0;
 	background: var(--color-bg);
 	color: var(--color-text);
 	font-synthesis: none;
@@ -33,16 +33,44 @@
 
 html[data-reader-theme='paper'] {
 	color-scheme: light;
-	--reader-page-bg: #fbf7ed;
-	--reader-page-surface: #f3ecdc;
-	--reader-page-raised: #fffdf7;
-	--reader-page-border: #d7c9ad;
-	--reader-page-text: #302a21;
-	--reader-page-muted: #756957;
-	--reader-page-accent: #815d27;
-	--reader-page-construction: #ad5e2a;
-	--reader-page-subtitle: #756957;
+	--reader-page-bg: #faf9f6;
+	--reader-page-surface: #f0efeb;
+	--reader-page-raised: #ffffff;
+	--reader-page-border: #d5d3cd;
+	--reader-page-text: #252832;
+	--reader-page-muted: #596273;
+	--reader-page-accent: #624a9e;
+	--reader-page-construction: #95501e;
+	--reader-page-subtitle: #596273;
 }
+
+html[data-reader-theme='sepia'] {
+	color-scheme: light;
+	--reader-page-bg: #f1e6d2;
+	--reader-page-surface: #eaddc4;
+	--reader-page-raised: #faf0dd;
+	--reader-page-border: #ccbaa0;
+	--reader-page-text: #352b23;
+	--reader-page-muted: #695742;
+	--reader-page-accent: #755031;
+	--reader-page-construction: #8e481d;
+	--reader-page-subtitle: #695742;
+}
+
+html[data-reader-page='true'] {
+	--color-bg: var(--reader-page-bg);
+	--color-bg-header: var(--reader-page-surface);
+	--color-surface: var(--reader-page-surface);
+	--color-surface-raised: var(--reader-page-raised);
+	--color-border: var(--reader-page-border);
+	--color-text: var(--reader-page-text);
+	--color-muted: var(--reader-page-muted);
+	--color-accent: var(--reader-page-accent);
+	--color-accent-strong: var(--reader-page-accent);
+}
+
+html[data-reader-page='true'] body { background: var(--reader-page-bg); }
+html[data-reader-page='true'] a:hover { color: var(--reader-page-accent); }
 
 html[data-reader-theme='high-contrast'] {
 	color-scheme: dark;

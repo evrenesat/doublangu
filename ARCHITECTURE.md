@@ -61,20 +61,39 @@ diagnostics. The related article is requeued so the durable worker can retry
 the unfinished analysis.
 
 Semantic identity is `semantic_sense.id`, not spelling. An occurrence points to
-   one sense and carries its effective subtitle and pronunciation identity. Every
-   deterministic word token is represented. A contiguous phrase/idiom is a
-   single group occurrence whose component token subtitles are suppressed;
-   discontinuous constructions keep ordered multi-spans and marker styling
-   while their member word occurrences remain available. This layered model is
-   rendered directly instead of flattening spans into a non-overlapping list.
+one sense and carries its effective subtitle and pronunciation identity. Every
+deterministic word token is represented. Constructions retain separate senses
+and exact `member_occurrence_ids`. The redesigned v2 frontend renders lexical
+tokens individually even inside contiguous constructions; it does not replace
+their subtitles with the phrase meaning or hide them when learned. Older server
+materializations still carry suppression metadata and may lack literal word
+glosses; completing that data path is specified in the reader design handoff.
 
-The web reader reconstructs source text from stored spans without HTML
-injection. Source wrappers remain inline and subtitles occupy a reserved visual
-band, so English labels do not drive Dutch line breaking. Hover/focus/click,
-keyboard, touch, and narration can open the compact popover or focus a sentence;
-focus reflow compensates the viewport delta. Midnight, paper, and high-contrast
-themes are local settings, and the UI polls only nonterminal analysis/speech
-states with visibility-aware backoff.
+The web reader reconstructs source text from stored UTF-16 spans without HTML
+injection. Each inline-grid word contains its source and complete subtitle;
+both participate in initial layout to prevent overlap. Layout always uses the
+largest focus metrics. `Sentence.svelte` applies a 0.94-to-1 transform for the
+enlarging mode, or a constant scale of 1 for highlight-only. Neither changes
+font size, letter spacing, wrapping, allocated height, or scroll position on
+focus. The sentence card/footer space is allocated before interaction.
+`ConstructionOverlay.svelte` measures untransformed token offsets on resize/font
+readiness and draws SVG brackets plus dashed connectors over reserved lanes.
+Wrapped connections continue at the margins with matching numeric labels.
+Explicit membership excludes intervening nonmembers; a span fallback supports
+legacy rows without membership IDs. Mobile uses tighter gutters and spacing,
+omits repeated labels/unavailable-audio rows, and keeps the source above 20px
+and subtitles above 12px even at the resting scale. Ink (stored as `midnight`),
+Paper, Sepia, and Contrast are local themes. The UI polls only nonterminal
+analysis/speech states with visibility-aware backoff.
+
+The isolated local design launcher (`tools/local-reader.mjs`) runs the unchanged
+Go API plus Vite against `data/reader-design`, with analysis disabled and no
+remote worker configuration. A development-only Vite middleware returns two
+synthetic read-only articles through the normal article response contract;
+the 871-word fixture includes genuine multi-sentence paragraph offsets. The
+real owner/session and preference routes are still handled by Go. Fixture
+learning/analysis/audio writes are disabled explicitly, not simulated as
+successful operations. Production builds do not serve or bundle these fixtures.
 
 Speech is independent of article playback. `speech_unit` deduplicates exact
 word, short-phrase, and sentence text plus context; immutable `audio_render`

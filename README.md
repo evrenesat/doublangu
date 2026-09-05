@@ -69,6 +69,35 @@ DOUBLANGU_WEB_BASE_PATH=/beta npm --prefix web run build
 make verify
 ```
 
+### Isolated reader design on this Mac
+
+Run `npm --prefix web ci` once, then `node tools/local-reader.mjs`. This starts
+the real Go service on loopback port 8097 and the actual Svelte reader on 5177,
+with an independent SQLite database, owner login, and media directory beneath
+`data/reader-design/`. The launcher prints the local password; its private
+`local-access.json` file is not committed. Ctrl-C stops the two processes and
+keeps local data for the next run. It refuses ports already in use.
+
+Open [the long design article](http://127.0.0.1:5177/reader/01J00000000000000000000LONG).
+Its 871 words form 12 paragraphs and 48 sentences. The sample picker also opens
+six short construction examples. Both use the **real reader components**, with
+development-only, read-only synthetic article responses. Login and preferences
+still use the local Go API. Analysis is disabled, audio is not faked, and no
+production credentials, databases, providers, or speech workers are connected.
+
+Compare **Enlarge without reflow** and **Highlight only** in the Focus selector.
+On mobile, **Aa** opens themes and pronunciation settings. All word subtitles
+remain visible; expression brackets and dashed gap connectors are a separate
+layer. Focus changes only a transform and colors, never word wrapping or card
+height. Ink, Paper, Sepia, and Contrast apply across the reading page.
+
+`DOUBLANGU_READER_DEMO=1` enables the sample middleware only in Vite development.
+Production builds omit the middleware and sample content. A saved article may
+still have missing literal word glosses in older analysis data; the decision-
+complete [reader handoff](plans/reader-demo-parity-handoff.md) covers the remaining
+analysis and local-integration work. Do not run Svelte generation/build tasks
+concurrently with browser E2E tests sharing the same checkout.
+
 ## Deployment
 
 Every push to `main` is verified and packaged by GitHub Actions. A dedicated,

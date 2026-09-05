@@ -3,6 +3,7 @@
 
 	type Props = {
 		text: string;
+		suffix?: string;
 		occurrence: ArticleOccurrence;
 		popoverOccurrence: ArticleOccurrence;
 		constructionIDs: string[];
@@ -17,6 +18,7 @@
 
 	let {
 		text,
+		suffix = '',
 		occurrence,
 		popoverOccurrence,
 		constructionIDs,
@@ -29,13 +31,13 @@
 		onConstructionHover
 	}: Props = $props();
 
-	const subtitle = $derived(occurrence.show_shadow && occurrence.shadow_policy !== 'none' ? occurrence.shadow_text || occurrence.sense?.primary_translation || '' : '');
+	const subtitle = $derived(occurrence.shadow_text || occurrence.sense?.primary_translation || '');
 	const audioKey = $derived(occurrence.pronunciation?.render_id ?? occurrence.id);
 
 	function activate(event: MouseEvent | KeyboardEvent): void {
 		if (event instanceof KeyboardEvent && event.key !== 'Enter' && event.key !== ' ') return;
 		if (event instanceof KeyboardEvent) event.preventDefault();
-		onOpen(popoverOccurrence, event.currentTarget as HTMLElement, true);
+		onOpen(occurrence, event.currentTarget as HTMLElement, true);
 	}
 
 	function pointerEnter(event: PointerEvent): void {
@@ -53,7 +55,7 @@
 
 <span
 	class="text-occurrence"
-	class:learned={!occurrence.show_shadow}
+	class:learned={occurrence.learning_state?.status === 'learned'}
 	class:construction-member={constructionIDs.length > 0}
 	class:construction-active={constructionIDs.some((id) => activeConstructionIDs.includes(id))}
 	class:group-unit={occurrence.role === 'contiguous_construction'}
@@ -69,8 +71,8 @@
 	onpointerenter={pointerEnter}
 	onpointerleave={() => { onLeaveAudio(audioKey); onHoverEnd(); onConstructionHover([]); }}
 >
-	<span class="source-text">{text}</span>
-	{#if subtitle}<span class="translation-subtitle" aria-hidden="true">{subtitle}</span>{/if}
+	<span class="source-text">{text}{suffix}</span>
+	<span class="translation-subtitle" aria-hidden="true">{subtitle || '·'}</span>
 </span>
 
 <style>
@@ -85,10 +87,12 @@
 		justify-items: center;
 		min-width: 0;
 		max-width: 100%;
-		margin: 0 0.04em;
+		margin: 0 0.10em 0.9em 0;
+		padding: 0.08em 0.06em 0.1em;
 		border-radius: 0.2rem;
 		cursor: pointer;
-		vertical-align: baseline;
+		vertical-align: top;
+		line-height: 1.25;
 		-webkit-box-decoration-break: clone;
 		box-decoration-break: clone;
 	}
@@ -107,38 +111,32 @@
 	}
 
 	.translation-subtitle {
-		display: -webkit-box;
-		max-width: min(17rem, 58vw);
+		display: block;
+		max-width: min(12rem, 50vw);
 		color: var(--reader-subtitle);
-		font-size: 0.57em;
-		font-weight: 550;
-		line-height: 1.15;
+		font-family: ui-sans-serif, system-ui, sans-serif;
+		font-size: 0.46em;
+		font-weight: 450;
+		line-height: 1.3;
 		text-align: center;
-		overflow: hidden;
-		-webkit-box-orient: vertical;
-		-webkit-line-clamp: 1;
-		line-clamp: 1;
-		pointer-events: none;
-		opacity: 0.82;
-	}
-
-	/* Long contiguous-group subtitles may wrap to at most two lines. */
-	.text-occurrence.group-unit .translation-subtitle {
-		-webkit-line-clamp: 2;
-		line-clamp: 2;
+		white-space: normal;
 		overflow-wrap: anywhere;
+		pointer-events: none;
+		min-height: 1.3em;
 	}
 
-	.text-occurrence.construction-member .source-text {
-		text-decoration-line: underline;
-		text-decoration-style: wavy;
-		text-decoration-color: var(--reader-construction);
-		text-underline-offset: 0.18em;
+	@media (max-width: 600px) {
+		.text-occurrence { margin-right: 0.04em; padding-inline: 0.035em; }
+		.translation-subtitle { font-size: 0.585em; line-height: 1.2; }
 	}
 
-	.text-occurrence.construction-active .source-text {
-		background: color-mix(in srgb, var(--reader-construction) 22%, transparent);
-		text-decoration-thickness: 0.15em;
+	.text-occurrence.construction-member {
+		box-shadow: inset 0 -2px var(--reader-construction);
+	}
+
+	.text-occurrence.construction-active {
+		background: color-mix(in srgb, var(--reader-construction) 13%, transparent);
+		box-shadow: inset 0 -3px var(--reader-construction);
 	}
 
 	@media (prefers-reduced-motion: reduce) {

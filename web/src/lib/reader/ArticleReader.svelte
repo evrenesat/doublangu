@@ -21,7 +21,6 @@
 		type SemanticLearningState
 		} from '$lib/api/client';
 	import { appPath } from '$lib/paths';
-	import { compensateFocusReflow } from './focusController';
 	import { HoverAudioController } from './audioController';
 	import { applyReaderTheme, readReaderTheme, saveReaderTheme, type ReaderTheme } from './theme';
 	import NarrationPlayer from './NarrationPlayer.svelte';
@@ -41,6 +40,7 @@
 	const incomingArticle = $derived(props.article);
 	let currentState = $state<Article | null>(null);
 	const current = $derived(currentState ?? incomingArticle);
+	const designSample = $derived(import.meta.env.DEV && current.analysis_revision === 'reader.design.fixture');
 	let theme = $state<ReaderTheme>('midnight');
 	const hoverPrefCacheKey = 'doublangu:reader:pronounce-on-hover';
 	function readCachedHoverPreference(): boolean {
@@ -67,7 +67,7 @@
 	let feedback = $state('');
 	let feedbackIsError = $state(false);
 	let closeTimer: ReturnType<typeof setTimeout> | undefined;
-	let focusCancel: (() => void) | undefined;
+	let enlargeFocus = $state(true);
 	let narration = $state<Narration | null>(null);
 	let narrationLoadedFor = $state('');
 	let narrationLoading = $state(false);
@@ -266,6 +266,7 @@
 	});
 
 	onMount(() => {
+		document.documentElement.setAttribute('data-reader-page', 'true');
 		theme = readReaderTheme();
 		applyReaderTheme(theme);
 		hoverAudio.setEnabled(hoverEnabled);
@@ -291,6 +292,7 @@
 		window.addEventListener('keydown', unlockOnActivation, { passive: true });
 		void refreshServerPreference();
 		return () => {
+			document.documentElement.removeAttribute('data-reader-page');
 			document.removeEventListener('keydown', handleKeydown);
 			window.removeEventListener('pointerdown', unlockOnActivation);
 			window.removeEventListener('keydown', unlockOnActivation);
@@ -313,7 +315,6 @@
 
 	onDestroy(() => {
 		if (closeTimer) clearTimeout(closeTimer);
-		focusCancel?.();
 		hoverAudio.destroy();
 	});
 
@@ -486,7 +487,7 @@
 				status
 			});
 			emit(withSemanticLearning(current, occurrence.semantic_sense_id, saved));
-			feedback = status === 'learned' ? 'Marked learned. Subtitle hidden.' : 'Marked unlearned. Subtitle restored.';
+			feedback = status === 'learned' ? 'Marked learned. Subtitle stays visible.' : 'Marked unlearned.';
 			feedbackIsError = false;
 		} catch (cause) {
 			emit(previous);
@@ -497,25 +498,12 @@
 	}
 
 	function focusSentence(sentenceID: string, element: HTMLElement): void {
-		focusCancel?.();
-		focusCancel = compensateFocusReflow(element, () => {
-			activeSentenceID = sentenceID;
-		});
+		activeSentenceID = sentenceID;
 		if (followFocus) setNarrationIndex(sentenceID);
 	}
 
 	function clearFocus(): void {
-		const previousID = activeSentenceID;
-		if (!previousID) return;
-		const element = findSentenceElement(previousID);
-		if (element) {
-			focusCancel?.();
-			focusCancel = compensateFocusReflow(element, () => {
-				activeSentenceID = null;
-			});
-		} else {
-			activeSentenceID = null;
-		}
+		activeSentenceID = null;
 	}
 
 	function findSentenceElement(sentenceID: string): HTMLElement | null {
@@ -674,7 +662,21 @@
 	}
 </script>
 
-<section class="reader-shell" aria-label="Audible article reader">
+<section class="reader-shell" aria-label="Audible article reader" style:--reader-rest-scale={enlargeFocus ? '0.94' : '1'}>
+	<div class="reader-heading">
+		<a class="reader-back" href={appPath('/reader')}>← Articles</a>
+		<h1>{current.title}</h1>
+		<p>Dutch article · English learning layer{designSample ? ' · Design sample' : ''}</p>
+		{#if designSample}
+			<nav class="sample-picker" aria-label="Design samples">
+				<a href={appPath('/reader/01J00000000000000000000DEMO')} data-sveltekit-reload aria-current={current.id.endsWith('DEMO') ? 'page' : undefined}>Short examples</a>
+				<a href={appPath('/reader/01J00000000000000000000LONG')} data-sveltekit-reload aria-current={current.id.endsWith('LONG') ? 'page' : undefined}>Long article</a>
+				<span>{current.blocks.reduce((count, block) => count + (block.occurrences ?? []).filter(occurrence => occurrence.role === 'token').length, 0).toLocaleString()} words</span>
+			</nav>
+		{/if}
+	</div>
+	<details class="article-options">
+		<summary>{current.analysis_status === 'ready' ? 'Subtitles ready' : analysisLabel} · Article options</summary>
 	<div class="reader-status-row">
 		<div class="status-item">
 				<span class="status-label">English subtitles</span>
@@ -695,7 +697,7 @@
 					<button type="button" class="status-action" disabled={reanalyzing} onclick={() => void retryAnalysis()}>{reanalyzing ? 'Retrying…' : `Retry with ${analysisSelectionLabel}`}</button>
 					<a class="status-action secondary-action" href={appPath('/settings/analysis')}>Change in Settings</a>
 				{/if}
-				{#if freshAvailable}
+				{#if freshAvailable && !designSample}
 					<span class="fresh-run">
 						{#if !showFreshOptions}
 							<button type="button" class="status-action secondary-action" onclick={() => void openFreshOptions()}>Fresh analysis…</button>
@@ -731,6 +733,7 @@
 			<strong class:status-ready={current.narration_status === 'ready'} class:status-error={current.narration_status === 'failed'}>{speechLabel}</strong>
 		</div>
 	</div>
+	</details>
 
 	<ReaderToolbar
 		hoverEnabled={hoverEnabled}
@@ -738,6 +741,8 @@
 		theme={theme}
 		onToggleHover={() => void toggleHoverAudio()}
 		onTheme={setTheme}
+		{enlargeFocus}
+		onFocusMode={(value) => (enlargeFocus = value)}
 	/>
 	{#if hoverActivationHint}
 		<p class="reader-error hover-hint" role="status">Click once to enable sound</p>
@@ -757,6 +762,7 @@
 				onLeaveAudio={handleLeaveAudio}
 				onConstructionHover={handleConstructionHover}
 				onFocusSentence={focusSentence}
+				onPlaySentence={(sentence) => { if (sentence.audio?.ready) void hoverAudio.playNow(sentence.audio, `sentence:${sentence.id}`); }}
 			/>
 		{/each}
 	</div>
@@ -774,6 +780,7 @@
 			onHear={() => void hearSelected()}
 			hearReady={Boolean(selectedHearReference?.ready)}
 			hearPending={Boolean(selectedHearReference && !selectedHearReference.ready)}
+			learningEnabled={!designSample}
 		/>
 	{/if}
 
@@ -784,6 +791,7 @@
 		speed={narrationSpeed}
 		followFocus={followFocus}
 		loading={narrationLoading}
+		readOnly={designSample}
 		onPlay={() => void playNarration()}
 		onPause={pauseNarration}
 		onPrevious={previousNarration}
@@ -810,10 +818,20 @@
 		--reader-construction: var(--reader-page-construction);
 		--reader-subtitle: var(--reader-page-subtitle);
 		--reader-danger: #ffabbc;
-		max-width: 54rem;
+		max-width: 72rem;
 		margin: 0 auto;
 		color: var(--reader-text);
 	}
+	.reader-heading { margin: 1rem 1.5rem 2rem; }
+	.reader-back { color: var(--reader-accent); text-decoration: none; }
+	.reader-heading h1 { margin: 1.3rem 0 0.55rem; max-width: 56rem; font-size: clamp(2rem, 3.6vw, 3rem); line-height: 1.13; font-weight: 650; letter-spacing: -0.045em; }
+	.reader-heading p { color: var(--reader-muted); margin: 0; font-size: 1rem; }
+	.sample-picker { display: flex; flex-wrap: wrap; gap: 0.8rem; margin-top: 0.8rem; font-size: 0.8rem; color: var(--reader-muted); }
+	.sample-picker a { color: var(--reader-muted); text-decoration: none; }
+	.sample-picker a[aria-current='page'] { color: var(--reader-accent); text-decoration: underline; text-underline-offset: 0.3em; }
+	.article-options { margin: 0 1.5rem 1rem; color: var(--reader-muted); font-size: 0.8rem; }
+	.article-options summary { cursor: pointer; padding: 0.25rem 0; }
+	.article-options[open] summary { margin-bottom: 0.7rem; }
 
 	.reader-status-row {
 		display: grid;
@@ -838,7 +856,7 @@
 	.status-label { color: var(--reader-muted); }
 	.status-item strong { font-weight: 650; }
 	.analysis-provenance { color: var(--reader-muted); font-size: 0.75rem; overflow-wrap: anywhere; }
-	.status-ready { color: #a9e6bd; }
+	.status-ready { color: var(--reader-accent); }
 	.status-error { color: var(--reader-danger); }
 	.status-action {
 		margin-left: auto;
@@ -855,25 +873,22 @@
 
 	.reader-body {
 		position: relative;
-		padding: clamp(1.1rem, 3vw, 2.65rem) clamp(1rem, 4vw, 3rem);
-		border: 1px solid var(--reader-border);
-		border-radius: 0.8rem;
+		padding: 1.8rem 0 0.5rem;
 		background: var(--reader-bg);
-		box-shadow: 0 18px 50px rgb(0 0 0 / 18%);
 	}
 
-	.reader-body.has-focus :global(.reader-paragraph) { transition: opacity 120ms ease; }
-	.reader-body.has-focus :global(.reader-paragraph:not(:has(.reader-sentence.focused))) { opacity: 0.74; }
 
 	.reader-error { margin: 0.65rem 0 0; color: var(--reader-danger); font-size: 0.85rem; }
 
 	@media (max-width: 600px) {
 		.reader-status-row { grid-template-columns: 1fr; }
+		.reader-heading { margin: 0.6rem 0.35rem 1rem; }
+		.reader-heading h1 { font-size: 1.85rem; margin-top: 0.8rem; }
+		.reader-heading p { font-size: 0.85rem; }
+		.article-options { margin-inline: 0.35rem; margin-bottom: 0.6rem; }
+		.reader-body { padding-top: 0.7rem; }
 	}
 
-	@media (prefers-reduced-motion: reduce) {
-		.reader-body.has-focus :global(.reader-paragraph) { transition: none; }
-	}
 
 	.fresh-run { display: inline-flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
 	.fresh-run select { padding: 0.3rem 0.45rem; font: inherit; max-width: 16rem; }

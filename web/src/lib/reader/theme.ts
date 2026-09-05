@@ -1,4 +1,4 @@
-export const readerThemes = ['midnight', 'paper', 'high-contrast'] as const;
+export const readerThemes = ['midnight', 'paper', 'sepia', 'high-contrast'] as const;
 export type ReaderTheme = (typeof readerThemes)[number];
 
 const storageKey = 'doublangu.reader.theme';

@@ -84,7 +84,10 @@ test('a saved off value survives a reload through the server setting', async ({ 
 	await page.goto(`/reader/${articleID}`);
 	const toggle = page.locator('.hover-toggle input');
 	await expect(toggle).toBeChecked();
+	const saved = page.waitForResponse(response => response.url().endsWith('/api/v1/reader/settings') && response.request().method() === 'PUT');
 	await toggle.uncheck();
+	await saved;
+	await expect(toggle).toBeEnabled();
 	await expect(toggle).not.toBeChecked();
 	await page.reload();
 	await expect(toggle).not.toBeChecked({ timeout: 5000 });

@@ -224,7 +224,7 @@
 </svelte:head>
 
 <div class="article-page">
-	<a href={appPath('/reader')} class="back-link">← Back to reader</a>
+	{#if !article || !isV2(article)}<a href={appPath('/reader')} class="back-link">← Back to reader</a>{/if}
 
 	{#if loading}
 		<p class="status" role="status">Loading article…</p>
@@ -234,10 +234,10 @@
 			<button type="button" onclick={() => void loadArticle()}>Retry</button>
 		</div>
 	{:else if article}
-		<header class="article-header">
+		{#if !isV2(article)}<header class="article-header">
 			<h1>{article.title}</h1>
 			<p class="meta">{article.source_language} → {article.target_language}</p>
-		</header>
+		</header>{/if}
 
 		{#if isV2(article)}
 			<ArticleReader article={article} onArticleChange={updateFromReader} />
@@ -266,7 +266,7 @@
 </div>
 
 <style>
-	.article-page { max-width: 56rem; margin: 0 auto; }
+	.article-page { max-width: 72rem; margin: 0 auto; }
 	.back-link { display: inline-block; margin-bottom: 1.25rem; }
 	.status { color: var(--color-muted, #64748b); }
 	.error { padding: 1rem; border-radius: 0.5rem; background: var(--color-danger-bg, #351c24); color: var(--color-danger, #ffb4c3); }
