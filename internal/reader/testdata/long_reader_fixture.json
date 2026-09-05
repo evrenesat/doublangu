@@ -1,0 +1,6031 @@
+{
+ "title": "Een open deur voor de buurt",
+ "blocks": [
+  {
+   "source": "Op zaterdagochtend liep Noor door haar buurt terwijl de winkels langzaam opengingen. Bij het oude station stond een gebouw dat al jaren leeg was en waarvan niemand de eigenaar kende. Achter de stoffige ramen zag ze lange tafels, een kapotte lamp en een stapel stoelen die ooit rood waren geweest. Ze bleef even staan en vroeg zich af waarom deze plek eigenlijk niet meer werd gebruikt.",
+   "sentences": [
+    {
+     "start": 0,
+     "end": 84,
+     "source": "Op zaterdagochtend liep Noor door haar buurt terwijl de winkels langzaam opengingen."
+    },
+    {
+     "start": 85,
+     "end": 182,
+     "source": "Bij het oude station stond een gebouw dat al jaren leeg was en waarvan niemand de eigenaar kende."
+    },
+    {
+     "start": 183,
+     "end": 296,
+     "source": "Achter de stoffige ramen zag ze lange tafels, een kapotte lamp en een stapel stoelen die ooit rood waren geweest."
+    },
+    {
+     "start": 297,
+     "end": 385,
+     "source": "Ze bleef even staan en vroeg zich af waarom deze plek eigenlijk niet meer werd gebruikt."
+    }
+   ],
+   "tokens": [
+    {
+     "start": 0,
+     "end": 2,
+     "source": "Op",
+     "gloss": "On"
+    },
+    {
+     "start": 3,
+     "end": 18,
+     "source": "zaterdagochtend",
+     "gloss": "Saturday morning"
+    },
+    {
+     "start": 19,
+     "end": 23,
+     "source": "liep",
+     "gloss": "walked"
+    },
+    {
+     "start": 24,
+     "end": 28,
+     "source": "Noor",
+     "gloss": "Noor"
+    },
+    {
+     "start": 29,
+     "end": 33,
+     "source": "door",
+     "gloss": "through"
+    },
+    {
+     "start": 34,
+     "end": 38,
+     "source": "haar",
+     "gloss": "her"
+    },
+    {
+     "start": 39,
+     "end": 44,
+     "source": "buurt",
+     "gloss": "neighborhood"
+    },
+    {
+     "start": 45,
+     "end": 52,
+     "source": "terwijl",
+     "gloss": "while"
+    },
+    {
+     "start": 53,
+     "end": 55,
+     "source": "de",
+     "gloss": "the"
+    },
+    {
+     "start": 56,
+     "end": 63,
+     "source": "winkels",
+     "gloss": "shops"
+    },
+    {
+     "start": 64,
+     "end": 72,
+     "source": "langzaam",
+     "gloss": "slowly"
+    },
+    {
+     "start": 73,
+     "end": 83,
+     "source": "opengingen",
+     "gloss": "opened"
+    },
+    {
+     "start": 85,
+     "end": 88,
+     "source": "Bij",
+     "gloss": "At"
+    },
+    {
+     "start": 89,
+     "end": 92,
+     "source": "het",
+     "gloss": "the"
+    },
+    {
+     "start": 93,
+     "end": 97,
+     "source": "oude",
+     "gloss": "old"
+    },
+    {
+     "start": 98,
+     "end": 105,
+     "source": "station",
+     "gloss": "station"
+    },
+    {
+     "start": 106,
+     "end": 111,
+     "source": "stond",
+     "gloss": "stood"
+    },
+    {
+     "start": 112,
+     "end": 115,
+     "source": "een",
+     "gloss": "a"
+    },
+    {
+     "start": 116,
+     "end": 122,
+     "source": "gebouw",
+     "gloss": "building"
+    },
+    {
+     "start": 123,
+     "end": 126,
+     "source": "dat",
+     "gloss": "that"
+    },
+    {
+     "start": 127,
+     "end": 129,
+     "source": "al",
+     "gloss": "already"
+    },
+    {
+     "start": 130,
+     "end": 135,
+     "source": "jaren",
+     "gloss": "years"
+    },
+    {
+     "start": 136,
+     "end": 140,
+     "source": "leeg",
+     "gloss": "empty"
+    },
+    {
+     "start": 141,
+     "end": 144,
+     "source": "was",
+     "gloss": "was"
+    },
+    {
+     "start": 145,
+     "end": 147,
+     "source": "en",
+     "gloss": "and"
+    },
+    {
+     "start": 148,
+     "end": 155,
+     "source": "waarvan",
+     "gloss": "of which"
+    },
+    {
+     "start": 156,
+     "end": 163,
+     "source": "niemand",
+     "gloss": "nobody"
+    },
+    {
+     "start": 164,
+     "end": 166,
+     "source": "de",
+     "gloss": "the"
+    },
+    {
+     "start": 167,
+     "end": 175,
+     "source": "eigenaar",
+     "gloss": "owner"
+    },
+    {
+     "start": 176,
+     "end": 181,
+     "source": "kende",
+     "gloss": "knew"
+    },
+    {
+     "start": 183,
+     "end": 189,
+     "source": "Achter",
+     "gloss": "Behind"
+    },
+    {
+     "start": 190,
+     "end": 192,
+     "source": "de",
+     "gloss": "the"
+    },
+    {
+     "start": 193,
+     "end": 201,
+     "source": "stoffige",
+     "gloss": "dusty"
+    },
+    {
+     "start": 202,
+     "end": 207,
+     "source": "ramen",
+     "gloss": "windows"
+    },
+    {
+     "start": 208,
+     "end": 211,
+     "source": "zag",
+     "gloss": "saw"
+    },
+    {
+     "start": 212,
+     "end": 214,
+     "source": "ze",
+     "gloss": "she"
+    },
+    {
+     "start": 215,
+     "end": 220,
+     "source": "lange",
+     "gloss": "long"
+    },
+    {
+     "start": 221,
+     "end": 227,
+     "source": "tafels",
+     "gloss": "tables"
+    },
+    {
+     "start": 229,
+     "end": 232,
+     "source": "een",
+     "gloss": "a"
+    },
+    {
+     "start": 233,
+     "end": 240,
+     "source": "kapotte",
+     "gloss": "broken"
+    },
+    {
+     "start": 241,
+     "end": 245,
+     "source": "lamp",
+     "gloss": "lamp"
+    },
+    {
+     "start": 246,
+     "end": 248,
+     "source": "en",
+     "gloss": "and"
+    },
+    {
+     "start": 249,
+     "end": 252,
+     "source": "een",
+     "gloss": "a"
+    },
+    {
+     "start": 253,
+     "end": 259,
+     "source": "stapel",
+     "gloss": "pile"
+    },
+    {
+     "start": 260,
+     "end": 267,
+     "source": "stoelen",
+     "gloss": "chairs"
+    },
+    {
+     "start": 268,
+     "end": 271,
+     "source": "die",
+     "gloss": "that"
+    },
+    {
+     "start": 272,
+     "end": 276,
+     "source": "ooit",
+     "gloss": "once"
+    },
+    {
+     "start": 277,
+     "end": 281,
+     "source": "rood",
+     "gloss": "red"
+    },
+    {
+     "start": 282,
+     "end": 287,
+     "source": "waren",
+     "gloss": "had"
+    },
+    {
+     "start": 288,
+     "end": 295,
+     "source": "geweest",
+     "gloss": "been"
+    },
+    {
+     "start": 297,
+     "end": 299,
+     "source": "Ze",
+     "gloss": "She"
+    },
+    {
+     "start": 300,
+     "end": 305,
+     "source": "bleef",
+     "gloss": "stayed"
+    },
+    {
+     "start": 306,
+     "end": 310,
+     "source": "even",
+     "gloss": "briefly"
+    },
+    {
+     "start": 311,
+     "end": 316,
+     "source": "staan",
+     "gloss": "standing"
+    },
+    {
+     "start": 317,
+     "end": 319,
+     "source": "en",
+     "gloss": "and"
+    },
+    {
+     "start": 320,
+     "end": 325,
+     "source": "vroeg",
+     "gloss": "asked"
+    },
+    {
+     "start": 326,
+     "end": 330,
+     "source": "zich",
+     "gloss": "herself"
+    },
+    {
+     "start": 331,
+     "end": 333,
+     "source": "af",
+     "gloss": "off"
+    },
+    {
+     "start": 334,
+     "end": 340,
+     "source": "waarom",
+     "gloss": "why"
+    },
+    {
+     "start": 341,
+     "end": 345,
+     "source": "deze",
+     "gloss": "this"
+    },
+    {
+     "start": 346,
+     "end": 350,
+     "source": "plek",
+     "gloss": "place"
+    },
+    {
+     "start": 351,
+     "end": 360,
+     "source": "eigenlijk",
+     "gloss": "actually"
+    },
+    {
+     "start": 361,
+     "end": 365,
+     "source": "niet",
+     "gloss": "not"
+    },
+    {
+     "start": 366,
+     "end": 370,
+     "source": "meer",
+     "gloss": "anymore"
+    },
+    {
+     "start": 371,
+     "end": 375,
+     "source": "werd",
+     "gloss": "was"
+    },
+    {
+     "start": 376,
+     "end": 384,
+     "source": "gebruikt",
+     "gloss": "used"
+    }
+   ],
+   "constructions": [
+    {
+     "role": "discontinuous_construction",
+     "kind": "expression",
+     "label": "zich afvragen",
+     "meaning": "wonder",
+     "members": [
+      {
+       "start": 320,
+       "end": 325,
+       "source": "vroeg"
+      },
+      {
+       "start": 326,
+       "end": 330,
+       "source": "zich"
+      },
+      {
+       "start": 331,
+       "end": 333,
+       "source": "af"
+      }
+     ],
+     "spans": [
+      {
+       "start": 320,
+       "end": 325,
+       "source": "vroeg"
+      },
+      {
+       "start": 326,
+       "end": 330,
+       "source": "zich"
+      },
+      {
+       "start": 331,
+       "end": 333,
+       "source": "af"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "source": "Een week later zat ze met haar buurman Sam aan de keukentafel om over het gebouw te praten. Hij vertelde dat er vroeger een kleine bibliotheek was geweest waar kinderen na school hun huiswerk maakten. Toen de gemeente een groter pand opende, verhuisden de boeken en verdwenen ook de mensen uit de straat. Noor stelde het idee van een gedeelde werkplaats voor en Sam begon meteen mogelijkheden op papier te zetten.",
+   "sentences": [
+    {
+     "start": 0,
+     "end": 91,
+     "source": "Een week later zat ze met haar buurman Sam aan de keukentafel om over het gebouw te praten."
+    },
+    {
+     "start": 92,
+     "end": 200,
+     "source": "Hij vertelde dat er vroeger een kleine bibliotheek was geweest waar kinderen na school hun huiswerk maakten."
+    },
+    {
+     "start": 201,
+     "end": 304,
+     "source": "Toen de gemeente een groter pand opende, verhuisden de boeken en verdwenen ook de mensen uit de straat."
+    },
+    {
+     "start": 305,
+     "end": 413,
+     "source": "Noor stelde het idee van een gedeelde werkplaats voor en Sam begon meteen mogelijkheden op papier te zetten."
+    }
+   ],
+   "tokens": [
+    {
+     "start": 0,
+     "end": 3,
+     "source": "Een",
+     "gloss": "A"
+    },
+    {
+     "start": 4,
+     "end": 8,
+     "source": "week",
+     "gloss": "week"
+    },
+    {
+     "start": 9,
+     "end": 14,
+     "source": "later",
+     "gloss": "later"
+    },
+    {
+     "start": 15,
+     "end": 18,
+     "source": "zat",
+     "gloss": "sat"
+    },
+    {
+     "start": 19,
+     "end": 21,
+     "source": "ze",
+     "gloss": "she"
+    },
+    {
+     "start": 22,
+     "end": 25,
+     "source": "met",
+     "gloss": "with"
+    },
+    {
+     "start": 26,
+     "end": 30,
+     "source": "haar",
+     "gloss": "her"
+    },
+    {
+     "start": 31,
+     "end": 38,
+     "source": "buurman",
+     "gloss": "neighbor"
+    },
+    {
+     "start": 39,
+     "end": 42,
+     "source": "Sam",
+     "gloss": "Sam"
+    },
+    {
+     "start": 43,
+     "end": 46,
+     "source": "aan",
+     "gloss": "at"
+    },
+    {
+     "start": 47,
+     "end": 49,
+     "source": "de",
+     "gloss": "the"
+    },
+    {
+     "start": 50,
+     "end": 61,
+     "source": "keukentafel",
+     "gloss": "kitchen table"
+    },
+    {
+     "start": 62,
+     "end": 64,
+     "source": "om",
+     "gloss": "to"
+    },
+    {
+     "start": 65,
+     "end": 69,
+     "source": "over",
+     "gloss": "about"
+    },
+    {
+     "start": 70,
+     "end": 73,
+     "source": "het",
+     "gloss": "the"
+    },
+    {
+     "start": 74,
+     "end": 80,
+     "source": "gebouw",
+     "gloss": "building"
+    },
+    {
+     "start": 81,
+     "end": 83,
+     "source": "te",
+     "gloss": "to"
+    },
+    {
+     "start": 84,
+     "end": 90,
+     "source": "praten",
+     "gloss": "talk"
+    },
+    {
+     "start": 92,
+     "end": 95,
+     "source": "Hij",
+     "gloss": "He"
+    },
+    {
+     "start": 96,
+     "end": 104,
+     "source": "vertelde",
+     "gloss": "told"
+    },
+    {
+     "start": 105,
+     "end": 108,
+     "source": "dat",
+     "gloss": "that"
+    },
+    {
+     "start": 109,
+     "end": 111,
+     "source": "er",
+     "gloss": "there"
+    },
+    {
+     "start": 112,
+     "end": 119,
+     "source": "vroeger",
+     "gloss": "formerly"
+    },
+    {
+     "start": 120,
+     "end": 123,
+     "source": "een",
+     "gloss": "a"
+    },
+    {
+     "start": 124,
+     "end": 130,
+     "source": "kleine",
+     "gloss": "small"
+    },
+    {
+     "start": 131,
+     "end": 142,
+     "source": "bibliotheek",
+     "gloss": "library"
+    },
+    {
+     "start": 143,
+     "end": 146,
+     "source": "was",
+     "gloss": "was"
+    },
+    {
+     "start": 147,
+     "end": 154,
+     "source": "geweest",
+     "gloss": "been"
+    },
+    {
+     "start": 155,
+     "end": 159,
+     "source": "waar",
+     "gloss": "where"
+    },
+    {
+     "start": 160,
+     "end": 168,
+     "source": "kinderen",
+     "gloss": "children"
+    },
+    {
+     "start": 169,
+     "end": 171,
+     "source": "na",
+     "gloss": "after"
+    },
+    {
+     "start": 172,
+     "end": 178,
+     "source": "school",
+     "gloss": "school"
+    },
+    {
+     "start": 179,
+     "end": 182,
+     "source": "hun",
+     "gloss": "their"
+    },
+    {
+     "start": 183,
+     "end": 191,
+     "source": "huiswerk",
+     "gloss": "homework"
+    },
+    {
+     "start": 192,
+     "end": 199,
+     "source": "maakten",
+     "gloss": "did"
+    },
+    {
+     "start": 201,
+     "end": 205,
+     "source": "Toen",
+     "gloss": "When"
+    },
+    {
+     "start": 206,
+     "end": 208,
+     "source": "de",
+     "gloss": "the"
+    },
+    {
+     "start": 209,
+     "end": 217,
+     "source": "gemeente",
+     "gloss": "municipality"
+    },
+    {
+     "start": 218,
+     "end": 221,
+     "source": "een",
+     "gloss": "a"
+    },
+    {
+     "start": 222,
+     "end": 228,
+     "source": "groter",
+     "gloss": "larger"
+    },
+    {
+     "start": 229,
+     "end": 233,
+     "source": "pand",
+     "gloss": "building"
+    },
+    {
+     "start": 234,
+     "end": 240,
+     "source": "opende",
+     "gloss": "opened"
+    },
+    {
+     "start": 242,
+     "end": 252,
+     "source": "verhuisden",
+     "gloss": "moved"
+    },
+    {
+     "start": 253,
+     "end": 255,
+     "source": "de",
+     "gloss": "the"
+    },
+    {
+     "start": 256,
+     "end": 262,
+     "source": "boeken",
+     "gloss": "books"
+    },
+    {
+     "start": 263,
+     "end": 265,
+     "source": "en",
+     "gloss": "and"
+    },
+    {
+     "start": 266,
+     "end": 275,
+     "source": "verdwenen",
+     "gloss": "disappeared"
+    },
+    {
+     "start": 276,
+     "end": 279,
+     "source": "ook",
+     "gloss": "also"
+    },
+    {
+     "start": 280,
+     "end": 282,
+     "source": "de",
+     "gloss": "the"
+    },
+    {
+     "start": 283,
+     "end": 289,
+     "source": "mensen",
+     "gloss": "people"
+    },
+    {
+     "start": 290,
+     "end": 293,
+     "source": "uit",
+     "gloss": "from"
+    },
+    {
+     "start": 294,
+     "end": 296,
+     "source": "de",
+     "gloss": "the"
+    },
+    {
+     "start": 297,
+     "end": 303,
+     "source": "straat",
+     "gloss": "street"
+    },
+    {
+     "start": 305,
+     "end": 309,
+     "source": "Noor",
+     "gloss": "Noor"
+    },
+    {
+     "start": 310,
+     "end": 316,
+     "source": "stelde",
+     "gloss": "put"
+    },
+    {
+     "start": 317,
+     "end": 320,
+     "source": "het",
+     "gloss": "the"
+    },
+    {
+     "start": 321,
+     "end": 325,
+     "source": "idee",
+     "gloss": "idea"
+    },
+    {
+     "start": 326,
+     "end": 329,
+     "source": "van",
+     "gloss": "of"
+    },
+    {
+     "start": 330,
+     "end": 333,
+     "source": "een",
+     "gloss": "a"
+    },
+    {
+     "start": 334,
+     "end": 342,
+     "source": "gedeelde",
+     "gloss": "shared"
+    },
+    {
+     "start": 343,
+     "end": 353,
+     "source": "werkplaats",
+     "gloss": "workshop"
+    },
+    {
+     "start": 354,
+     "end": 358,
+     "source": "voor",
+     "gloss": "forward"
+    },
+    {
+     "start": 359,
+     "end": 361,
+     "source": "en",
+     "gloss": "and"
+    },
+    {
+     "start": 362,
+     "end": 365,
+     "source": "Sam",
+     "gloss": "Sam"
+    },
+    {
+     "start": 366,
+     "end": 371,
+     "source": "begon",
+     "gloss": "began"
+    },
+    {
+     "start": 372,
+     "end": 378,
+     "source": "meteen",
+     "gloss": "immediately"
+    },
+    {
+     "start": 379,
+     "end": 392,
+     "source": "mogelijkheden",
+     "gloss": "possibilities"
+    },
+    {
+     "start": 393,
+     "end": 395,
+     "source": "op",
+     "gloss": "on"
+    },
+    {
+     "start": 396,
+     "end": 402,
+     "source": "papier",
+     "gloss": "paper"
+    },
+    {
+     "start": 403,
+     "end": 405,
+     "source": "te",
+     "gloss": "to"
+    },
+    {
+     "start": 406,
+     "end": 412,
+     "source": "zetten",
+     "gloss": "put"
+    }
+   ],
+   "constructions": [
+    {
+     "role": "discontinuous_construction",
+     "kind": "expression",
+     "label": "stelde … voor",
+     "meaning": "proposed",
+     "members": [
+      {
+       "start": 310,
+       "end": 316,
+       "source": "stelde"
+      },
+      {
+       "start": 354,
+       "end": 358,
+       "source": "voor"
+      }
+     ],
+     "spans": [
+      {
+       "start": 310,
+       "end": 316,
+       "source": "stelde"
+      },
+      {
+       "start": 354,
+       "end": 358,
+       "source": "voor"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "source": "Ze wilden geen duur project met ingewikkelde regels, maar een rustige plek waar buren elkaar konden helpen. Iemand kon er een fiets repareren, een ander persoon kon leren naaien en kinderen mochten samen iets bouwen. Het belangrijkste was volgens Noor dat bezoekers niet eerst iets hoefden te kopen voordat ze welkom waren. Sam schreef bovenaan zijn blad dat de deur open moest blijven voor iedereen die nieuwsgierig was.",
+   "sentences": [
+    {
+     "start": 0,
+     "end": 107,
+     "source": "Ze wilden geen duur project met ingewikkelde regels, maar een rustige plek waar buren elkaar konden helpen."
+    },
+    {
+     "start": 108,
+     "end": 216,
+     "source": "Iemand kon er een fiets repareren, een ander persoon kon leren naaien en kinderen mochten samen iets bouwen."
+    },
+    {
+     "start": 217,
+     "end": 323,
+     "source": "Het belangrijkste was volgens Noor dat bezoekers niet eerst iets hoefden te kopen voordat ze welkom waren."
+    },
+    {
+     "start": 324,
+     "end": 421,
+     "source": "Sam schreef bovenaan zijn blad dat de deur open moest blijven voor iedereen die nieuwsgierig was."
+    }
+   ],
+   "tokens": [
+    {
+     "start": 0,
+     "end": 2,
+     "source": "Ze",
+     "gloss": "They"
+    },
+    {
+     "start": 3,
+     "end": 9,
+     "source": "wilden",
+     "gloss": "wanted"
+    },
+    {
+     "start": 10,
+     "end": 14,
+     "source": "geen",
+     "gloss": "no"
+    },
+    {
+     "start": 15,
+     "end": 19,
+     "source": "duur",
+     "gloss": "expensive"
+    },
+    {
+     "start": 20,
+     "end": 27,
+     "source": "project",
+     "gloss": "project"
+    },
+    {
+     "start": 28,
+     "end": 31,
+     "source": "met",
+     "gloss": "with"
+    },
+    {
+     "start": 32,
+     "end": 44,
+     "source": "ingewikkelde",
+     "gloss": "complicated"
+    },
+    {
+     "start": 45,
+     "end": 51,
+     "source": "regels",
+     "gloss": "rules"
+    },
+    {
+     "start": 53,
+     "end": 57,
+     "source": "maar",
+     "gloss": "but"
+    },
+    {
+     "start": 58,
+     "end": 61,
+     "source": "een",
+     "gloss": "a"
+    },
+    {
+     "start": 62,
+     "end": 69,
+     "source": "rustige",
+     "gloss": "quiet"
+    },
+    {
+     "start": 70,
+     "end": 74,
+     "source": "plek",
+     "gloss": "place"
+    },
+    {
+     "start": 75,
+     "end": 79,
+     "source": "waar",
+     "gloss": "where"
+    },
+    {
+     "start": 80,
+     "end": 85,
+     "source": "buren",
+     "gloss": "neighbors"
+    },
+    {
+     "start": 86,
+     "end": 92,
+     "source": "elkaar",
+     "gloss": "each other"
+    },
+    {
+     "start": 93,
+     "end": 99,
+     "source": "konden",
+     "gloss": "could"
+    },
+    {
+     "start": 100,
+     "end": 106,
+     "source": "helpen",
+     "gloss": "help"
+    },
+    {
+     "start": 108,
+     "end": 114,
+     "source": "Iemand",
+     "gloss": "Someone"
+    },
+    {
+     "start": 115,
+     "end": 118,
+     "source": "kon",
+     "gloss": "could"
+    },
+    {
+     "start": 119,
+     "end": 121,
+     "source": "er",
+     "gloss": "there"
+    },
+    {
+     "start": 122,
+     "end": 125,
+     "source": "een",
+     "gloss": "a"
+    },
+    {
+     "start": 126,
+     "end": 131,
+     "source": "fiets",
+     "gloss": "bicycle"
+    },
+    {
+     "start": 132,
+     "end": 141,
+     "source": "repareren",
+     "gloss": "repair"
+    },
+    {
+     "start": 143,
+     "end": 146,
+     "source": "een",
+     "gloss": "a"
+    },
+    {
+     "start": 147,
+     "end": 152,
+     "source": "ander",
+     "gloss": "other"
+    },
+    {
+     "start": 153,
+     "end": 160,
+     "source": "persoon",
+     "gloss": "person"
+    },
+    {
+     "start": 161,
+     "end": 164,
+     "source": "kon",
+     "gloss": "could"
+    },
+    {
+     "start": 165,
+     "end": 170,
+     "source": "leren",
+     "gloss": "learn"
+    },
+    {
+     "start": 171,
+     "end": 177,
+     "source": "naaien",
+     "gloss": "sew"
+    },
+    {
+     "start": 178,
+     "end": 180,
+     "source": "en",
+     "gloss": "and"
+    },
+    {
+     "start": 181,
+     "end": 189,
+     "source": "kinderen",
+     "gloss": "children"
+    },
+    {
+     "start": 190,
+     "end": 197,
+     "source": "mochten",
+     "gloss": "were allowed"
+    },
+    {
+     "start": 198,
+     "end": 203,
+     "source": "samen",
+     "gloss": "together"
+    },
+    {
+     "start": 204,
+     "end": 208,
+     "source": "iets",
+     "gloss": "something"
+    },
+    {
+     "start": 209,
+     "end": 215,
+     "source": "bouwen",
+     "gloss": "build"
+    },
+    {
+     "start": 217,
+     "end": 220,
+     "source": "Het",
+     "gloss": "The"
+    },
+    {
+     "start": 221,
+     "end": 234,
+     "source": "belangrijkste",
+     "gloss": "most important"
+    },
+    {
+     "start": 235,
+     "end": 238,
+     "source": "was",
+     "gloss": "was"
+    },
+    {
+     "start": 239,
+     "end": 246,
+     "source": "volgens",
+     "gloss": "according to"
+    },
+    {
+     "start": 247,
+     "end": 251,
+     "source": "Noor",
+     "gloss": "Noor"
+    },
+    {
+     "start": 252,
+     "end": 255,
+     "source": "dat",
+     "gloss": "that"
+    },
+    {
+     "start": 256,
+     "end": 265,
+     "source": "bezoekers",
+     "gloss": "visitors"
+    },
+    {
+     "start": 266,
+     "end": 270,
+     "source": "niet",
+     "gloss": "not"
+    },
+    {
+     "start": 271,
+     "end": 276,
+     "source": "eerst",
+     "gloss": "first"
+    },
+    {
+     "start": 277,
+     "end": 281,
+     "source": "iets",
+     "gloss": "something"
+    },
+    {
+     "start": 282,
+     "end": 289,
+     "source": "hoefden",
+     "gloss": "had to"
+    },
+    {
+     "start": 290,
+     "end": 292,
+     "source": "te",
+     "gloss": "to"
+    },
+    {
+     "start": 293,
+     "end": 298,
+     "source": "kopen",
+     "gloss": "buy"
+    },
+    {
+     "start": 299,
+     "end": 306,
+     "source": "voordat",
+     "gloss": "before"
+    },
+    {
+     "start": 307,
+     "end": 309,
+     "source": "ze",
+     "gloss": "they"
+    },
+    {
+     "start": 310,
+     "end": 316,
+     "source": "welkom",
+     "gloss": "welcome"
+    },
+    {
+     "start": 317,
+     "end": 322,
+     "source": "waren",
+     "gloss": "were"
+    },
+    {
+     "start": 324,
+     "end": 327,
+     "source": "Sam",
+     "gloss": "Sam"
+    },
+    {
+     "start": 328,
+     "end": 335,
+     "source": "schreef",
+     "gloss": "wrote"
+    },
+    {
+     "start": 336,
+     "end": 344,
+     "source": "bovenaan",
+     "gloss": "at the top"
+    },
+    {
+     "start": 345,
+     "end": 349,
+     "source": "zijn",
+     "gloss": "his"
+    },
+    {
+     "start": 350,
+     "end": 354,
+     "source": "blad",
+     "gloss": "sheet"
+    },
+    {
+     "start": 355,
+     "end": 358,
+     "source": "dat",
+     "gloss": "that"
+    },
+    {
+     "start": 359,
+     "end": 361,
+     "source": "de",
+     "gloss": "the"
+    },
+    {
+     "start": 362,
+     "end": 366,
+     "source": "deur",
+     "gloss": "door"
+    },
+    {
+     "start": 367,
+     "end": 371,
+     "source": "open",
+     "gloss": "open"
+    },
+    {
+     "start": 372,
+     "end": 377,
+     "source": "moest",
+     "gloss": "had to"
+    },
+    {
+     "start": 378,
+     "end": 385,
+     "source": "blijven",
+     "gloss": "stay"
+    },
+    {
+     "start": 386,
+     "end": 390,
+     "source": "voor",
+     "gloss": "for"
+    },
+    {
+     "start": 391,
+     "end": 399,
+     "source": "iedereen",
+     "gloss": "everyone"
+    },
+    {
+     "start": 400,
+     "end": 403,
+     "source": "die",
+     "gloss": "who"
+    },
+    {
+     "start": 404,
+     "end": 416,
+     "source": "nieuwsgierig",
+     "gloss": "curious"
+    },
+    {
+     "start": 417,
+     "end": 420,
+     "source": "was",
+     "gloss": "was"
+    }
+   ],
+   "constructions": []
+  },
+  {
+   "source": "De eerste bijeenkomst vond op een regenachtige donderdagavond in het buurthuis plaats en trok twaalf bezoekers. Sommigen brachten duidelijke plannen mee, terwijl anderen vooral wilden weten wie de rekening voor verwarming zou betalen. Een oudere vrouw vroeg of er ook een hoek zou komen waar je gewoon koffie kon drinken zonder iets te moeten. Die vraag veranderde het gesprek omdat iedereen ineens begreep dat samen zijn even belangrijk was als samen werken.",
+   "sentences": [
+    {
+     "start": 0,
+     "end": 111,
+     "source": "De eerste bijeenkomst vond op een regenachtige donderdagavond in het buurthuis plaats en trok twaalf bezoekers."
+    },
+    {
+     "start": 112,
+     "end": 234,
+     "source": "Sommigen brachten duidelijke plannen mee, terwijl anderen vooral wilden weten wie de rekening voor verwarming zou betalen."
+    },
+    {
+     "start": 235,
+     "end": 343,
+     "source": "Een oudere vrouw vroeg of er ook een hoek zou komen waar je gewoon koffie kon drinken zonder iets te moeten."
+    },
+    {
+     "start": 344,
+     "end": 459,
+     "source": "Die vraag veranderde het gesprek omdat iedereen ineens begreep dat samen zijn even belangrijk was als samen werken."
+    }
+   ],
+   "tokens": [
+    {
+     "start": 0,
+     "end": 2,
+     "source": "De",
+     "gloss": "The"
+    },
+    {
+     "start": 3,
+     "end": 9,
+     "source": "eerste",
+     "gloss": "first"
+    },
+    {
+     "start": 10,
+     "end": 21,
+     "source": "bijeenkomst",
+     "gloss": "meeting"
+    },
+    {
+     "start": 22,
+     "end": 26,
+     "source": "vond",
+     "gloss": "took"
+    },
+    {
+     "start": 27,
+     "end": 29,
+     "source": "op",
+     "gloss": "on"
+    },
+    {
+     "start": 30,
+     "end": 33,
+     "source": "een",
+     "gloss": "a"
+    },
+    {
+     "start": 34,
+     "end": 46,
+     "source": "regenachtige",
+     "gloss": "rainy"
+    },
+    {
+     "start": 47,
+     "end": 61,
+     "source": "donderdagavond",
+     "gloss": "Thursday evening"
+    },
+    {
+     "start": 62,
+     "end": 64,
+     "source": "in",
+     "gloss": "in"
+    },
+    {
+     "start": 65,
+     "end": 68,
+     "source": "het",
+     "gloss": "the"
+    },
+    {
+     "start": 69,
+     "end": 78,
+     "source": "buurthuis",
+     "gloss": "community center"
+    },
+    {
+     "start": 79,
+     "end": 85,
+     "source": "plaats",
+     "gloss": "place"
+    },
+    {
+     "start": 86,
+     "end": 88,
+     "source": "en",
+     "gloss": "and"
+    },
+    {
+     "start": 89,
+     "end": 93,
+     "source": "trok",
+     "gloss": "attracted"
+    },
+    {
+     "start": 94,
+     "end": 100,
+     "source": "twaalf",
+     "gloss": "twelve"
+    },
+    {
+     "start": 101,
+     "end": 110,
+     "source": "bezoekers",
+     "gloss": "visitors"
+    },
+    {
+     "start": 112,
+     "end": 120,
+     "source": "Sommigen",
+     "gloss": "Some"
+    },
+    {
+     "start": 121,
+     "end": 129,
+     "source": "brachten",
+     "gloss": "brought"
+    },
+    {
+     "start": 130,
+     "end": 140,
+     "source": "duidelijke",
+     "gloss": "clear"
+    },
+    {
+     "start": 141,
+     "end": 148,
+     "source": "plannen",
+     "gloss": "plans"
+    },
+    {
+     "start": 149,
+     "end": 152,
+     "source": "mee",
+     "gloss": "along"
+    },
+    {
+     "start": 154,
+     "end": 161,
+     "source": "terwijl",
+     "gloss": "while"
+    },
+    {
+     "start": 162,
+     "end": 169,
+     "source": "anderen",
+     "gloss": "others"
+    },
+    {
+     "start": 170,
+     "end": 176,
+     "source": "vooral",
+     "gloss": "mainly"
+    },
+    {
+     "start": 177,
+     "end": 183,
+     "source": "wilden",
+     "gloss": "wanted"
+    },
+    {
+     "start": 184,
+     "end": 189,
+     "source": "weten",
+     "gloss": "know"
+    },
+    {
+     "start": 190,
+     "end": 193,
+     "source": "wie",
+     "gloss": "who"
+    },
+    {
+     "start": 194,
+     "end": 196,
+     "source": "de",
+     "gloss": "the"
+    },
+    {
+     "start": 197,
+     "end": 205,
+     "source": "rekening",
+     "gloss": "bill"
+    },
+    {
+     "start": 206,
+     "end": 210,
+     "source": "voor",
+     "gloss": "for"
+    },
+    {
+     "start": 211,
+     "end": 221,
+     "source": "verwarming",
+     "gloss": "heating"
+    },
+    {
+     "start": 222,
+     "end": 225,
+     "source": "zou",
+     "gloss": "would"
+    },
+    {
+     "start": 226,
+     "end": 233,
+     "source": "betalen",
+     "gloss": "pay"
+    },
+    {
+     "start": 235,
+     "end": 238,
+     "source": "Een",
+     "gloss": "An"
+    },
+    {
+     "start": 239,
+     "end": 245,
+     "source": "oudere",
+     "gloss": "older"
+    },
+    {
+     "start": 246,
+     "end": 251,
+     "source": "vrouw",
+     "gloss": "woman"
+    },
+    {
+     "start": 252,
+     "end": 257,
+     "source": "vroeg",
+     "gloss": "asked"
+    },
+    {
+     "start": 258,
+     "end": 260,
+     "source": "of",
+     "gloss": "whether"
+    },
+    {
+     "start": 261,
+     "end": 263,
+     "source": "er",
+     "gloss": "there"
+    },
+    {
+     "start": 264,
+     "end": 267,
+     "source": "ook",
+     "gloss": "also"
+    },
+    {
+     "start": 268,
+     "end": 271,
+     "source": "een",
+     "gloss": "a"
+    },
+    {
+     "start": 272,
+     "end": 276,
+     "source": "hoek",
+     "gloss": "corner"
+    },
+    {
+     "start": 277,
+     "end": 280,
+     "source": "zou",
+     "gloss": "would"
+    },
+    {
+     "start": 281,
+     "end": 286,
+     "source": "komen",
+     "gloss": "come"
+    },
+    {
+     "start": 287,
+     "end": 291,
+     "source": "waar",
+     "gloss": "where"
+    },
+    {
+     "start": 292,
+     "end": 294,
+     "source": "je",
+     "gloss": "you"
+    },
+    {
+     "start": 295,
+     "end": 301,
+     "source": "gewoon",
+     "gloss": "simply"
+    },
+    {
+     "start": 302,
+     "end": 308,
+     "source": "koffie",
+     "gloss": "coffee"
+    },
+    {
+     "start": 309,
+     "end": 312,
+     "source": "kon",
+     "gloss": "could"
+    },
+    {
+     "start": 313,
+     "end": 320,
+     "source": "drinken",
+     "gloss": "drink"
+    },
+    {
+     "start": 321,
+     "end": 327,
+     "source": "zonder",
+     "gloss": "without"
+    },
+    {
+     "start": 328,
+     "end": 332,
+     "source": "iets",
+     "gloss": "anything"
+    },
+    {
+     "start": 333,
+     "end": 335,
+     "source": "te",
+     "gloss": "to"
+    },
+    {
+     "start": 336,
+     "end": 342,
+     "source": "moeten",
+     "gloss": "have to"
+    },
+    {
+     "start": 344,
+     "end": 347,
+     "source": "Die",
+     "gloss": "That"
+    },
+    {
+     "start": 348,
+     "end": 353,
+     "source": "vraag",
+     "gloss": "question"
+    },
+    {
+     "start": 354,
+     "end": 364,
+     "source": "veranderde",
+     "gloss": "changed"
+    },
+    {
+     "start": 365,
+     "end": 368,
+     "source": "het",
+     "gloss": "the"
+    },
+    {
+     "start": 369,
+     "end": 376,
+     "source": "gesprek",
+     "gloss": "conversation"
+    },
+    {
+     "start": 377,
+     "end": 382,
+     "source": "omdat",
+     "gloss": "because"
+    },
+    {
+     "start": 383,
+     "end": 391,
+     "source": "iedereen",
+     "gloss": "everyone"
+    },
+    {
+     "start": 392,
+     "end": 398,
+     "source": "ineens",
+     "gloss": "suddenly"
+    },
+    {
+     "start": 399,
+     "end": 406,
+     "source": "begreep",
+     "gloss": "understood"
+    },
+    {
+     "start": 407,
+     "end": 410,
+     "source": "dat",
+     "gloss": "that"
+    },
+    {
+     "start": 411,
+     "end": 416,
+     "source": "samen",
+     "gloss": "together"
+    },
+    {
+     "start": 417,
+     "end": 421,
+     "source": "zijn",
+     "gloss": "being"
+    },
+    {
+     "start": 422,
+     "end": 426,
+     "source": "even",
+     "gloss": "as"
+    },
+    {
+     "start": 427,
+     "end": 437,
+     "source": "belangrijk",
+     "gloss": "important"
+    },
+    {
+     "start": 438,
+     "end": 441,
+     "source": "was",
+     "gloss": "was"
+    },
+    {
+     "start": 442,
+     "end": 445,
+     "source": "als",
+     "gloss": "as"
+    },
+    {
+     "start": 446,
+     "end": 451,
+     "source": "samen",
+     "gloss": "together"
+    },
+    {
+     "start": 452,
+     "end": 458,
+     "source": "werken",
+     "gloss": "working"
+    }
+   ],
+   "constructions": [
+    {
+     "role": "discontinuous_construction",
+     "kind": "expression",
+     "label": "vond … plaats",
+     "meaning": "took place",
+     "members": [
+      {
+       "start": 22,
+       "end": 26,
+       "source": "vond"
+      },
+      {
+       "start": 79,
+       "end": 85,
+       "source": "plaats"
+      }
+     ],
+     "spans": [
+      {
+       "start": 22,
+       "end": 26,
+       "source": "vond"
+      },
+      {
+       "start": 79,
+       "end": 85,
+       "source": "plaats"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "source": "Daarna begon het minder zichtbare werk van bellen, rekenen en wachten op antwoorden die niet altijd kwamen. De eigenaar woonde inmiddels in een andere stad en wilde eerst precies weten wat er met zijn pand zou gebeuren. Noor legde tijdens een lang telefoongesprek rustig uit hoe vrijwilligers de ruimte zouden gebruiken en onderhouden. Hij gaf het plan dat zij samen met haar buren zorgvuldig had uitgewerkt uiteindelijk toch een kans.",
+   "sentences": [
+    {
+     "start": 0,
+     "end": 107,
+     "source": "Daarna begon het minder zichtbare werk van bellen, rekenen en wachten op antwoorden die niet altijd kwamen."
+    },
+    {
+     "start": 108,
+     "end": 219,
+     "source": "De eigenaar woonde inmiddels in een andere stad en wilde eerst precies weten wat er met zijn pand zou gebeuren."
+    },
+    {
+     "start": 220,
+     "end": 335,
+     "source": "Noor legde tijdens een lang telefoongesprek rustig uit hoe vrijwilligers de ruimte zouden gebruiken en onderhouden."
+    },
+    {
+     "start": 336,
+     "end": 435,
+     "source": "Hij gaf het plan dat zij samen met haar buren zorgvuldig had uitgewerkt uiteindelijk toch een kans."
+    }
+   ],
+   "tokens": [
+    {
+     "start": 0,
+     "end": 6,
+     "source": "Daarna",
+     "gloss": "Afterwards"
+    },
+    {
+     "start": 7,
+     "end": 12,
+     "source": "begon",
+     "gloss": "began"
+    },
+    {
+     "start": 13,
+     "end": 16,
+     "source": "het",
+     "gloss": "the"
+    },
+    {
+     "start": 17,
+     "end": 23,
+     "source": "minder",
+     "gloss": "less"
+    },
+    {
+     "start": 24,
+     "end": 33,
+     "source": "zichtbare",
+     "gloss": "visible"
+    },
+    {
+     "start": 34,
+     "end": 38,
+     "source": "werk",
+     "gloss": "work"
+    },
+    {
+     "start": 39,
+     "end": 42,
+     "source": "van",
+     "gloss": "of"
+    },
+    {
+     "start": 43,
+     "end": 49,
+     "source": "bellen",
+     "gloss": "calling"
+    },
+    {
+     "start": 51,
+     "end": 58,
+     "source": "rekenen",
+     "gloss": "calculating"
+    },
+    {
+     "start": 59,
+     "end": 61,
+     "source": "en",
+     "gloss": "and"
+    },
+    {
+     "start": 62,
+     "end": 69,
+     "source": "wachten",
+     "gloss": "waiting"
+    },
+    {
+     "start": 70,
+     "end": 72,
+     "source": "op",
+     "gloss": "for"
+    },
+    {
+     "start": 73,
+     "end": 83,
+     "source": "antwoorden",
+     "gloss": "answers"
+    },
+    {
+     "start": 84,
+     "end": 87,
+     "source": "die",
+     "gloss": "that"
+    },
+    {
+     "start": 88,
+     "end": 92,
+     "source": "niet",
+     "gloss": "not"
+    },
+    {
+     "start": 93,
+     "end": 99,
+     "source": "altijd",
+     "gloss": "always"
+    },
+    {
+     "start": 100,
+     "end": 106,
+     "source": "kwamen",
+     "gloss": "came"
+    },
+    {
+     "start": 108,
+     "end": 110,
+     "source": "De",
+     "gloss": "The"
+    },
+    {
+     "start": 111,
+     "end": 119,
+     "source": "eigenaar",
+     "gloss": "owner"
+    },
+    {
+     "start": 120,
+     "end": 126,
+     "source": "woonde",
+     "gloss": "lived"
+    },
+    {
+     "start": 127,
+     "end": 136,
+     "source": "inmiddels",
+     "gloss": "by now"
+    },
+    {
+     "start": 137,
+     "end": 139,
+     "source": "in",
+     "gloss": "in"
+    },
+    {
+     "start": 140,
+     "end": 143,
+     "source": "een",
+     "gloss": "a"
+    },
+    {
+     "start": 144,
+     "end": 150,
+     "source": "andere",
+     "gloss": "other"
+    },
+    {
+     "start": 151,
+     "end": 155,
+     "source": "stad",
+     "gloss": "city"
+    },
+    {
+     "start": 156,
+     "end": 158,
+     "source": "en",
+     "gloss": "and"
+    },
+    {
+     "start": 159,
+     "end": 164,
+     "source": "wilde",
+     "gloss": "wanted"
+    },
+    {
+     "start": 165,
+     "end": 170,
+     "source": "eerst",
+     "gloss": "first"
+    },
+    {
+     "start": 171,
+     "end": 178,
+     "source": "precies",
+     "gloss": "exactly"
+    },
+    {
+     "start": 179,
+     "end": 184,
+     "source": "weten",
+     "gloss": "know"
+    },
+    {
+     "start": 185,
+     "end": 188,
+     "source": "wat",
+     "gloss": "what"
+    },
+    {
+     "start": 189,
+     "end": 191,
+     "source": "er",
+     "gloss": "there"
+    },
+    {
+     "start": 192,
+     "end": 195,
+     "source": "met",
+     "gloss": "with"
+    },
+    {
+     "start": 196,
+     "end": 200,
+     "source": "zijn",
+     "gloss": "his"
+    },
+    {
+     "start": 201,
+     "end": 205,
+     "source": "pand",
+     "gloss": "building"
+    },
+    {
+     "start": 206,
+     "end": 209,
+     "source": "zou",
+     "gloss": "would"
+    },
+    {
+     "start": 210,
+     "end": 218,
+     "source": "gebeuren",
+     "gloss": "happen"
+    },
+    {
+     "start": 220,
+     "end": 224,
+     "source": "Noor",
+     "gloss": "Noor"
+    },
+    {
+     "start": 225,
+     "end": 230,
+     "source": "legde",
+     "gloss": "laid"
+    },
+    {
+     "start": 231,
+     "end": 238,
+     "source": "tijdens",
+     "gloss": "during"
+    },
+    {
+     "start": 239,
+     "end": 242,
+     "source": "een",
+     "gloss": "a"
+    },
+    {
+     "start": 243,
+     "end": 247,
+     "source": "lang",
+     "gloss": "long"
+    },
+    {
+     "start": 248,
+     "end": 263,
+     "source": "telefoongesprek",
+     "gloss": "phone call"
+    },
+    {
+     "start": 264,
+     "end": 270,
+     "source": "rustig",
+     "gloss": "calmly"
+    },
+    {
+     "start": 271,
+     "end": 274,
+     "source": "uit",
+     "gloss": "out"
+    },
+    {
+     "start": 275,
+     "end": 278,
+     "source": "hoe",
+     "gloss": "how"
+    },
+    {
+     "start": 279,
+     "end": 292,
+     "source": "vrijwilligers",
+     "gloss": "volunteers"
+    },
+    {
+     "start": 293,
+     "end": 295,
+     "source": "de",
+     "gloss": "the"
+    },
+    {
+     "start": 296,
+     "end": 302,
+     "source": "ruimte",
+     "gloss": "space"
+    },
+    {
+     "start": 303,
+     "end": 309,
+     "source": "zouden",
+     "gloss": "would"
+    },
+    {
+     "start": 310,
+     "end": 319,
+     "source": "gebruiken",
+     "gloss": "use"
+    },
+    {
+     "start": 320,
+     "end": 322,
+     "source": "en",
+     "gloss": "and"
+    },
+    {
+     "start": 323,
+     "end": 334,
+     "source": "onderhouden",
+     "gloss": "maintain"
+    },
+    {
+     "start": 336,
+     "end": 339,
+     "source": "Hij",
+     "gloss": "He"
+    },
+    {
+     "start": 340,
+     "end": 343,
+     "source": "gaf",
+     "gloss": "gave"
+    },
+    {
+     "start": 344,
+     "end": 347,
+     "source": "het",
+     "gloss": "the"
+    },
+    {
+     "start": 348,
+     "end": 352,
+     "source": "plan",
+     "gloss": "plan"
+    },
+    {
+     "start": 353,
+     "end": 356,
+     "source": "dat",
+     "gloss": "that"
+    },
+    {
+     "start": 357,
+     "end": 360,
+     "source": "zij",
+     "gloss": "she"
+    },
+    {
+     "start": 361,
+     "end": 366,
+     "source": "samen",
+     "gloss": "together"
+    },
+    {
+     "start": 367,
+     "end": 370,
+     "source": "met",
+     "gloss": "with"
+    },
+    {
+     "start": 371,
+     "end": 375,
+     "source": "haar",
+     "gloss": "her"
+    },
+    {
+     "start": 376,
+     "end": 381,
+     "source": "buren",
+     "gloss": "neighbors"
+    },
+    {
+     "start": 382,
+     "end": 392,
+     "source": "zorgvuldig",
+     "gloss": "carefully"
+    },
+    {
+     "start": 393,
+     "end": 396,
+     "source": "had",
+     "gloss": "had"
+    },
+    {
+     "start": 397,
+     "end": 407,
+     "source": "uitgewerkt",
+     "gloss": "developed"
+    },
+    {
+     "start": 408,
+     "end": 420,
+     "source": "uiteindelijk",
+     "gloss": "eventually"
+    },
+    {
+     "start": 421,
+     "end": 425,
+     "source": "toch",
+     "gloss": "after all"
+    },
+    {
+     "start": 426,
+     "end": 429,
+     "source": "een",
+     "gloss": "a"
+    },
+    {
+     "start": 430,
+     "end": 434,
+     "source": "kans",
+     "gloss": "chance"
+    }
+   ],
+   "constructions": [
+    {
+     "role": "discontinuous_construction",
+     "kind": "expression",
+     "label": "legde … uit",
+     "meaning": "explained",
+     "members": [
+      {
+       "start": 225,
+       "end": 230,
+       "source": "legde"
+      },
+      {
+       "start": 271,
+       "end": 274,
+       "source": "uit"
+      }
+     ],
+     "spans": [
+      {
+       "start": 225,
+       "end": 230,
+       "source": "legde"
+      },
+      {
+       "start": 271,
+       "end": 274,
+       "source": "uit"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "source": "Op de eerste schoonmaakdag lagen overal dozen en moesten de ramen voorzichtig worden schoongemaakt voordat er genoeg licht binnenkwam. Sam vond onder een kast een kaart van de buurt waarop straten stonden die nu heel anders heetten. Een meisje wees naar de plek waar haar school stond en ontdekte dat daar vroeger een tuin was geweest. Ze hingen de kaart naast de ingang op zodat nieuwe bezoekers konden zien hoeveel een buurt kan veranderen.",
+   "sentences": [
+    {
+     "start": 0,
+     "end": 134,
+     "source": "Op de eerste schoonmaakdag lagen overal dozen en moesten de ramen voorzichtig worden schoongemaakt voordat er genoeg licht binnenkwam."
+    },
+    {
+     "start": 135,
+     "end": 232,
+     "source": "Sam vond onder een kast een kaart van de buurt waarop straten stonden die nu heel anders heetten."
+    },
+    {
+     "start": 233,
+     "end": 335,
+     "source": "Een meisje wees naar de plek waar haar school stond en ontdekte dat daar vroeger een tuin was geweest."
+    },
+    {
+     "start": 336,
+     "end": 442,
+     "source": "Ze hingen de kaart naast de ingang op zodat nieuwe bezoekers konden zien hoeveel een buurt kan veranderen."
+    }
+   ],
+   "tokens": [
+    {
+     "start": 0,
+     "end": 2,
+     "source": "Op",
+     "gloss": "On"
+    },
+    {
+     "start": 3,
+     "end": 5,
+     "source": "de",
+     "gloss": "the"
+    },
+    {
+     "start": 6,
+     "end": 12,
+     "source": "eerste",
+     "gloss": "first"
+    },
+    {
+     "start": 13,
+     "end": 26,
+     "source": "schoonmaakdag",
+     "gloss": "cleaning day"
+    },
+    {
+     "start": 27,
+     "end": 32,
+     "source": "lagen",
+     "gloss": "lay"
+    },
+    {
+     "start": 33,
+     "end": 39,
+     "source": "overal",
+     "gloss": "everywhere"
+    },
+    {
+     "start": 40,
+     "end": 45,
+     "source": "dozen",
+     "gloss": "boxes"
+    },
+    {
+     "start": 46,
+     "end": 48,
+     "source": "en",
+     "gloss": "and"
+    },
+    {
+     "start": 49,
+     "end": 56,
+     "source": "moesten",
+     "gloss": "had to"
+    },
+    {
+     "start": 57,
+     "end": 59,
+     "source": "de",
+     "gloss": "the"
+    },
+    {
+     "start": 60,
+     "end": 65,
+     "source": "ramen",
+     "gloss": "windows"
+    },
+    {
+     "start": 66,
+     "end": 77,
+     "source": "voorzichtig",
+     "gloss": "carefully"
+    },
+    {
+     "start": 78,
+     "end": 84,
+     "source": "worden",
+     "gloss": "be"
+    },
+    {
+     "start": 85,
+     "end": 98,
+     "source": "schoongemaakt",
+     "gloss": "cleaned"
+    },
+    {
+     "start": 99,
+     "end": 106,
+     "source": "voordat",
+     "gloss": "before"
+    },
+    {
+     "start": 107,
+     "end": 109,
+     "source": "er",
+     "gloss": "there"
+    },
+    {
+     "start": 110,
+     "end": 116,
+     "source": "genoeg",
+     "gloss": "enough"
+    },
+    {
+     "start": 117,
+     "end": 122,
+     "source": "licht",
+     "gloss": "light"
+    },
+    {
+     "start": 123,
+     "end": 133,
+     "source": "binnenkwam",
+     "gloss": "entered"
+    },
+    {
+     "start": 135,
+     "end": 138,
+     "source": "Sam",
+     "gloss": "Sam"
+    },
+    {
+     "start": 139,
+     "end": 143,
+     "source": "vond",
+     "gloss": "found"
+    },
+    {
+     "start": 144,
+     "end": 149,
+     "source": "onder",
+     "gloss": "under"
+    },
+    {
+     "start": 150,
+     "end": 153,
+     "source": "een",
+     "gloss": "a"
+    },
+    {
+     "start": 154,
+     "end": 158,
+     "source": "kast",
+     "gloss": "cupboard"
+    },
+    {
+     "start": 159,
+     "end": 162,
+     "source": "een",
+     "gloss": "a"
+    },
+    {
+     "start": 163,
+     "end": 168,
+     "source": "kaart",
+     "gloss": "map"
+    },
+    {
+     "start": 169,
+     "end": 172,
+     "source": "van",
+     "gloss": "of"
+    },
+    {
+     "start": 173,
+     "end": 175,
+     "source": "de",
+     "gloss": "the"
+    },
+    {
+     "start": 176,
+     "end": 181,
+     "source": "buurt",
+     "gloss": "neighborhood"
+    },
+    {
+     "start": 182,
+     "end": 188,
+     "source": "waarop",
+     "gloss": "on which"
+    },
+    {
+     "start": 189,
+     "end": 196,
+     "source": "straten",
+     "gloss": "streets"
+    },
+    {
+     "start": 197,
+     "end": 204,
+     "source": "stonden",
+     "gloss": "stood"
+    },
+    {
+     "start": 205,
+     "end": 208,
+     "source": "die",
+     "gloss": "that"
+    },
+    {
+     "start": 209,
+     "end": 211,
+     "source": "nu",
+     "gloss": "now"
+    },
+    {
+     "start": 212,
+     "end": 216,
+     "source": "heel",
+     "gloss": "very"
+    },
+    {
+     "start": 217,
+     "end": 223,
+     "source": "anders",
+     "gloss": "differently"
+    },
+    {
+     "start": 224,
+     "end": 231,
+     "source": "heetten",
+     "gloss": "were named"
+    },
+    {
+     "start": 233,
+     "end": 236,
+     "source": "Een",
+     "gloss": "A"
+    },
+    {
+     "start": 237,
+     "end": 243,
+     "source": "meisje",
+     "gloss": "girl"
+    },
+    {
+     "start": 244,
+     "end": 248,
+     "source": "wees",
+     "gloss": "pointed"
+    },
+    {
+     "start": 249,
+     "end": 253,
+     "source": "naar",
+     "gloss": "at"
+    },
+    {
+     "start": 254,
+     "end": 256,
+     "source": "de",
+     "gloss": "the"
+    },
+    {
+     "start": 257,
+     "end": 261,
+     "source": "plek",
+     "gloss": "place"
+    },
+    {
+     "start": 262,
+     "end": 266,
+     "source": "waar",
+     "gloss": "where"
+    },
+    {
+     "start": 267,
+     "end": 271,
+     "source": "haar",
+     "gloss": "her"
+    },
+    {
+     "start": 272,
+     "end": 278,
+     "source": "school",
+     "gloss": "school"
+    },
+    {
+     "start": 279,
+     "end": 284,
+     "source": "stond",
+     "gloss": "stood"
+    },
+    {
+     "start": 285,
+     "end": 287,
+     "source": "en",
+     "gloss": "and"
+    },
+    {
+     "start": 288,
+     "end": 296,
+     "source": "ontdekte",
+     "gloss": "discovered"
+    },
+    {
+     "start": 297,
+     "end": 300,
+     "source": "dat",
+     "gloss": "that"
+    },
+    {
+     "start": 301,
+     "end": 305,
+     "source": "daar",
+     "gloss": "there"
+    },
+    {
+     "start": 306,
+     "end": 313,
+     "source": "vroeger",
+     "gloss": "formerly"
+    },
+    {
+     "start": 314,
+     "end": 317,
+     "source": "een",
+     "gloss": "a"
+    },
+    {
+     "start": 318,
+     "end": 322,
+     "source": "tuin",
+     "gloss": "garden"
+    },
+    {
+     "start": 323,
+     "end": 326,
+     "source": "was",
+     "gloss": "was"
+    },
+    {
+     "start": 327,
+     "end": 334,
+     "source": "geweest",
+     "gloss": "been"
+    },
+    {
+     "start": 336,
+     "end": 338,
+     "source": "Ze",
+     "gloss": "They"
+    },
+    {
+     "start": 339,
+     "end": 345,
+     "source": "hingen",
+     "gloss": "hung"
+    },
+    {
+     "start": 346,
+     "end": 348,
+     "source": "de",
+     "gloss": "the"
+    },
+    {
+     "start": 349,
+     "end": 354,
+     "source": "kaart",
+     "gloss": "map"
+    },
+    {
+     "start": 355,
+     "end": 360,
+     "source": "naast",
+     "gloss": "beside"
+    },
+    {
+     "start": 361,
+     "end": 363,
+     "source": "de",
+     "gloss": "the"
+    },
+    {
+     "start": 364,
+     "end": 370,
+     "source": "ingang",
+     "gloss": "entrance"
+    },
+    {
+     "start": 371,
+     "end": 373,
+     "source": "op",
+     "gloss": "up"
+    },
+    {
+     "start": 374,
+     "end": 379,
+     "source": "zodat",
+     "gloss": "so that"
+    },
+    {
+     "start": 380,
+     "end": 386,
+     "source": "nieuwe",
+     "gloss": "new"
+    },
+    {
+     "start": 387,
+     "end": 396,
+     "source": "bezoekers",
+     "gloss": "visitors"
+    },
+    {
+     "start": 397,
+     "end": 403,
+     "source": "konden",
+     "gloss": "could"
+    },
+    {
+     "start": 404,
+     "end": 408,
+     "source": "zien",
+     "gloss": "see"
+    },
+    {
+     "start": 409,
+     "end": 416,
+     "source": "hoeveel",
+     "gloss": "how much"
+    },
+    {
+     "start": 417,
+     "end": 420,
+     "source": "een",
+     "gloss": "a"
+    },
+    {
+     "start": 421,
+     "end": 426,
+     "source": "buurt",
+     "gloss": "neighborhood"
+    },
+    {
+     "start": 427,
+     "end": 430,
+     "source": "kan",
+     "gloss": "can"
+    },
+    {
+     "start": 431,
+     "end": 441,
+     "source": "veranderen",
+     "gloss": "change"
+    }
+   ],
+   "constructions": [
+    {
+     "role": "discontinuous_construction",
+     "kind": "expression",
+     "label": "hingen … op",
+     "meaning": "hung up",
+     "members": [
+      {
+       "start": 339,
+       "end": 345,
+       "source": "hingen"
+      },
+      {
+       "start": 371,
+       "end": 373,
+       "source": "op"
+      }
+     ],
+     "spans": [
+      {
+       "start": 339,
+       "end": 345,
+       "source": "hingen"
+      },
+      {
+       "start": 371,
+       "end": 373,
+       "source": "op"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "source": "Niet alles ging vanzelf en na een paar weken ontstond er ruzie over het gebruik van de grootste tafel. De mensen die fietsen repareerden wilden hun gereedschap laten liggen, maar de naaigroep had dezelfde ruimte iedere dinsdag nodig. Noor zat er een avond mee in haar maag en vroeg zich af of ze te veel had beloofd. Ze gaf haar plan echter niet op en nodigde beide groepen uit om samen een eenvoudige afspraak te maken.",
+   "sentences": [
+    {
+     "start": 0,
+     "end": 102,
+     "source": "Niet alles ging vanzelf en na een paar weken ontstond er ruzie over het gebruik van de grootste tafel."
+    },
+    {
+     "start": 103,
+     "end": 233,
+     "source": "De mensen die fietsen repareerden wilden hun gereedschap laten liggen, maar de naaigroep had dezelfde ruimte iedere dinsdag nodig."
+    },
+    {
+     "start": 234,
+     "end": 316,
+     "source": "Noor zat er een avond mee in haar maag en vroeg zich af of ze te veel had beloofd."
+    },
+    {
+     "start": 317,
+     "end": 420,
+     "source": "Ze gaf haar plan echter niet op en nodigde beide groepen uit om samen een eenvoudige afspraak te maken."
+    }
+   ],
+   "tokens": [
+    {
+     "start": 0,
+     "end": 4,
+     "source": "Niet",
+     "gloss": "Not"
+    },
+    {
+     "start": 5,
+     "end": 10,
+     "source": "alles",
+     "gloss": "everything"
+    },
+    {
+     "start": 11,
+     "end": 15,
+     "source": "ging",
+     "gloss": "went"
+    },
+    {
+     "start": 16,
+     "end": 23,
+     "source": "vanzelf",
+     "gloss": "smoothly"
+    },
+    {
+     "start": 24,
+     "end": 26,
+     "source": "en",
+     "gloss": "and"
+    },
+    {
+     "start": 27,
+     "end": 29,
+     "source": "na",
+     "gloss": "after"
+    },
+    {
+     "start": 30,
+     "end": 33,
+     "source": "een",
+     "gloss": "a"
+    },
+    {
+     "start": 34,
+     "end": 38,
+     "source": "paar",
+     "gloss": "few"
+    },
+    {
+     "start": 39,
+     "end": 44,
+     "source": "weken",
+     "gloss": "weeks"
+    },
+    {
+     "start": 45,
+     "end": 53,
+     "source": "ontstond",
+     "gloss": "arose"
+    },
+    {
+     "start": 54,
+     "end": 56,
+     "source": "er",
+     "gloss": "there"
+    },
+    {
+     "start": 57,
+     "end": 62,
+     "source": "ruzie",
+     "gloss": "argument"
+    },
+    {
+     "start": 63,
+     "end": 67,
+     "source": "over",
+     "gloss": "about"
+    },
+    {
+     "start": 68,
+     "end": 71,
+     "source": "het",
+     "gloss": "the"
+    },
+    {
+     "start": 72,
+     "end": 79,
+     "source": "gebruik",
+     "gloss": "use"
+    },
+    {
+     "start": 80,
+     "end": 83,
+     "source": "van",
+     "gloss": "of"
+    },
+    {
+     "start": 84,
+     "end": 86,
+     "source": "de",
+     "gloss": "the"
+    },
+    {
+     "start": 87,
+     "end": 95,
+     "source": "grootste",
+     "gloss": "largest"
+    },
+    {
+     "start": 96,
+     "end": 101,
+     "source": "tafel",
+     "gloss": "table"
+    },
+    {
+     "start": 103,
+     "end": 105,
+     "source": "De",
+     "gloss": "The"
+    },
+    {
+     "start": 106,
+     "end": 112,
+     "source": "mensen",
+     "gloss": "people"
+    },
+    {
+     "start": 113,
+     "end": 116,
+     "source": "die",
+     "gloss": "that"
+    },
+    {
+     "start": 117,
+     "end": 124,
+     "source": "fietsen",
+     "gloss": "bicycles"
+    },
+    {
+     "start": 125,
+     "end": 136,
+     "source": "repareerden",
+     "gloss": "repaired"
+    },
+    {
+     "start": 137,
+     "end": 143,
+     "source": "wilden",
+     "gloss": "wanted"
+    },
+    {
+     "start": 144,
+     "end": 147,
+     "source": "hun",
+     "gloss": "their"
+    },
+    {
+     "start": 148,
+     "end": 159,
+     "source": "gereedschap",
+     "gloss": "tools"
+    },
+    {
+     "start": 160,
+     "end": 165,
+     "source": "laten",
+     "gloss": "let"
+    },
+    {
+     "start": 166,
+     "end": 172,
+     "source": "liggen",
+     "gloss": "lie"
+    },
+    {
+     "start": 174,
+     "end": 178,
+     "source": "maar",
+     "gloss": "but"
+    },
+    {
+     "start": 179,
+     "end": 181,
+     "source": "de",
+     "gloss": "the"
+    },
+    {
+     "start": 182,
+     "end": 191,
+     "source": "naaigroep",
+     "gloss": "sewing group"
+    },
+    {
+     "start": 192,
+     "end": 195,
+     "source": "had",
+     "gloss": "had"
+    },
+    {
+     "start": 196,
+     "end": 204,
+     "source": "dezelfde",
+     "gloss": "same"
+    },
+    {
+     "start": 205,
+     "end": 211,
+     "source": "ruimte",
+     "gloss": "space"
+    },
+    {
+     "start": 212,
+     "end": 218,
+     "source": "iedere",
+     "gloss": "every"
+    },
+    {
+     "start": 219,
+     "end": 226,
+     "source": "dinsdag",
+     "gloss": "Tuesday"
+    },
+    {
+     "start": 227,
+     "end": 232,
+     "source": "nodig",
+     "gloss": "necessary"
+    },
+    {
+     "start": 234,
+     "end": 238,
+     "source": "Noor",
+     "gloss": "Noor"
+    },
+    {
+     "start": 239,
+     "end": 242,
+     "source": "zat",
+     "gloss": "sat"
+    },
+    {
+     "start": 243,
+     "end": 245,
+     "source": "er",
+     "gloss": "there"
+    },
+    {
+     "start": 246,
+     "end": 249,
+     "source": "een",
+     "gloss": "a"
+    },
+    {
+     "start": 250,
+     "end": 255,
+     "source": "avond",
+     "gloss": "evening"
+    },
+    {
+     "start": 256,
+     "end": 259,
+     "source": "mee",
+     "gloss": "with"
+    },
+    {
+     "start": 260,
+     "end": 262,
+     "source": "in",
+     "gloss": "in"
+    },
+    {
+     "start": 263,
+     "end": 267,
+     "source": "haar",
+     "gloss": "her"
+    },
+    {
+     "start": 268,
+     "end": 272,
+     "source": "maag",
+     "gloss": "stomach"
+    },
+    {
+     "start": 273,
+     "end": 275,
+     "source": "en",
+     "gloss": "and"
+    },
+    {
+     "start": 276,
+     "end": 281,
+     "source": "vroeg",
+     "gloss": "asked"
+    },
+    {
+     "start": 282,
+     "end": 286,
+     "source": "zich",
+     "gloss": "herself"
+    },
+    {
+     "start": 287,
+     "end": 289,
+     "source": "af",
+     "gloss": "off"
+    },
+    {
+     "start": 290,
+     "end": 292,
+     "source": "of",
+     "gloss": "whether"
+    },
+    {
+     "start": 293,
+     "end": 295,
+     "source": "ze",
+     "gloss": "she"
+    },
+    {
+     "start": 296,
+     "end": 298,
+     "source": "te",
+     "gloss": "too"
+    },
+    {
+     "start": 299,
+     "end": 303,
+     "source": "veel",
+     "gloss": "much"
+    },
+    {
+     "start": 304,
+     "end": 307,
+     "source": "had",
+     "gloss": "had"
+    },
+    {
+     "start": 308,
+     "end": 315,
+     "source": "beloofd",
+     "gloss": "promised"
+    },
+    {
+     "start": 317,
+     "end": 319,
+     "source": "Ze",
+     "gloss": "She"
+    },
+    {
+     "start": 320,
+     "end": 323,
+     "source": "gaf",
+     "gloss": "gave"
+    },
+    {
+     "start": 324,
+     "end": 328,
+     "source": "haar",
+     "gloss": "her"
+    },
+    {
+     "start": 329,
+     "end": 333,
+     "source": "plan",
+     "gloss": "plan"
+    },
+    {
+     "start": 334,
+     "end": 340,
+     "source": "echter",
+     "gloss": "however"
+    },
+    {
+     "start": 341,
+     "end": 345,
+     "source": "niet",
+     "gloss": "not"
+    },
+    {
+     "start": 346,
+     "end": 348,
+     "source": "op",
+     "gloss": "up"
+    },
+    {
+     "start": 349,
+     "end": 351,
+     "source": "en",
+     "gloss": "and"
+    },
+    {
+     "start": 352,
+     "end": 359,
+     "source": "nodigde",
+     "gloss": "invited"
+    },
+    {
+     "start": 360,
+     "end": 365,
+     "source": "beide",
+     "gloss": "both"
+    },
+    {
+     "start": 366,
+     "end": 373,
+     "source": "groepen",
+     "gloss": "groups"
+    },
+    {
+     "start": 374,
+     "end": 377,
+     "source": "uit",
+     "gloss": "out"
+    },
+    {
+     "start": 378,
+     "end": 380,
+     "source": "om",
+     "gloss": "to"
+    },
+    {
+     "start": 381,
+     "end": 386,
+     "source": "samen",
+     "gloss": "together"
+    },
+    {
+     "start": 387,
+     "end": 390,
+     "source": "een",
+     "gloss": "a"
+    },
+    {
+     "start": 391,
+     "end": 401,
+     "source": "eenvoudige",
+     "gloss": "simple"
+    },
+    {
+     "start": 402,
+     "end": 410,
+     "source": "afspraak",
+     "gloss": "agreement"
+    },
+    {
+     "start": 411,
+     "end": 413,
+     "source": "te",
+     "gloss": "to"
+    },
+    {
+     "start": 414,
+     "end": 419,
+     "source": "maken",
+     "gloss": "make"
+    }
+   ],
+   "constructions": [
+    {
+     "role": "discontinuous_construction",
+     "kind": "expression",
+     "label": "ergens mee in je maag zitten",
+     "meaning": "be troubled by something",
+     "members": [
+      {
+       "start": 239,
+       "end": 242,
+       "source": "zat"
+      },
+      {
+       "start": 243,
+       "end": 245,
+       "source": "er"
+      },
+      {
+       "start": 256,
+       "end": 259,
+       "source": "mee"
+      },
+      {
+       "start": 260,
+       "end": 262,
+       "source": "in"
+      },
+      {
+       "start": 263,
+       "end": 267,
+       "source": "haar"
+      },
+      {
+       "start": 268,
+       "end": 272,
+       "source": "maag"
+      }
+     ],
+     "spans": [
+      {
+       "start": 239,
+       "end": 242,
+       "source": "zat"
+      },
+      {
+       "start": 243,
+       "end": 245,
+       "source": "er"
+      },
+      {
+       "start": 256,
+       "end": 259,
+       "source": "mee"
+      },
+      {
+       "start": 260,
+       "end": 262,
+       "source": "in"
+      },
+      {
+       "start": 263,
+       "end": 267,
+       "source": "haar"
+      },
+      {
+       "start": 268,
+       "end": 272,
+       "source": "maag"
+      }
+     ]
+    },
+    {
+     "role": "discontinuous_construction",
+     "kind": "expression",
+     "label": "zich afvragen",
+     "meaning": "wonder",
+     "members": [
+      {
+       "start": 276,
+       "end": 281,
+       "source": "vroeg"
+      },
+      {
+       "start": 282,
+       "end": 286,
+       "source": "zich"
+      },
+      {
+       "start": 287,
+       "end": 289,
+       "source": "af"
+      }
+     ],
+     "spans": [
+      {
+       "start": 276,
+       "end": 281,
+       "source": "vroeg"
+      },
+      {
+       "start": 282,
+       "end": 286,
+       "source": "zich"
+      },
+      {
+       "start": 287,
+       "end": 289,
+       "source": "af"
+      }
+     ]
+    },
+    {
+     "role": "discontinuous_construction",
+     "kind": "expression",
+     "label": "gaf … op",
+     "meaning": "gave up",
+     "members": [
+      {
+       "start": 320,
+       "end": 323,
+       "source": "gaf"
+      },
+      {
+       "start": 346,
+       "end": 348,
+       "source": "op"
+      }
+     ],
+     "spans": [
+      {
+       "start": 320,
+       "end": 323,
+       "source": "gaf"
+      },
+      {
+       "start": 346,
+       "end": 348,
+       "source": "op"
+      }
+     ]
+    },
+    {
+     "role": "discontinuous_construction",
+     "kind": "expression",
+     "label": "nodigde … uit",
+     "meaning": "invited",
+     "members": [
+      {
+       "start": 352,
+       "end": 359,
+       "source": "nodigde"
+      },
+      {
+       "start": 374,
+       "end": 377,
+       "source": "uit"
+      }
+     ],
+     "spans": [
+      {
+       "start": 352,
+       "end": 359,
+       "source": "nodigde"
+      },
+      {
+       "start": 374,
+       "end": 377,
+       "source": "uit"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "source": "Uiteindelijk bleek een kast op wielen genoeg om het probleem op te lossen zonder nieuwe regels of extra vergaderingen. Aan het einde van elke middag verdwenen de spullen in de kast en werd de tafel weer vrij. Dat kleine succes gaf iedereen vertrouwen omdat het liet zien dat een verschil van mening niet meteen een ramp was. Sam schreef de afspraak op een kaartje en hing dat boven de kast waar niemand het kon missen.",
+   "sentences": [
+    {
+     "start": 0,
+     "end": 118,
+     "source": "Uiteindelijk bleek een kast op wielen genoeg om het probleem op te lossen zonder nieuwe regels of extra vergaderingen."
+    },
+    {
+     "start": 119,
+     "end": 208,
+     "source": "Aan het einde van elke middag verdwenen de spullen in de kast en werd de tafel weer vrij."
+    },
+    {
+     "start": 209,
+     "end": 324,
+     "source": "Dat kleine succes gaf iedereen vertrouwen omdat het liet zien dat een verschil van mening niet meteen een ramp was."
+    },
+    {
+     "start": 325,
+     "end": 418,
+     "source": "Sam schreef de afspraak op een kaartje en hing dat boven de kast waar niemand het kon missen."
+    }
+   ],
+   "tokens": [
+    {
+     "start": 0,
+     "end": 12,
+     "source": "Uiteindelijk",
+     "gloss": "Eventually"
+    },
+    {
+     "start": 13,
+     "end": 18,
+     "source": "bleek",
+     "gloss": "turned out"
+    },
+    {
+     "start": 19,
+     "end": 22,
+     "source": "een",
+     "gloss": "a"
+    },
+    {
+     "start": 23,
+     "end": 27,
+     "source": "kast",
+     "gloss": "cupboard"
+    },
+    {
+     "start": 28,
+     "end": 30,
+     "source": "op",
+     "gloss": "on"
+    },
+    {
+     "start": 31,
+     "end": 37,
+     "source": "wielen",
+     "gloss": "wheels"
+    },
+    {
+     "start": 38,
+     "end": 44,
+     "source": "genoeg",
+     "gloss": "enough"
+    },
+    {
+     "start": 45,
+     "end": 47,
+     "source": "om",
+     "gloss": "to"
+    },
+    {
+     "start": 48,
+     "end": 51,
+     "source": "het",
+     "gloss": "the"
+    },
+    {
+     "start": 52,
+     "end": 60,
+     "source": "probleem",
+     "gloss": "problem"
+    },
+    {
+     "start": 61,
+     "end": 63,
+     "source": "op",
+     "gloss": "on"
+    },
+    {
+     "start": 64,
+     "end": 66,
+     "source": "te",
+     "gloss": "to"
+    },
+    {
+     "start": 67,
+     "end": 73,
+     "source": "lossen",
+     "gloss": "loosen"
+    },
+    {
+     "start": 74,
+     "end": 80,
+     "source": "zonder",
+     "gloss": "without"
+    },
+    {
+     "start": 81,
+     "end": 87,
+     "source": "nieuwe",
+     "gloss": "new"
+    },
+    {
+     "start": 88,
+     "end": 94,
+     "source": "regels",
+     "gloss": "rules"
+    },
+    {
+     "start": 95,
+     "end": 97,
+     "source": "of",
+     "gloss": "or"
+    },
+    {
+     "start": 98,
+     "end": 103,
+     "source": "extra",
+     "gloss": "extra"
+    },
+    {
+     "start": 104,
+     "end": 117,
+     "source": "vergaderingen",
+     "gloss": "meetings"
+    },
+    {
+     "start": 119,
+     "end": 122,
+     "source": "Aan",
+     "gloss": "At"
+    },
+    {
+     "start": 123,
+     "end": 126,
+     "source": "het",
+     "gloss": "the"
+    },
+    {
+     "start": 127,
+     "end": 132,
+     "source": "einde",
+     "gloss": "end"
+    },
+    {
+     "start": 133,
+     "end": 136,
+     "source": "van",
+     "gloss": "of"
+    },
+    {
+     "start": 137,
+     "end": 141,
+     "source": "elke",
+     "gloss": "every"
+    },
+    {
+     "start": 142,
+     "end": 148,
+     "source": "middag",
+     "gloss": "afternoon"
+    },
+    {
+     "start": 149,
+     "end": 158,
+     "source": "verdwenen",
+     "gloss": "disappeared"
+    },
+    {
+     "start": 159,
+     "end": 161,
+     "source": "de",
+     "gloss": "the"
+    },
+    {
+     "start": 162,
+     "end": 169,
+     "source": "spullen",
+     "gloss": "things"
+    },
+    {
+     "start": 170,
+     "end": 172,
+     "source": "in",
+     "gloss": "into"
+    },
+    {
+     "start": 173,
+     "end": 175,
+     "source": "de",
+     "gloss": "the"
+    },
+    {
+     "start": 176,
+     "end": 180,
+     "source": "kast",
+     "gloss": "cupboard"
+    },
+    {
+     "start": 181,
+     "end": 183,
+     "source": "en",
+     "gloss": "and"
+    },
+    {
+     "start": 184,
+     "end": 188,
+     "source": "werd",
+     "gloss": "became"
+    },
+    {
+     "start": 189,
+     "end": 191,
+     "source": "de",
+     "gloss": "the"
+    },
+    {
+     "start": 192,
+     "end": 197,
+     "source": "tafel",
+     "gloss": "table"
+    },
+    {
+     "start": 198,
+     "end": 202,
+     "source": "weer",
+     "gloss": "again"
+    },
+    {
+     "start": 203,
+     "end": 207,
+     "source": "vrij",
+     "gloss": "free"
+    },
+    {
+     "start": 209,
+     "end": 212,
+     "source": "Dat",
+     "gloss": "That"
+    },
+    {
+     "start": 213,
+     "end": 219,
+     "source": "kleine",
+     "gloss": "small"
+    },
+    {
+     "start": 220,
+     "end": 226,
+     "source": "succes",
+     "gloss": "success"
+    },
+    {
+     "start": 227,
+     "end": 230,
+     "source": "gaf",
+     "gloss": "gave"
+    },
+    {
+     "start": 231,
+     "end": 239,
+     "source": "iedereen",
+     "gloss": "everyone"
+    },
+    {
+     "start": 240,
+     "end": 250,
+     "source": "vertrouwen",
+     "gloss": "confidence"
+    },
+    {
+     "start": 251,
+     "end": 256,
+     "source": "omdat",
+     "gloss": "because"
+    },
+    {
+     "start": 257,
+     "end": 260,
+     "source": "het",
+     "gloss": "it"
+    },
+    {
+     "start": 261,
+     "end": 265,
+     "source": "liet",
+     "gloss": "let"
+    },
+    {
+     "start": 266,
+     "end": 270,
+     "source": "zien",
+     "gloss": "see"
+    },
+    {
+     "start": 271,
+     "end": 274,
+     "source": "dat",
+     "gloss": "that"
+    },
+    {
+     "start": 275,
+     "end": 278,
+     "source": "een",
+     "gloss": "a"
+    },
+    {
+     "start": 279,
+     "end": 287,
+     "source": "verschil",
+     "gloss": "difference"
+    },
+    {
+     "start": 288,
+     "end": 291,
+     "source": "van",
+     "gloss": "of"
+    },
+    {
+     "start": 292,
+     "end": 298,
+     "source": "mening",
+     "gloss": "opinion"
+    },
+    {
+     "start": 299,
+     "end": 303,
+     "source": "niet",
+     "gloss": "not"
+    },
+    {
+     "start": 304,
+     "end": 310,
+     "source": "meteen",
+     "gloss": "immediately"
+    },
+    {
+     "start": 311,
+     "end": 314,
+     "source": "een",
+     "gloss": "a"
+    },
+    {
+     "start": 315,
+     "end": 319,
+     "source": "ramp",
+     "gloss": "disaster"
+    },
+    {
+     "start": 320,
+     "end": 323,
+     "source": "was",
+     "gloss": "was"
+    },
+    {
+     "start": 325,
+     "end": 328,
+     "source": "Sam",
+     "gloss": "Sam"
+    },
+    {
+     "start": 329,
+     "end": 336,
+     "source": "schreef",
+     "gloss": "wrote"
+    },
+    {
+     "start": 337,
+     "end": 339,
+     "source": "de",
+     "gloss": "the"
+    },
+    {
+     "start": 340,
+     "end": 348,
+     "source": "afspraak",
+     "gloss": "agreement"
+    },
+    {
+     "start": 349,
+     "end": 351,
+     "source": "op",
+     "gloss": "on"
+    },
+    {
+     "start": 352,
+     "end": 355,
+     "source": "een",
+     "gloss": "a"
+    },
+    {
+     "start": 356,
+     "end": 363,
+     "source": "kaartje",
+     "gloss": "card"
+    },
+    {
+     "start": 364,
+     "end": 366,
+     "source": "en",
+     "gloss": "and"
+    },
+    {
+     "start": 367,
+     "end": 371,
+     "source": "hing",
+     "gloss": "hung"
+    },
+    {
+     "start": 372,
+     "end": 375,
+     "source": "dat",
+     "gloss": "that"
+    },
+    {
+     "start": 376,
+     "end": 381,
+     "source": "boven",
+     "gloss": "above"
+    },
+    {
+     "start": 382,
+     "end": 384,
+     "source": "de",
+     "gloss": "the"
+    },
+    {
+     "start": 385,
+     "end": 389,
+     "source": "kast",
+     "gloss": "cupboard"
+    },
+    {
+     "start": 390,
+     "end": 394,
+     "source": "waar",
+     "gloss": "where"
+    },
+    {
+     "start": 395,
+     "end": 402,
+     "source": "niemand",
+     "gloss": "nobody"
+    },
+    {
+     "start": 403,
+     "end": 406,
+     "source": "het",
+     "gloss": "it"
+    },
+    {
+     "start": 407,
+     "end": 410,
+     "source": "kon",
+     "gloss": "could"
+    },
+    {
+     "start": 411,
+     "end": 417,
+     "source": "missen",
+     "gloss": "miss"
+    }
+   ],
+   "constructions": [
+    {
+     "role": "contiguous_construction",
+     "kind": "expression",
+     "label": "op te lossen",
+     "meaning": "to solve",
+     "members": [
+      {
+       "start": 61,
+       "end": 63,
+       "source": "op"
+      },
+      {
+       "start": 64,
+       "end": 66,
+       "source": "te"
+      },
+      {
+       "start": 67,
+       "end": 73,
+       "source": "lossen"
+      }
+     ],
+     "spans": [
+      {
+       "start": 61,
+       "end": 73,
+       "source": "op te lossen"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "source": "Toen de lente begon, stond de deur op zonnige dagen open en bleven voorbijgangers steeds vaker even kijken. Een vader kwam met zijn zoon langs om een houten vogelhuisje te maken voor de boom achter hun huis. Een student hielp een buurvrouw met haar telefoon en kreeg daarna een recept voor soep dat haar moeder altijd maakte. Niemand hield precies bij hoeveel problemen er werden opgelost, maar op vrijdag was de koffiepot meestal leeg.",
+   "sentences": [
+    {
+     "start": 0,
+     "end": 107,
+     "source": "Toen de lente begon, stond de deur op zonnige dagen open en bleven voorbijgangers steeds vaker even kijken."
+    },
+    {
+     "start": 108,
+     "end": 207,
+     "source": "Een vader kwam met zijn zoon langs om een houten vogelhuisje te maken voor de boom achter hun huis."
+    },
+    {
+     "start": 208,
+     "end": 325,
+     "source": "Een student hielp een buurvrouw met haar telefoon en kreeg daarna een recept voor soep dat haar moeder altijd maakte."
+    },
+    {
+     "start": 326,
+     "end": 436,
+     "source": "Niemand hield precies bij hoeveel problemen er werden opgelost, maar op vrijdag was de koffiepot meestal leeg."
+    }
+   ],
+   "tokens": [
+    {
+     "start": 0,
+     "end": 4,
+     "source": "Toen",
+     "gloss": "When"
+    },
+    {
+     "start": 5,
+     "end": 7,
+     "source": "de",
+     "gloss": "the"
+    },
+    {
+     "start": 8,
+     "end": 13,
+     "source": "lente",
+     "gloss": "spring"
+    },
+    {
+     "start": 14,
+     "end": 19,
+     "source": "begon",
+     "gloss": "began"
+    },
+    {
+     "start": 21,
+     "end": 26,
+     "source": "stond",
+     "gloss": "stood"
+    },
+    {
+     "start": 27,
+     "end": 29,
+     "source": "de",
+     "gloss": "the"
+    },
+    {
+     "start": 30,
+     "end": 34,
+     "source": "deur",
+     "gloss": "door"
+    },
+    {
+     "start": 35,
+     "end": 37,
+     "source": "op",
+     "gloss": "on"
+    },
+    {
+     "start": 38,
+     "end": 45,
+     "source": "zonnige",
+     "gloss": "sunny"
+    },
+    {
+     "start": 46,
+     "end": 51,
+     "source": "dagen",
+     "gloss": "days"
+    },
+    {
+     "start": 52,
+     "end": 56,
+     "source": "open",
+     "gloss": "open"
+    },
+    {
+     "start": 57,
+     "end": 59,
+     "source": "en",
+     "gloss": "and"
+    },
+    {
+     "start": 60,
+     "end": 66,
+     "source": "bleven",
+     "gloss": "stayed"
+    },
+    {
+     "start": 67,
+     "end": 81,
+     "source": "voorbijgangers",
+     "gloss": "passersby"
+    },
+    {
+     "start": 82,
+     "end": 88,
+     "source": "steeds",
+     "gloss": "ever"
+    },
+    {
+     "start": 89,
+     "end": 94,
+     "source": "vaker",
+     "gloss": "more often"
+    },
+    {
+     "start": 95,
+     "end": 99,
+     "source": "even",
+     "gloss": "briefly"
+    },
+    {
+     "start": 100,
+     "end": 106,
+     "source": "kijken",
+     "gloss": "looking"
+    },
+    {
+     "start": 108,
+     "end": 111,
+     "source": "Een",
+     "gloss": "A"
+    },
+    {
+     "start": 112,
+     "end": 117,
+     "source": "vader",
+     "gloss": "father"
+    },
+    {
+     "start": 118,
+     "end": 122,
+     "source": "kwam",
+     "gloss": "came"
+    },
+    {
+     "start": 123,
+     "end": 126,
+     "source": "met",
+     "gloss": "with"
+    },
+    {
+     "start": 127,
+     "end": 131,
+     "source": "zijn",
+     "gloss": "his"
+    },
+    {
+     "start": 132,
+     "end": 136,
+     "source": "zoon",
+     "gloss": "son"
+    },
+    {
+     "start": 137,
+     "end": 142,
+     "source": "langs",
+     "gloss": "by"
+    },
+    {
+     "start": 143,
+     "end": 145,
+     "source": "om",
+     "gloss": "to"
+    },
+    {
+     "start": 146,
+     "end": 149,
+     "source": "een",
+     "gloss": "a"
+    },
+    {
+     "start": 150,
+     "end": 156,
+     "source": "houten",
+     "gloss": "wooden"
+    },
+    {
+     "start": 157,
+     "end": 168,
+     "source": "vogelhuisje",
+     "gloss": "birdhouse"
+    },
+    {
+     "start": 169,
+     "end": 171,
+     "source": "te",
+     "gloss": "to"
+    },
+    {
+     "start": 172,
+     "end": 177,
+     "source": "maken",
+     "gloss": "make"
+    },
+    {
+     "start": 178,
+     "end": 182,
+     "source": "voor",
+     "gloss": "for"
+    },
+    {
+     "start": 183,
+     "end": 185,
+     "source": "de",
+     "gloss": "the"
+    },
+    {
+     "start": 186,
+     "end": 190,
+     "source": "boom",
+     "gloss": "tree"
+    },
+    {
+     "start": 191,
+     "end": 197,
+     "source": "achter",
+     "gloss": "behind"
+    },
+    {
+     "start": 198,
+     "end": 201,
+     "source": "hun",
+     "gloss": "their"
+    },
+    {
+     "start": 202,
+     "end": 206,
+     "source": "huis",
+     "gloss": "house"
+    },
+    {
+     "start": 208,
+     "end": 211,
+     "source": "Een",
+     "gloss": "A"
+    },
+    {
+     "start": 212,
+     "end": 219,
+     "source": "student",
+     "gloss": "student"
+    },
+    {
+     "start": 220,
+     "end": 225,
+     "source": "hielp",
+     "gloss": "helped"
+    },
+    {
+     "start": 226,
+     "end": 229,
+     "source": "een",
+     "gloss": "a"
+    },
+    {
+     "start": 230,
+     "end": 239,
+     "source": "buurvrouw",
+     "gloss": "neighbor"
+    },
+    {
+     "start": 240,
+     "end": 243,
+     "source": "met",
+     "gloss": "with"
+    },
+    {
+     "start": 244,
+     "end": 248,
+     "source": "haar",
+     "gloss": "her"
+    },
+    {
+     "start": 249,
+     "end": 257,
+     "source": "telefoon",
+     "gloss": "phone"
+    },
+    {
+     "start": 258,
+     "end": 260,
+     "source": "en",
+     "gloss": "and"
+    },
+    {
+     "start": 261,
+     "end": 266,
+     "source": "kreeg",
+     "gloss": "received"
+    },
+    {
+     "start": 267,
+     "end": 273,
+     "source": "daarna",
+     "gloss": "afterwards"
+    },
+    {
+     "start": 274,
+     "end": 277,
+     "source": "een",
+     "gloss": "a"
+    },
+    {
+     "start": 278,
+     "end": 284,
+     "source": "recept",
+     "gloss": "recipe"
+    },
+    {
+     "start": 285,
+     "end": 289,
+     "source": "voor",
+     "gloss": "for"
+    },
+    {
+     "start": 290,
+     "end": 294,
+     "source": "soep",
+     "gloss": "soup"
+    },
+    {
+     "start": 295,
+     "end": 298,
+     "source": "dat",
+     "gloss": "that"
+    },
+    {
+     "start": 299,
+     "end": 303,
+     "source": "haar",
+     "gloss": "her"
+    },
+    {
+     "start": 304,
+     "end": 310,
+     "source": "moeder",
+     "gloss": "mother"
+    },
+    {
+     "start": 311,
+     "end": 317,
+     "source": "altijd",
+     "gloss": "always"
+    },
+    {
+     "start": 318,
+     "end": 324,
+     "source": "maakte",
+     "gloss": "made"
+    },
+    {
+     "start": 326,
+     "end": 333,
+     "source": "Niemand",
+     "gloss": "Nobody"
+    },
+    {
+     "start": 334,
+     "end": 339,
+     "source": "hield",
+     "gloss": "kept"
+    },
+    {
+     "start": 340,
+     "end": 347,
+     "source": "precies",
+     "gloss": "exactly"
+    },
+    {
+     "start": 348,
+     "end": 351,
+     "source": "bij",
+     "gloss": "up"
+    },
+    {
+     "start": 352,
+     "end": 359,
+     "source": "hoeveel",
+     "gloss": "how many"
+    },
+    {
+     "start": 360,
+     "end": 369,
+     "source": "problemen",
+     "gloss": "problems"
+    },
+    {
+     "start": 370,
+     "end": 372,
+     "source": "er",
+     "gloss": "there"
+    },
+    {
+     "start": 373,
+     "end": 379,
+     "source": "werden",
+     "gloss": "were"
+    },
+    {
+     "start": 380,
+     "end": 388,
+     "source": "opgelost",
+     "gloss": "solved"
+    },
+    {
+     "start": 390,
+     "end": 394,
+     "source": "maar",
+     "gloss": "but"
+    },
+    {
+     "start": 395,
+     "end": 397,
+     "source": "op",
+     "gloss": "on"
+    },
+    {
+     "start": 398,
+     "end": 405,
+     "source": "vrijdag",
+     "gloss": "Friday"
+    },
+    {
+     "start": 406,
+     "end": 409,
+     "source": "was",
+     "gloss": "was"
+    },
+    {
+     "start": 410,
+     "end": 412,
+     "source": "de",
+     "gloss": "the"
+    },
+    {
+     "start": 413,
+     "end": 422,
+     "source": "koffiepot",
+     "gloss": "coffee pot"
+    },
+    {
+     "start": 423,
+     "end": 430,
+     "source": "meestal",
+     "gloss": "usually"
+    },
+    {
+     "start": 431,
+     "end": 435,
+     "source": "leeg",
+     "gloss": "empty"
+    }
+   ],
+   "constructions": [
+    {
+     "role": "discontinuous_construction",
+     "kind": "expression",
+     "label": "hield … bij",
+     "meaning": "kept track of",
+     "members": [
+      {
+       "start": 334,
+       "end": 339,
+       "source": "hield"
+      },
+      {
+       "start": 348,
+       "end": 351,
+       "source": "bij"
+      }
+     ],
+     "spans": [
+      {
+       "start": 334,
+       "end": 339,
+       "source": "hield"
+      },
+      {
+       "start": 348,
+       "end": 351,
+       "source": "bij"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "source": "Toch bleef geld een onderwerp waarover ze eerlijk moesten praten omdat enthousiasme de elektriciteitsrekening niet kon betalen. De groep besloot een kleine vrijwillige bijdrage te vragen en iedere maand zichtbaar te maken waaraan het geld werd besteed. Wie niets kon missen bleef net zo welkom en kon eventueel helpen met opruimen of het openen van de deur. Voor Noor was die afspraak belangrijker dan een volle kas omdat vertrouwen volgens haar begon bij duidelijkheid.",
+   "sentences": [
+    {
+     "start": 0,
+     "end": 127,
+     "source": "Toch bleef geld een onderwerp waarover ze eerlijk moesten praten omdat enthousiasme de elektriciteitsrekening niet kon betalen."
+    },
+    {
+     "start": 128,
+     "end": 252,
+     "source": "De groep besloot een kleine vrijwillige bijdrage te vragen en iedere maand zichtbaar te maken waaraan het geld werd besteed."
+    },
+    {
+     "start": 253,
+     "end": 357,
+     "source": "Wie niets kon missen bleef net zo welkom en kon eventueel helpen met opruimen of het openen van de deur."
+    },
+    {
+     "start": 358,
+     "end": 470,
+     "source": "Voor Noor was die afspraak belangrijker dan een volle kas omdat vertrouwen volgens haar begon bij duidelijkheid."
+    }
+   ],
+   "tokens": [
+    {
+     "start": 0,
+     "end": 4,
+     "source": "Toch",
+     "gloss": "Still"
+    },
+    {
+     "start": 5,
+     "end": 10,
+     "source": "bleef",
+     "gloss": "remained"
+    },
+    {
+     "start": 11,
+     "end": 15,
+     "source": "geld",
+     "gloss": "money"
+    },
+    {
+     "start": 16,
+     "end": 19,
+     "source": "een",
+     "gloss": "a"
+    },
+    {
+     "start": 20,
+     "end": 29,
+     "source": "onderwerp",
+     "gloss": "topic"
+    },
+    {
+     "start": 30,
+     "end": 38,
+     "source": "waarover",
+     "gloss": "about which"
+    },
+    {
+     "start": 39,
+     "end": 41,
+     "source": "ze",
+     "gloss": "they"
+    },
+    {
+     "start": 42,
+     "end": 49,
+     "source": "eerlijk",
+     "gloss": "honestly"
+    },
+    {
+     "start": 50,
+     "end": 57,
+     "source": "moesten",
+     "gloss": "had to"
+    },
+    {
+     "start": 58,
+     "end": 64,
+     "source": "praten",
+     "gloss": "talk"
+    },
+    {
+     "start": 65,
+     "end": 70,
+     "source": "omdat",
+     "gloss": "because"
+    },
+    {
+     "start": 71,
+     "end": 83,
+     "source": "enthousiasme",
+     "gloss": "enthusiasm"
+    },
+    {
+     "start": 84,
+     "end": 86,
+     "source": "de",
+     "gloss": "the"
+    },
+    {
+     "start": 87,
+     "end": 109,
+     "source": "elektriciteitsrekening",
+     "gloss": "electricity bill"
+    },
+    {
+     "start": 110,
+     "end": 114,
+     "source": "niet",
+     "gloss": "not"
+    },
+    {
+     "start": 115,
+     "end": 118,
+     "source": "kon",
+     "gloss": "could"
+    },
+    {
+     "start": 119,
+     "end": 126,
+     "source": "betalen",
+     "gloss": "pay"
+    },
+    {
+     "start": 128,
+     "end": 130,
+     "source": "De",
+     "gloss": "The"
+    },
+    {
+     "start": 131,
+     "end": 136,
+     "source": "groep",
+     "gloss": "group"
+    },
+    {
+     "start": 137,
+     "end": 144,
+     "source": "besloot",
+     "gloss": "decided"
+    },
+    {
+     "start": 145,
+     "end": 148,
+     "source": "een",
+     "gloss": "a"
+    },
+    {
+     "start": 149,
+     "end": 155,
+     "source": "kleine",
+     "gloss": "small"
+    },
+    {
+     "start": 156,
+     "end": 167,
+     "source": "vrijwillige",
+     "gloss": "voluntary"
+    },
+    {
+     "start": 168,
+     "end": 176,
+     "source": "bijdrage",
+     "gloss": "contribution"
+    },
+    {
+     "start": 177,
+     "end": 179,
+     "source": "te",
+     "gloss": "to"
+    },
+    {
+     "start": 180,
+     "end": 186,
+     "source": "vragen",
+     "gloss": "ask"
+    },
+    {
+     "start": 187,
+     "end": 189,
+     "source": "en",
+     "gloss": "and"
+    },
+    {
+     "start": 190,
+     "end": 196,
+     "source": "iedere",
+     "gloss": "every"
+    },
+    {
+     "start": 197,
+     "end": 202,
+     "source": "maand",
+     "gloss": "month"
+    },
+    {
+     "start": 203,
+     "end": 212,
+     "source": "zichtbaar",
+     "gloss": "visibly"
+    },
+    {
+     "start": 213,
+     "end": 215,
+     "source": "te",
+     "gloss": "to"
+    },
+    {
+     "start": 216,
+     "end": 221,
+     "source": "maken",
+     "gloss": "show"
+    },
+    {
+     "start": 222,
+     "end": 229,
+     "source": "waaraan",
+     "gloss": "on what"
+    },
+    {
+     "start": 230,
+     "end": 233,
+     "source": "het",
+     "gloss": "the"
+    },
+    {
+     "start": 234,
+     "end": 238,
+     "source": "geld",
+     "gloss": "money"
+    },
+    {
+     "start": 239,
+     "end": 243,
+     "source": "werd",
+     "gloss": "was"
+    },
+    {
+     "start": 244,
+     "end": 251,
+     "source": "besteed",
+     "gloss": "spent"
+    },
+    {
+     "start": 253,
+     "end": 256,
+     "source": "Wie",
+     "gloss": "Whoever"
+    },
+    {
+     "start": 257,
+     "end": 262,
+     "source": "niets",
+     "gloss": "nothing"
+    },
+    {
+     "start": 263,
+     "end": 266,
+     "source": "kon",
+     "gloss": "could"
+    },
+    {
+     "start": 267,
+     "end": 273,
+     "source": "missen",
+     "gloss": "spare"
+    },
+    {
+     "start": 274,
+     "end": 279,
+     "source": "bleef",
+     "gloss": "stayed"
+    },
+    {
+     "start": 280,
+     "end": 283,
+     "source": "net",
+     "gloss": "just"
+    },
+    {
+     "start": 284,
+     "end": 286,
+     "source": "zo",
+     "gloss": "as"
+    },
+    {
+     "start": 287,
+     "end": 293,
+     "source": "welkom",
+     "gloss": "welcome"
+    },
+    {
+     "start": 294,
+     "end": 296,
+     "source": "en",
+     "gloss": "and"
+    },
+    {
+     "start": 297,
+     "end": 300,
+     "source": "kon",
+     "gloss": "could"
+    },
+    {
+     "start": 301,
+     "end": 310,
+     "source": "eventueel",
+     "gloss": "possibly"
+    },
+    {
+     "start": 311,
+     "end": 317,
+     "source": "helpen",
+     "gloss": "help"
+    },
+    {
+     "start": 318,
+     "end": 321,
+     "source": "met",
+     "gloss": "with"
+    },
+    {
+     "start": 322,
+     "end": 330,
+     "source": "opruimen",
+     "gloss": "tidying"
+    },
+    {
+     "start": 331,
+     "end": 333,
+     "source": "of",
+     "gloss": "or"
+    },
+    {
+     "start": 334,
+     "end": 337,
+     "source": "het",
+     "gloss": "the"
+    },
+    {
+     "start": 338,
+     "end": 344,
+     "source": "openen",
+     "gloss": "opening"
+    },
+    {
+     "start": 345,
+     "end": 348,
+     "source": "van",
+     "gloss": "of"
+    },
+    {
+     "start": 349,
+     "end": 351,
+     "source": "de",
+     "gloss": "the"
+    },
+    {
+     "start": 352,
+     "end": 356,
+     "source": "deur",
+     "gloss": "door"
+    },
+    {
+     "start": 358,
+     "end": 362,
+     "source": "Voor",
+     "gloss": "For"
+    },
+    {
+     "start": 363,
+     "end": 367,
+     "source": "Noor",
+     "gloss": "Noor"
+    },
+    {
+     "start": 368,
+     "end": 371,
+     "source": "was",
+     "gloss": "was"
+    },
+    {
+     "start": 372,
+     "end": 375,
+     "source": "die",
+     "gloss": "that"
+    },
+    {
+     "start": 376,
+     "end": 384,
+     "source": "afspraak",
+     "gloss": "agreement"
+    },
+    {
+     "start": 385,
+     "end": 397,
+     "source": "belangrijker",
+     "gloss": "more important"
+    },
+    {
+     "start": 398,
+     "end": 401,
+     "source": "dan",
+     "gloss": "than"
+    },
+    {
+     "start": 402,
+     "end": 405,
+     "source": "een",
+     "gloss": "a"
+    },
+    {
+     "start": 406,
+     "end": 411,
+     "source": "volle",
+     "gloss": "full"
+    },
+    {
+     "start": 412,
+     "end": 415,
+     "source": "kas",
+     "gloss": "cashbox"
+    },
+    {
+     "start": 416,
+     "end": 421,
+     "source": "omdat",
+     "gloss": "because"
+    },
+    {
+     "start": 422,
+     "end": 432,
+     "source": "vertrouwen",
+     "gloss": "trust"
+    },
+    {
+     "start": 433,
+     "end": 440,
+     "source": "volgens",
+     "gloss": "according to"
+    },
+    {
+     "start": 441,
+     "end": 445,
+     "source": "haar",
+     "gloss": "her"
+    },
+    {
+     "start": 446,
+     "end": 451,
+     "source": "begon",
+     "gloss": "began"
+    },
+    {
+     "start": 452,
+     "end": 455,
+     "source": "bij",
+     "gloss": "with"
+    },
+    {
+     "start": 456,
+     "end": 469,
+     "source": "duidelijkheid",
+     "gloss": "clarity"
+    }
+   ],
+   "constructions": []
+  },
+  {
+   "source": "Zes maanden na de eerste bijeenkomst organiseerden de buren een middag waarop iedereen iets mocht laten zien dat hier was gemaakt. Er stonden gerepareerde lampen, zelfgemaakte tassen en een scheve boekenplank die volgens de maker juist daardoor bijzonder was. De oude kaart hing nog naast de ingang maar inmiddels zaten er kleine briefjes omheen met herinneringen van bezoekers. Het gebouw vertelde niet langer alleen een verhaal over vroeger, maar ook over de mensen die er nu samenkwamen.",
+   "sentences": [
+    {
+     "start": 0,
+     "end": 130,
+     "source": "Zes maanden na de eerste bijeenkomst organiseerden de buren een middag waarop iedereen iets mocht laten zien dat hier was gemaakt."
+    },
+    {
+     "start": 131,
+     "end": 259,
+     "source": "Er stonden gerepareerde lampen, zelfgemaakte tassen en een scheve boekenplank die volgens de maker juist daardoor bijzonder was."
+    },
+    {
+     "start": 260,
+     "end": 378,
+     "source": "De oude kaart hing nog naast de ingang maar inmiddels zaten er kleine briefjes omheen met herinneringen van bezoekers."
+    },
+    {
+     "start": 379,
+     "end": 490,
+     "source": "Het gebouw vertelde niet langer alleen een verhaal over vroeger, maar ook over de mensen die er nu samenkwamen."
+    }
+   ],
+   "tokens": [
+    {
+     "start": 0,
+     "end": 3,
+     "source": "Zes",
+     "gloss": "Six"
+    },
+    {
+     "start": 4,
+     "end": 11,
+     "source": "maanden",
+     "gloss": "months"
+    },
+    {
+     "start": 12,
+     "end": 14,
+     "source": "na",
+     "gloss": "after"
+    },
+    {
+     "start": 15,
+     "end": 17,
+     "source": "de",
+     "gloss": "the"
+    },
+    {
+     "start": 18,
+     "end": 24,
+     "source": "eerste",
+     "gloss": "first"
+    },
+    {
+     "start": 25,
+     "end": 36,
+     "source": "bijeenkomst",
+     "gloss": "meeting"
+    },
+    {
+     "start": 37,
+     "end": 50,
+     "source": "organiseerden",
+     "gloss": "organized"
+    },
+    {
+     "start": 51,
+     "end": 53,
+     "source": "de",
+     "gloss": "the"
+    },
+    {
+     "start": 54,
+     "end": 59,
+     "source": "buren",
+     "gloss": "neighbors"
+    },
+    {
+     "start": 60,
+     "end": 63,
+     "source": "een",
+     "gloss": "a"
+    },
+    {
+     "start": 64,
+     "end": 70,
+     "source": "middag",
+     "gloss": "afternoon"
+    },
+    {
+     "start": 71,
+     "end": 77,
+     "source": "waarop",
+     "gloss": "on which"
+    },
+    {
+     "start": 78,
+     "end": 86,
+     "source": "iedereen",
+     "gloss": "everyone"
+    },
+    {
+     "start": 87,
+     "end": 91,
+     "source": "iets",
+     "gloss": "something"
+    },
+    {
+     "start": 92,
+     "end": 97,
+     "source": "mocht",
+     "gloss": "could"
+    },
+    {
+     "start": 98,
+     "end": 103,
+     "source": "laten",
+     "gloss": "let"
+    },
+    {
+     "start": 104,
+     "end": 108,
+     "source": "zien",
+     "gloss": "show"
+    },
+    {
+     "start": 109,
+     "end": 112,
+     "source": "dat",
+     "gloss": "that"
+    },
+    {
+     "start": 113,
+     "end": 117,
+     "source": "hier",
+     "gloss": "here"
+    },
+    {
+     "start": 118,
+     "end": 121,
+     "source": "was",
+     "gloss": "was"
+    },
+    {
+     "start": 122,
+     "end": 129,
+     "source": "gemaakt",
+     "gloss": "made"
+    },
+    {
+     "start": 131,
+     "end": 133,
+     "source": "Er",
+     "gloss": "There"
+    },
+    {
+     "start": 134,
+     "end": 141,
+     "source": "stonden",
+     "gloss": "stood"
+    },
+    {
+     "start": 142,
+     "end": 154,
+     "source": "gerepareerde",
+     "gloss": "repaired"
+    },
+    {
+     "start": 155,
+     "end": 161,
+     "source": "lampen",
+     "gloss": "lamps"
+    },
+    {
+     "start": 163,
+     "end": 175,
+     "source": "zelfgemaakte",
+     "gloss": "homemade"
+    },
+    {
+     "start": 176,
+     "end": 182,
+     "source": "tassen",
+     "gloss": "bags"
+    },
+    {
+     "start": 183,
+     "end": 185,
+     "source": "en",
+     "gloss": "and"
+    },
+    {
+     "start": 186,
+     "end": 189,
+     "source": "een",
+     "gloss": "a"
+    },
+    {
+     "start": 190,
+     "end": 196,
+     "source": "scheve",
+     "gloss": "crooked"
+    },
+    {
+     "start": 197,
+     "end": 208,
+     "source": "boekenplank",
+     "gloss": "bookshelf"
+    },
+    {
+     "start": 209,
+     "end": 212,
+     "source": "die",
+     "gloss": "that"
+    },
+    {
+     "start": 213,
+     "end": 220,
+     "source": "volgens",
+     "gloss": "according to"
+    },
+    {
+     "start": 221,
+     "end": 223,
+     "source": "de",
+     "gloss": "the"
+    },
+    {
+     "start": 224,
+     "end": 229,
+     "source": "maker",
+     "gloss": "maker"
+    },
+    {
+     "start": 230,
+     "end": 235,
+     "source": "juist",
+     "gloss": "precisely"
+    },
+    {
+     "start": 236,
+     "end": 244,
+     "source": "daardoor",
+     "gloss": "thereby"
+    },
+    {
+     "start": 245,
+     "end": 254,
+     "source": "bijzonder",
+     "gloss": "special"
+    },
+    {
+     "start": 255,
+     "end": 258,
+     "source": "was",
+     "gloss": "was"
+    },
+    {
+     "start": 260,
+     "end": 262,
+     "source": "De",
+     "gloss": "The"
+    },
+    {
+     "start": 263,
+     "end": 267,
+     "source": "oude",
+     "gloss": "old"
+    },
+    {
+     "start": 268,
+     "end": 273,
+     "source": "kaart",
+     "gloss": "map"
+    },
+    {
+     "start": 274,
+     "end": 278,
+     "source": "hing",
+     "gloss": "hung"
+    },
+    {
+     "start": 279,
+     "end": 282,
+     "source": "nog",
+     "gloss": "still"
+    },
+    {
+     "start": 283,
+     "end": 288,
+     "source": "naast",
+     "gloss": "beside"
+    },
+    {
+     "start": 289,
+     "end": 291,
+     "source": "de",
+     "gloss": "the"
+    },
+    {
+     "start": 292,
+     "end": 298,
+     "source": "ingang",
+     "gloss": "entrance"
+    },
+    {
+     "start": 299,
+     "end": 303,
+     "source": "maar",
+     "gloss": "but"
+    },
+    {
+     "start": 304,
+     "end": 313,
+     "source": "inmiddels",
+     "gloss": "by now"
+    },
+    {
+     "start": 314,
+     "end": 319,
+     "source": "zaten",
+     "gloss": "were"
+    },
+    {
+     "start": 320,
+     "end": 322,
+     "source": "er",
+     "gloss": "there"
+    },
+    {
+     "start": 323,
+     "end": 329,
+     "source": "kleine",
+     "gloss": "small"
+    },
+    {
+     "start": 330,
+     "end": 338,
+     "source": "briefjes",
+     "gloss": "notes"
+    },
+    {
+     "start": 339,
+     "end": 345,
+     "source": "omheen",
+     "gloss": "around it"
+    },
+    {
+     "start": 346,
+     "end": 349,
+     "source": "met",
+     "gloss": "with"
+    },
+    {
+     "start": 350,
+     "end": 363,
+     "source": "herinneringen",
+     "gloss": "memories"
+    },
+    {
+     "start": 364,
+     "end": 367,
+     "source": "van",
+     "gloss": "of"
+    },
+    {
+     "start": 368,
+     "end": 377,
+     "source": "bezoekers",
+     "gloss": "visitors"
+    },
+    {
+     "start": 379,
+     "end": 382,
+     "source": "Het",
+     "gloss": "The"
+    },
+    {
+     "start": 383,
+     "end": 389,
+     "source": "gebouw",
+     "gloss": "building"
+    },
+    {
+     "start": 390,
+     "end": 398,
+     "source": "vertelde",
+     "gloss": "told"
+    },
+    {
+     "start": 399,
+     "end": 403,
+     "source": "niet",
+     "gloss": "not"
+    },
+    {
+     "start": 404,
+     "end": 410,
+     "source": "langer",
+     "gloss": "longer"
+    },
+    {
+     "start": 411,
+     "end": 417,
+     "source": "alleen",
+     "gloss": "only"
+    },
+    {
+     "start": 418,
+     "end": 421,
+     "source": "een",
+     "gloss": "a"
+    },
+    {
+     "start": 422,
+     "end": 429,
+     "source": "verhaal",
+     "gloss": "story"
+    },
+    {
+     "start": 430,
+     "end": 434,
+     "source": "over",
+     "gloss": "about"
+    },
+    {
+     "start": 435,
+     "end": 442,
+     "source": "vroeger",
+     "gloss": "the past"
+    },
+    {
+     "start": 444,
+     "end": 448,
+     "source": "maar",
+     "gloss": "but"
+    },
+    {
+     "start": 449,
+     "end": 452,
+     "source": "ook",
+     "gloss": "also"
+    },
+    {
+     "start": 453,
+     "end": 457,
+     "source": "over",
+     "gloss": "about"
+    },
+    {
+     "start": 458,
+     "end": 460,
+     "source": "de",
+     "gloss": "the"
+    },
+    {
+     "start": 461,
+     "end": 467,
+     "source": "mensen",
+     "gloss": "people"
+    },
+    {
+     "start": 468,
+     "end": 471,
+     "source": "die",
+     "gloss": "that"
+    },
+    {
+     "start": 472,
+     "end": 474,
+     "source": "er",
+     "gloss": "there"
+    },
+    {
+     "start": 475,
+     "end": 477,
+     "source": "nu",
+     "gloss": "now"
+    },
+    {
+     "start": 478,
+     "end": 489,
+     "source": "samenkwamen",
+     "gloss": "gathered"
+    }
+   ],
+   "constructions": []
+  },
+  {
+   "source": "Toen de laatste bezoeker vertrok, ging Noor op de bank bij het raam zitten om tot rust te komen. Buiten reden fietsers voorbij en aan de overkant deed iemand de lichten van een winkel uit. Ze dacht aan de ochtend waarop ze voor het eerst door de stoffige ramen had gekeken en glimlachte. De buurt was niet ineens helemaal veranderd, maar er was nu een plek waar een onbekende langzaam een bekende kon worden.",
+   "sentences": [
+    {
+     "start": 0,
+     "end": 96,
+     "source": "Toen de laatste bezoeker vertrok, ging Noor op de bank bij het raam zitten om tot rust te komen."
+    },
+    {
+     "start": 97,
+     "end": 188,
+     "source": "Buiten reden fietsers voorbij en aan de overkant deed iemand de lichten van een winkel uit."
+    },
+    {
+     "start": 189,
+     "end": 287,
+     "source": "Ze dacht aan de ochtend waarop ze voor het eerst door de stoffige ramen had gekeken en glimlachte."
+    },
+    {
+     "start": 288,
+     "end": 408,
+     "source": "De buurt was niet ineens helemaal veranderd, maar er was nu een plek waar een onbekende langzaam een bekende kon worden."
+    }
+   ],
+   "tokens": [
+    {
+     "start": 0,
+     "end": 4,
+     "source": "Toen",
+     "gloss": "When"
+    },
+    {
+     "start": 5,
+     "end": 7,
+     "source": "de",
+     "gloss": "the"
+    },
+    {
+     "start": 8,
+     "end": 15,
+     "source": "laatste",
+     "gloss": "last"
+    },
+    {
+     "start": 16,
+     "end": 24,
+     "source": "bezoeker",
+     "gloss": "visitor"
+    },
+    {
+     "start": 25,
+     "end": 32,
+     "source": "vertrok",
+     "gloss": "left"
+    },
+    {
+     "start": 34,
+     "end": 38,
+     "source": "ging",
+     "gloss": "went"
+    },
+    {
+     "start": 39,
+     "end": 43,
+     "source": "Noor",
+     "gloss": "Noor"
+    },
+    {
+     "start": 44,
+     "end": 46,
+     "source": "op",
+     "gloss": "on"
+    },
+    {
+     "start": 47,
+     "end": 49,
+     "source": "de",
+     "gloss": "the"
+    },
+    {
+     "start": 50,
+     "end": 54,
+     "source": "bank",
+     "gloss": "sofa"
+    },
+    {
+     "start": 55,
+     "end": 58,
+     "source": "bij",
+     "gloss": "by"
+    },
+    {
+     "start": 59,
+     "end": 62,
+     "source": "het",
+     "gloss": "the"
+    },
+    {
+     "start": 63,
+     "end": 67,
+     "source": "raam",
+     "gloss": "window"
+    },
+    {
+     "start": 68,
+     "end": 74,
+     "source": "zitten",
+     "gloss": "sit"
+    },
+    {
+     "start": 75,
+     "end": 77,
+     "source": "om",
+     "gloss": "to"
+    },
+    {
+     "start": 78,
+     "end": 81,
+     "source": "tot",
+     "gloss": "to"
+    },
+    {
+     "start": 82,
+     "end": 86,
+     "source": "rust",
+     "gloss": "rest"
+    },
+    {
+     "start": 87,
+     "end": 89,
+     "source": "te",
+     "gloss": "to"
+    },
+    {
+     "start": 90,
+     "end": 95,
+     "source": "komen",
+     "gloss": "come"
+    },
+    {
+     "start": 97,
+     "end": 103,
+     "source": "Buiten",
+     "gloss": "Outside"
+    },
+    {
+     "start": 104,
+     "end": 109,
+     "source": "reden",
+     "gloss": "rode"
+    },
+    {
+     "start": 110,
+     "end": 118,
+     "source": "fietsers",
+     "gloss": "cyclists"
+    },
+    {
+     "start": 119,
+     "end": 126,
+     "source": "voorbij",
+     "gloss": "past"
+    },
+    {
+     "start": 127,
+     "end": 129,
+     "source": "en",
+     "gloss": "and"
+    },
+    {
+     "start": 130,
+     "end": 133,
+     "source": "aan",
+     "gloss": "across"
+    },
+    {
+     "start": 134,
+     "end": 136,
+     "source": "de",
+     "gloss": "the"
+    },
+    {
+     "start": 137,
+     "end": 145,
+     "source": "overkant",
+     "gloss": "other side"
+    },
+    {
+     "start": 146,
+     "end": 150,
+     "source": "deed",
+     "gloss": "did"
+    },
+    {
+     "start": 151,
+     "end": 157,
+     "source": "iemand",
+     "gloss": "someone"
+    },
+    {
+     "start": 158,
+     "end": 160,
+     "source": "de",
+     "gloss": "the"
+    },
+    {
+     "start": 161,
+     "end": 168,
+     "source": "lichten",
+     "gloss": "lights"
+    },
+    {
+     "start": 169,
+     "end": 172,
+     "source": "van",
+     "gloss": "of"
+    },
+    {
+     "start": 173,
+     "end": 176,
+     "source": "een",
+     "gloss": "a"
+    },
+    {
+     "start": 177,
+     "end": 183,
+     "source": "winkel",
+     "gloss": "shop"
+    },
+    {
+     "start": 184,
+     "end": 187,
+     "source": "uit",
+     "gloss": "off"
+    },
+    {
+     "start": 189,
+     "end": 191,
+     "source": "Ze",
+     "gloss": "She"
+    },
+    {
+     "start": 192,
+     "end": 197,
+     "source": "dacht",
+     "gloss": "thought"
+    },
+    {
+     "start": 198,
+     "end": 201,
+     "source": "aan",
+     "gloss": "about"
+    },
+    {
+     "start": 202,
+     "end": 204,
+     "source": "de",
+     "gloss": "the"
+    },
+    {
+     "start": 205,
+     "end": 212,
+     "source": "ochtend",
+     "gloss": "morning"
+    },
+    {
+     "start": 213,
+     "end": 219,
+     "source": "waarop",
+     "gloss": "on which"
+    },
+    {
+     "start": 220,
+     "end": 222,
+     "source": "ze",
+     "gloss": "she"
+    },
+    {
+     "start": 223,
+     "end": 227,
+     "source": "voor",
+     "gloss": "for"
+    },
+    {
+     "start": 228,
+     "end": 231,
+     "source": "het",
+     "gloss": "the"
+    },
+    {
+     "start": 232,
+     "end": 237,
+     "source": "eerst",
+     "gloss": "first"
+    },
+    {
+     "start": 238,
+     "end": 242,
+     "source": "door",
+     "gloss": "through"
+    },
+    {
+     "start": 243,
+     "end": 245,
+     "source": "de",
+     "gloss": "the"
+    },
+    {
+     "start": 246,
+     "end": 254,
+     "source": "stoffige",
+     "gloss": "dusty"
+    },
+    {
+     "start": 255,
+     "end": 260,
+     "source": "ramen",
+     "gloss": "windows"
+    },
+    {
+     "start": 261,
+     "end": 264,
+     "source": "had",
+     "gloss": "had"
+    },
+    {
+     "start": 265,
+     "end": 272,
+     "source": "gekeken",
+     "gloss": "looked"
+    },
+    {
+     "start": 273,
+     "end": 275,
+     "source": "en",
+     "gloss": "and"
+    },
+    {
+     "start": 276,
+     "end": 286,
+     "source": "glimlachte",
+     "gloss": "smiled"
+    },
+    {
+     "start": 288,
+     "end": 290,
+     "source": "De",
+     "gloss": "The"
+    },
+    {
+     "start": 291,
+     "end": 296,
+     "source": "buurt",
+     "gloss": "neighborhood"
+    },
+    {
+     "start": 297,
+     "end": 300,
+     "source": "was",
+     "gloss": "was"
+    },
+    {
+     "start": 301,
+     "end": 305,
+     "source": "niet",
+     "gloss": "not"
+    },
+    {
+     "start": 306,
+     "end": 312,
+     "source": "ineens",
+     "gloss": "suddenly"
+    },
+    {
+     "start": 313,
+     "end": 321,
+     "source": "helemaal",
+     "gloss": "completely"
+    },
+    {
+     "start": 322,
+     "end": 331,
+     "source": "veranderd",
+     "gloss": "changed"
+    },
+    {
+     "start": 333,
+     "end": 337,
+     "source": "maar",
+     "gloss": "but"
+    },
+    {
+     "start": 338,
+     "end": 340,
+     "source": "er",
+     "gloss": "there"
+    },
+    {
+     "start": 341,
+     "end": 344,
+     "source": "was",
+     "gloss": "was"
+    },
+    {
+     "start": 345,
+     "end": 347,
+     "source": "nu",
+     "gloss": "now"
+    },
+    {
+     "start": 348,
+     "end": 351,
+     "source": "een",
+     "gloss": "a"
+    },
+    {
+     "start": 352,
+     "end": 356,
+     "source": "plek",
+     "gloss": "place"
+    },
+    {
+     "start": 357,
+     "end": 361,
+     "source": "waar",
+     "gloss": "where"
+    },
+    {
+     "start": 362,
+     "end": 365,
+     "source": "een",
+     "gloss": "a"
+    },
+    {
+     "start": 366,
+     "end": 375,
+     "source": "onbekende",
+     "gloss": "stranger"
+    },
+    {
+     "start": 376,
+     "end": 384,
+     "source": "langzaam",
+     "gloss": "slowly"
+    },
+    {
+     "start": 385,
+     "end": 388,
+     "source": "een",
+     "gloss": "a"
+    },
+    {
+     "start": 389,
+     "end": 396,
+     "source": "bekende",
+     "gloss": "acquaintance"
+    },
+    {
+     "start": 397,
+     "end": 400,
+     "source": "kon",
+     "gloss": "could"
+    },
+    {
+     "start": 401,
+     "end": 407,
+     "source": "worden",
+     "gloss": "become"
+    }
+   ],
+   "constructions": [
+    {
+     "role": "contiguous_construction",
+     "kind": "expression",
+     "label": "tot rust te komen",
+     "meaning": "to unwind",
+     "members": [
+      {
+       "start": 78,
+       "end": 81,
+       "source": "tot"
+      },
+      {
+       "start": 82,
+       "end": 86,
+       "source": "rust"
+      },
+      {
+       "start": 87,
+       "end": 89,
+       "source": "te"
+      },
+      {
+       "start": 90,
+       "end": 95,
+       "source": "komen"
+      }
+     ],
+     "spans": [
+      {
+       "start": 78,
+       "end": 95,
+       "source": "tot rust te komen"
+      }
+     ]
+    },
+    {
+     "role": "discontinuous_construction",
+     "kind": "expression",
+     "label": "deed … uit",
+     "meaning": "switched off",
+     "members": [
+      {
+       "start": 146,
+       "end": 150,
+       "source": "deed"
+      },
+      {
+       "start": 184,
+       "end": 187,
+       "source": "uit"
+      }
+     ],
+     "spans": [
+      {
+       "start": 146,
+       "end": 150,
+       "source": "deed"
+      },
+      {
+       "start": 184,
+       "end": 187,
+       "source": "uit"
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

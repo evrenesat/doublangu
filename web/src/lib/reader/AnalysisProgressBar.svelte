@@ -97,4 +97,10 @@
 		.progress-fill { transition: none; }
 		.progress-track.indeterminate .progress-fill { animation: none; width: 100%; opacity: 0.35; }
 	}
+
+	/* Phone density: the real saved article carries this status above the
+	   body, so compact the card without hiding its label or detail. */
+	@media (max-width: 600px) {
+		.analysis-progress { gap: 0.5rem; margin-bottom: 0.4rem; padding: 0.28rem 0.55rem; }
+	}
 </style>

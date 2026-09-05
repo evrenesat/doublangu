@@ -45,7 +45,9 @@ func activateJobTx(ctx context.Context, tx *sql.Tx, id library.ULID, jobID libra
 //     construction members, and lexical audio bindings;
 //  3. persists exact construction membership and derives occurrence spans
 //     from maximal adjacent runs of member token ids (never from a broad
-//     provider span);
+//     provider span); every member word keeps its authored subtitle so the
+//     read path can show per-word meanings under the persistent-visible
+//     display policy;
 //  4. queues this block's lexical pronunciation;
 //  5. marks the block ready with its published provenance.
 //
@@ -182,12 +184,22 @@ func persistAnalysisChunkTx(ctx context.Context, tx *sql.Tx, id library.ULID, bl
 		sense     *semantics.Sense
 		occID     string
 		occPolicy ShadowPolicy
+		// authored is the stored subtitle: the validated shadow_text with any
+		// unchanged-token source copy removed.
+		authored string
 	}
 	tokens := make([]blockToken, 0, len(validated.Tokens))
 	for _, resolved := range validated.Tokens {
 		token := resolved.Token
 		if token.BlockIndex != blockIndex {
 			continue
+		}
+		// Deliberately untranslated tokens never store a subtitle: their only
+		// legal shadow_text is a copy of the Dutch source, which is not a
+		// translation and must not surface as one.
+		authored := resolved.Result.ShadowText
+		if resolved.Result.Classification == "unchanged" {
+			authored = ""
 		}
 		entry := blockToken{token: token, result: resolved.Result, occID: library.NewULID().String(), occPolicy: ShadowNone}
 		sense, err := resolveSense(resolved.Result.SemanticSenseID, resolved.Result.NewSenseRef, resolved.Result.Kind)
@@ -196,18 +208,19 @@ func persistAnalysisChunkTx(ctx context.Context, tx *sql.Tx, id library.ULID, bl
 		}
 		entry.sense = sense
 		entry.sentence = sentenceForSpanTx(sentenceByBlock, semantics.ResolvedSpan{BlockIndex: token.BlockIndex, StartUTF16: token.StartUTF16, EndUTF16: token.EndUTF16, SourceText: token.SourceText})
-		effective := resolved.Result.ShadowText
+		effective := authored
 		if effective == "" && sense != nil {
 			effective = sense.PrimaryTranslation
 		}
 		if effective != "" {
 			entry.occPolicy = ShadowToken
 		}
+		entry.authored = authored
 		tokens = append(tokens, entry)
 	}
 	occurrenceIDByTokenID := make(map[string]string, len(tokens))
 	for _, entry := range tokens {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO article_occurrence (id, article_block_id, article_sentence_id, semantic_sense_id, kind, role, shadow_policy, shadow_text, canonical_pronunciation_text, context_pronunciation_key, confidence_milli) VALUES (?, ?, ?, ?, ?, 'token', ?, ?, ?, ?, ?)`, entry.occID, blockID, nullableString(entry.sentence), nullableULID(entry.sense), entry.result.Kind, entry.occPolicy, entry.result.ShadowText, entry.result.CanonicalPronunciation, entry.result.ContextPronunciationKey, entry.result.ConfidenceMilli); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO article_occurrence (id, article_block_id, article_sentence_id, semantic_sense_id, kind, role, shadow_policy, shadow_text, canonical_pronunciation_text, context_pronunciation_key, confidence_milli) VALUES (?, ?, ?, ?, ?, 'token', ?, ?, ?, ?, ?)`, entry.occID, blockID, nullableString(entry.sentence), nullableULID(entry.sense), entry.result.Kind, entry.occPolicy, entry.authored, entry.result.CanonicalPronunciation, entry.result.ContextPronunciationKey, entry.result.ConfidenceMilli); err != nil {
 			return writeError(op, err)
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO article_occurrence_span (id, article_occurrence_id, span_index, start_utf16, end_utf16, source_text) VALUES (?, ?, 0, ?, ?, ?)`, library.NewULID().String(), entry.occID, entry.token.StartUTF16, entry.token.EndUTF16, entry.token.SourceText); err != nil {

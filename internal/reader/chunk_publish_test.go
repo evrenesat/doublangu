@@ -537,3 +537,257 @@ func TestQueueAnalysisWithProfileSnapshotSemantics(t *testing.T) {
 		t.Fatal("fresh run without a profile accepted")
 	}
 }
+
+// publishParityChunk validates and publishes one authored block response
+// through the real chunk publication path.
+func publishParityChunk(t *testing.T, articles *Store, ctx context.Context, articleID, jobID library.ULID, blockIndex int, authored semantics.Response) {
+	t.Helper()
+	prepared, err := articles.PrepareAnalysis(ctx, articleID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chunk, err := semantics.PrepareChunk(prepared, blockIndex, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	namespaced, err := semantics.NamespaceChunkResponse(blockIndex, authored, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	validated, err := semantics.ValidateChunkResponse(chunk, namespaced)
+	if err != nil {
+		t.Fatalf("authored block %d rejected: %v", blockIndex, err)
+	}
+	if err := articles.MarkBlockProcessing(ctx, articleID, blockIndex, jobID); err != nil {
+		t.Fatal(err)
+	}
+	if err := articles.PersistAnalysisChunk(ctx, articleID, blockIndex, jobID, library.NewULID(), prepared, validated, semantics.ProviderID, "test-model", "medium"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// parityTokenSpec authors one token's classification, sense reference, and
+// subtitle in a parity fixture response.
+type parityTokenSpec struct {
+	classification string
+	senseRef       string
+	shadow         string
+}
+
+// parityConstructionSpec authors one construction with exact member sources.
+type parityConstructionSpec struct {
+	kind      semantics.Kind
+	role      string
+	senseRef  string
+	shadow    string
+	members   []string
+	spanTexts []string
+}
+
+// authorParityResponse builds a full block response in which every word keeps
+// its own subtitle (including construction members and identity labels).
+func authorParityResponse(t *testing.T, articles *Store, ctx context.Context, articleID library.ULID, blockIndex int, senses []semantics.NewSense, words map[string]parityTokenSpec, construction *parityConstructionSpec) semantics.Response {
+	t.Helper()
+	prepared, err := articles.PrepareAnalysis(ctx, articleID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chunk, err := semantics.PrepareChunk(prepared, blockIndex, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := semantics.Response{Version: semantics.AnalysisContractVersion, NewSenses: senses}
+	for _, token := range chunk.Tokens {
+		spec, ok := words[token.SourceText]
+		if !ok {
+			t.Fatalf("block %d fixture has no spec for token %q", blockIndex, token.SourceText)
+		}
+		result := semantics.TokenResult{
+			TokenID: token.ID, Classification: spec.classification, Kind: semantics.KindWord,
+			NewSenseRef: spec.senseRef, ShadowText: spec.shadow, ConfidenceMilli: 900,
+		}
+		response.Tokens = append(response.Tokens, result)
+	}
+	if construction != nil {
+		memberIDs := make([]string, 0, len(construction.members))
+		bySource := make(map[string]string, len(chunk.Tokens))
+		for _, token := range chunk.Tokens {
+			bySource[token.SourceText] = token.ID
+		}
+		for _, member := range construction.members {
+			id, ok := bySource[member]
+			if !ok {
+				t.Fatalf("construction member %q is not a block %d token", member, blockIndex)
+			}
+			memberIDs = append(memberIDs, id)
+		}
+		spans := make([]semantics.SpanRef, 0, len(construction.spanTexts))
+		for _, span := range construction.spanTexts {
+			spans = append(spans, semantics.SpanRef{BlockIndex: blockIndex, SourceText: span, Occurrence: 0})
+		}
+		response.Constructions = append(response.Constructions, semantics.Construction{
+			Kind: construction.kind, Role: construction.role, NewSenseRef: construction.senseRef,
+			ShadowText: construction.shadow, ConfidenceMilli: 900,
+			TokenIDs: memberIDs, Spans: spans,
+		})
+	}
+	return response
+}
+
+// TestPersistAnalysisChunkKeepsWordSubtitlesVisible proves the
+// persistent-visible display policy end to end: every word's authored subtitle
+// survives publication and rereading, contiguous members keep their own
+// glosses, a learned sense stays visible, unchanged tokens never store a
+// source copy, identity labels survive, and exact membership is retained.
+func TestPersistAnalysisChunkKeepsWordSubtitlesVisible(t *testing.T) {
+	db, err := store.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	article, err := NewArticle("Pariteit", "Hij gaf het plan niet op.\n\nNoor ging op de bank zitten.", "nl", "en")
+	if err != nil {
+		t.Fatal(err)
+	}
+	articles := NewStore(db)
+	if err := articles.CreateArticleQueued(ctx, &article); err != nil {
+		t.Fatal(err)
+	}
+	jobID := activeAnalysisJobID(t, db, article.ID)
+	if err := articles.MarkAnalysisProcessing(ctx, article.ID, jobID); err != nil {
+		t.Fatal(err)
+	}
+
+	wordSense := func(ref, canonical, translation string) semantics.NewSense {
+		return semantics.NewSense{
+			Ref: ref, Kind: semantics.KindWord, CanonicalForm: canonical, NormalizedForm: canonical,
+			Lemma: canonical, SenseDiscriminator: translation, PrimaryTranslation: translation,
+		}
+	}
+
+	// Block 0: split gaf … op with individual glosses and a same-spelling plan.
+	block0 := authorParityResponse(t, articles, ctx, article.ID, 0, []semantics.NewSense{
+		wordSense("gave", "geven", "gave"),
+		wordSense("plan", "plan", "plan"),
+		wordSense("up", "op", "up"),
+		{
+			Ref: "give-up", Kind: semantics.KindExpression, CanonicalForm: "opgeven",
+			NormalizedForm: "opgeven", SenseDiscriminator: "abandon", PrimaryTranslation: "give up",
+		},
+	}, map[string]parityTokenSpec{
+		"Hij":  {classification: "unchanged"},
+		"gaf":  {classification: "word", senseRef: "gave", shadow: "gave"},
+		"het":  {classification: "unchanged"},
+		"plan": {classification: "word", senseRef: "plan", shadow: "plan"},
+		"niet": {classification: "unchanged"},
+		"op":   {classification: "word", senseRef: "up", shadow: "up"},
+	}, &parityConstructionSpec{
+		kind: semantics.KindExpression, role: "discontinuous_construction",
+		senseRef: "give-up", shadow: "give up",
+		members: []string{"gaf", "op"}, spanTexts: []string{"gaf", "op"},
+	})
+	publishParityChunk(t, articles, ctx, article.ID, jobID, 0, block0)
+
+	// Block 1: identity-label name plus a contiguous construction whose
+	// members keep their own glosses.
+	block1 := authorParityResponse(t, articles, ctx, article.ID, 1, []semantics.NewSense{
+		wordSense("went", "ging", "went"),
+		wordSense("on", "op", "on"),
+		wordSense("the", "de", "the"),
+		wordSense("sofa", "bank", "sofa"),
+		wordSense("sit", "zitten", "sit"),
+		{
+			Ref: "couch-sit", Kind: semantics.KindIdiom, CanonicalForm: "op de bank zitten",
+			NormalizedForm: "op de bank zitten", SenseDiscriminator: "sit on the couch",
+			PrimaryTranslation: "sit on the couch",
+		},
+	}, map[string]parityTokenSpec{
+		"Noor":   {classification: "proper_name", shadow: "Noor"},
+		"ging":   {classification: "word", senseRef: "went", shadow: "went"},
+		"op":     {classification: "word", senseRef: "on", shadow: "on"},
+		"de":     {classification: "word", senseRef: "the", shadow: "the"},
+		"bank":   {classification: "word", senseRef: "sofa", shadow: "sofa"},
+		"zitten": {classification: "word", senseRef: "sit", shadow: "sit"},
+	}, &parityConstructionSpec{
+		kind: semantics.KindIdiom, role: "contiguous_construction",
+		senseRef: "couch-sit", shadow: "sit on the couch",
+		members: []string{"op", "de", "bank", "zitten"}, spanTexts: []string{"op de bank zitten"},
+	})
+	publishParityChunk(t, articles, ctx, article.ID, jobID, 1, block1)
+
+	assertDisplays := func(stage string) (library.ULID, *ArticleOccurrence) {
+		t.Helper()
+		loaded, err := articles.GetArticle(ctx, article.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The saved article takes the deterministic server sentence path.
+		if len(loaded.Sentences) != 2 || len(loaded.Blocks[0].Sentences) != 1 || len(loaded.Blocks[1].Sentences) != 1 {
+			t.Fatalf("%s: sentences = %d/%d/%d, want 2/1/1", stage, len(loaded.Sentences), len(loaded.Blocks[0].Sentences), len(loaded.Blocks[1].Sentences))
+		}
+		unchanged := map[string]bool{"Hij": true, "het": true, "niet": true}
+		var bankOccurrence *ArticleOccurrence
+		memberEntries := 0
+		tokenOwners := map[string]int{}
+		for blockIndex := range loaded.Blocks {
+			for occurrenceIndex := range loaded.Blocks[blockIndex].Occurrences {
+				occurrence := &loaded.Blocks[blockIndex].Occurrences[occurrenceIndex]
+				if occurrence.Role != OccurrenceToken {
+					memberEntries += len(occurrence.MemberOccurrenceIDs)
+					for _, memberID := range occurrence.MemberOccurrenceIDs {
+						tokenOwners[memberID]++
+					}
+					continue
+				}
+				source := occurrence.Spans[0].SourceText
+				if source == "bank" {
+					bankOccurrence = occurrence
+				}
+				if unchanged[source] {
+					if occurrence.ShowShadow || occurrence.SubtitleSuppressionReason != SubtitleSpecialToken || occurrence.ShadowText != "" {
+						t.Fatalf("%s: unchanged token %q display = %+v", stage, source, occurrence)
+					}
+					continue
+				}
+				if !occurrence.ShowShadow || occurrence.SubtitleSuppressionReason != SubtitleNone || occurrence.ShadowText == "" {
+					t.Fatalf("%s: token %q lost its visible subtitle: %+v", stage, source, occurrence)
+				}
+				// The same-spelling plan and the identity label survive
+				// storage and rereading.
+				if source == "plan" && occurrence.ShadowText != "plan" {
+					t.Fatalf("%s: plan subtitle = %q", stage, occurrence.ShadowText)
+				}
+				if source == "Noor" && (occurrence.ShadowText != "Noor" || !occurrence.ShowShadow) {
+					t.Fatalf("%s: Noor identity label = %+v", stage, occurrence)
+				}
+				if occurrence.ArticleSentenceID == nil {
+					t.Fatalf("%s: token %q has no sentence binding", stage, source)
+				}
+			}
+		}
+		// Exact construction membership: only the fixed lexical items, and no
+		// member occurrence is claimed by more than one construction here.
+		if memberEntries == 0 || len(tokenOwners) != memberEntries {
+			t.Fatalf("%s: construction membership = %d owners for %d member entries", stage, len(tokenOwners), memberEntries)
+		}
+		if bankOccurrence == nil {
+			t.Fatalf("%s: missing bank occurrence", stage)
+		}
+		return *bankOccurrence.SemanticSenseID, bankOccurrence
+	}
+
+	senseID, _ := assertDisplays("first read")
+
+	// A learned sense remains learned but its subtitle stays visible.
+	if _, err := articles.UpsertSemanticLearningState(ctx, senseID, LearningStatusLearned, library.ULID("")); err != nil {
+		t.Fatal(err)
+	}
+	_, bankAfter := assertDisplays("after learning")
+	if bankAfter.LearningState == nil || bankAfter.LearningState.Status != LearningStatusLearned {
+		t.Fatalf("bank learning state = %+v", bankAfter.LearningState)
+	}
+	if bankAfter.ShadowText != "sofa" || !bankAfter.ShowShadow {
+		t.Fatalf("learned bank subtitle = %+v", bankAfter)
+	}
+}

@@ -12,3 +12,7 @@ macos/speech-worker/python/__pycache__/
 macos/speech-worker/.build/
 macos/speech-worker/app/.build/
 dist/macos/
+# Authored fixture data under testdata is source, not runtime state; some
+# global git ignores exclude testdata directories wholesale.
+!internal/reader/testdata/
+!internal/reader/testdata/**

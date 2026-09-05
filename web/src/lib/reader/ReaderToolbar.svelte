@@ -56,7 +56,7 @@
 	.mobile-appearance { display: none; }
 	@media (max-width: 850px) { .reader-toolbar { flex-wrap: wrap; justify-content: flex-start; padding-inline: 0.7rem; } }
 	@media (max-width: 600px) {
-		.reader-toolbar { gap: 0.5rem; padding: 0.5rem 0.35rem; }
+		.reader-toolbar { gap: 0.5rem; padding: 0.35rem 0.35rem; }
 		.focus-picker { flex: 1; min-width: 0; }
 		.focus-picker > span { display: none; }
 		.focus-picker select { width: 100%; min-width: 0; font-size: 0.8rem; }

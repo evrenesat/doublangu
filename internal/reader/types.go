@@ -251,20 +251,20 @@ type SemanticLearningState struct {
 	UpdatedAt       string         `json:"updated_at"`
 }
 
-// SubtitleSuppressionReason explains why an unlearned occurrence with an
-// effective English subtitle does not display it.
+// SubtitleSuppressionReason explains why an occurrence with an effective
+// English subtitle does not display it.
 type SubtitleSuppressionReason string
 
 const (
-	// SubtitleNone means the occurrence's effective subtitle is visible when
-	// the occurrence is unlearned.
+	// SubtitleNone means the occurrence's effective subtitle is visible.
 	SubtitleNone SubtitleSuppressionReason = "none"
 	// SubtitleSpecialToken marks tokens that have no effective subtitle
-	// (proper names, numbers, acronyms, and deliberately unchanged tokens
-	// without a translation). Only special classifications produce it.
+	// (deliberately unchanged tokens, and special tokens without an authored
+	// identity label or translation). Only such tokens produce it.
 	SubtitleSpecialToken SubtitleSuppressionReason = "special_token"
-	// SubtitleContiguousGroupMember marks exact lexical members of a
-	// contiguous construction; the construction subtitle replaces theirs.
+	// SubtitleContiguousGroupMember is a legacy value the current server never
+	// produces: exact lexical members of a contiguous construction keep their
+	// own subtitles visible under the persistent-visible display policy.
 	SubtitleContiguousGroupMember SubtitleSuppressionReason = "contiguous_group_member"
 )
 

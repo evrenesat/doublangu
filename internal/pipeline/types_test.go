@@ -69,7 +69,7 @@ func TestProfileSnapshotValidation(t *testing.T) {
 
 	wrongVersion := profile
 	wrongVersion.Bindings[1].ContractVersion = TranslationContractVersion
-	wrongVersion.Bindings[1].PromptVersion = "reader-translation-prompt.v2"
+	wrongVersion.Bindings[1].PromptVersion = "reader-translation-prompt.v9"
 	if err := wrongVersion.Validate(); err == nil {
 		t.Fatal("profile with wrong prompt version accepted")
 	}

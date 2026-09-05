@@ -599,8 +599,48 @@ func ValidateTranslation(chunk PreparedChunk, linguistic *ValidatedLinguistic, a
 		tokenSource[token.ID] = token.SourceText
 	}
 	classifications := make(map[string]string, len(linguistic.Tokens))
+	linguisticByID := make(map[string]LinguisticTokenResult, len(linguistic.Tokens))
 	for _, result := range linguistic.Tokens {
 		classifications[result.TokenID] = result.Classification
+		linguisticByID[result.TokenID] = result
+	}
+	// Same-spelling subtitles are legitimate only through the referenced
+	// sense's own English translation, so resolve that translation for every
+	// token from its candidate, newly translated sense, or prior sense.
+	candidatesByID := make(map[string]SenseCandidate, len(chunk.Candidates))
+	for _, candidate := range chunk.Candidates {
+		if candidate.ID != "" {
+			candidatesByID[candidate.ID] = candidate
+		}
+	}
+	priorByRef := make(map[string]NewSense, len(chunk.PriorValidatedSenses))
+	for _, sense := range chunk.PriorValidatedSenses {
+		if sense.Ref != "" {
+			priorByRef[sense.Ref] = sense
+		}
+	}
+	newSenseByRef := make(map[string]LinguisticNewSense, len(linguistic.NewSenses))
+	for _, sense := range linguistic.NewSenses {
+		newSenseByRef[sense.Ref] = sense
+	}
+	translatedSenseByRef := make(map[string]TranslationNewSense, len(artifact.NewSenses))
+	for _, translated := range artifact.NewSenses {
+		translatedSenseByRef[translated.Ref] = translated
+	}
+	senseTranslation := func(id, ref string) string {
+		if id != "" {
+			if candidate, ok := candidatesByID[id]; ok {
+				return candidate.PrimaryTranslation
+			}
+			return ""
+		}
+		if translated, ok := translatedSenseByRef[ref]; ok {
+			return translated.PrimaryTranslation
+		}
+		if sense, ok := priorByRef[ref]; ok {
+			return sense.PrimaryTranslation
+		}
+		return ""
 	}
 	seenTranslationTokens := make(map[string]struct{}, len(artifact.Tokens))
 	if len(artifact.Tokens) != len(linguistic.Tokens) {
@@ -617,7 +657,8 @@ func ValidateTranslation(chunk PreparedChunk, linguistic *ValidatedLinguistic, a
 		if err := safeProviderText(fmt.Sprintf("translation tokens[%d].shadow_text", index), result.ShadowText, MaxShadowScalars); err != nil {
 			return err
 		}
-		if err := validateTranslatedSubtitle(result.TokenID, classifications[result.TokenID], tokenSource[result.TokenID], result.ShadowText); err != nil {
+		linguisticToken := linguisticByID[result.TokenID]
+		if err := validateTranslatedSubtitle(result.TokenID, classifications[result.TokenID], tokenSource[result.TokenID], result.ShadowText, senseTranslation(linguisticToken.SemanticSenseID, linguisticToken.NewSenseRef)); err != nil {
 			return fmt.Errorf("translation token %q: %w", result.TokenID, err)
 		}
 	}
@@ -627,10 +668,6 @@ func ValidateTranslation(chunk PreparedChunk, linguistic *ValidatedLinguistic, a
 		}
 	}
 
-	newSenseByRef := make(map[string]LinguisticNewSense, len(linguistic.NewSenses))
-	for _, sense := range linguistic.NewSenses {
-		newSenseByRef[sense.Ref] = sense
-	}
 	seenTranslationSenses := make(map[string]struct{}, len(artifact.NewSenses))
 	if len(artifact.NewSenses) != len(linguistic.NewSenses) {
 		return fmt.Errorf("translation covers %d new senses for %d linguistic refs", len(artifact.NewSenses), len(linguistic.NewSenses))
@@ -653,18 +690,6 @@ func ValidateTranslation(chunk PreparedChunk, linguistic *ValidatedLinguistic, a
 		}
 	}
 
-	priorByRef := make(map[string]NewSense, len(chunk.PriorValidatedSenses))
-	for _, sense := range chunk.PriorValidatedSenses {
-		if sense.Ref != "" {
-			priorByRef[sense.Ref] = sense
-		}
-	}
-	candidatesByID := make(map[string]SenseCandidate, len(chunk.Candidates))
-	for _, candidate := range chunk.Candidates {
-		if candidate.ID != "" {
-			candidatesByID[candidate.ID] = candidate
-		}
-	}
 	canonicalOf := func(id, ref string) string {
 		if id != "" {
 			if candidate, ok := candidatesByID[id]; ok {
@@ -728,8 +753,10 @@ func ValidateTranslation(chunk PreparedChunk, linguistic *ValidatedLinguistic, a
 }
 
 // validateTranslatedSubtitle applies the v3 subtitle invariants to one
-// translation token.
-func validateTranslatedSubtitle(tokenID, classification, source, shadow string) error {
+// translation token. A same-spelling subtitle is legitimate only when the
+// referenced sense's own English translation normalizes to the same spelling
+// (Dutch plan, the financial bank, in); otherwise it is an untranslated copy.
+func validateTranslatedSubtitle(tokenID, classification, source, shadow, senseTranslation string) error {
 	normalizedSource, sourceErr := NormalizeForm(source)
 	normalizedShadow := ""
 	if strings.TrimSpace(shadow) != "" {
@@ -745,14 +772,13 @@ func validateTranslatedSubtitle(tokenID, classification, source, shadow string) 
 			return errors.New("an unchanged token shadow_text must be empty or match the source text")
 		}
 	case "proper_name", "number", "acronym":
-		if sourceErr == nil && normalizedShadow != "" && normalizedShadow == normalizedSource {
-			return errors.New("source-copy shadow_text is not a translation")
-		}
+		// Identity labels are visible: a name may display its name and a
+		// number its value, so only unsafe text is rejected (checked above).
 	default:
 		if normalizedShadow == "" {
 			return fmt.Errorf("shadow_text is required for translated token %q", tokenID)
 		}
-		if sourceErr == nil && normalizedShadow == normalizedSource {
+		if sourceErr == nil && normalizedShadow == normalizedSource && !sameSpellingSense(senseTranslation, normalizedSource) {
 			return errors.New("shadow_text copies the Dutch source text; the subtitle must be an English translation")
 		}
 	}

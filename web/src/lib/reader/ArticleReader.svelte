@@ -452,11 +452,11 @@
 	function withSemanticLearning(article: Article, senseID: string, state: SemanticLearningState): Article {
 		const update = (occurrence: ArticleOccurrence): ArticleOccurrence => {
 			if (occurrence.semantic_sense_id !== senseID) return occurrence;
+			// Subtitles are persistently visible: learning a sense never hides
+			// its subtitle, so only the learning state changes here.
 			return {
 				...occurrence,
-				learning_state: state,
-				show_shadow:
-					state.status !== 'learned' && occurrence.subtitle_suppression_reason === 'none'
+				learning_state: state
 			};
 		};
 		const next: Article = {
@@ -882,11 +882,11 @@
 
 	@media (max-width: 600px) {
 		.reader-status-row { grid-template-columns: 1fr; }
-		.reader-heading { margin: 0.6rem 0.35rem 1rem; }
+		.reader-heading { margin: 0.6rem 0.35rem 0.55rem; }
 		.reader-heading h1 { font-size: 1.85rem; margin-top: 0.8rem; }
 		.reader-heading p { font-size: 0.85rem; }
-		.article-options { margin-inline: 0.35rem; margin-bottom: 0.6rem; }
-		.reader-body { padding-top: 0.7rem; }
+		.article-options { margin-inline: 0.35rem; margin-bottom: 0.35rem; }
+		.reader-body { padding-top: 0.35rem; }
 	}
 
 

@@ -1,5 +1,118 @@
 # Development Log
 
+## 2026-09-05 — Reader demo parity: real analysis data path implemented
+
+Implemented `plans/reader-demo-parity-handoff.md` §6 on `codex/reader-demo-design`
+(HEAD `5a50b32`). The authored frontend already rendered the demo; this pass
+completed the backend meaning pipeline so real saved articles carry the same
+complete data the fixtures mocked.
+
+1. Same-spelling English senses are now legitimate. `validateTokenResult`
+   (merged v3 validation) and `validateTranslatedSubtitle` (two-stage
+   translation validation) accept a subtitle that normalizes equal to the Dutch
+   source exactly when the token's referenced sense has an English primary
+   translation with the same spelling (Dutch `plan`, financial `bank`, `in`);
+   anything else still enters correction, and the sofa sense of `bank` cannot
+   take the financial spelling. Proper names, numbers, and acronyms may now
+   display visible identity labels (a same-spelling subtitle is a label, not an
+   untranslated copy). `unchanged` keeps its empty-or-source rule and still
+   cannot bypass a missing gloss.
+2. Prompts updated for individual meanings: the two-stage linguistic prompt
+   requires sense references for every function word and idiom member; the
+   translation prompt requires per-word subtitles (members included) with
+   construction meanings kept separate; the compatibility single-stage
+   `BuildChunkPrompt`, `BuildV2Prompt`, and `BuildV2CorrectionPrompt` carry the
+   same rules. Cache identities bumped so old artifacts cannot satisfy new
+   requirements: `reader-linguistic-prompt.v2`, `reader-translation-prompt.v2`,
+   `reader-analysis-prompt.v7`.
+3. Persistent-visible display policy. `finishOccurrenceDisplay` no longer
+   suppresses contiguous-construction members or learned senses, and no longer
+   blanks same-spelling identity labels; `show_shadow` now means only "an
+   effective subtitle exists". The `contiguous_group_member` suppression value
+   is retained in the contract as a legacy value the server never emits. Both
+   publication paths (pipeline `PersistAnalysisChunk` and legacy
+   `PersistAnalysis`) store every authored subtitle, including members, and
+   store `unchanged` tokens with an empty subtitle so a Dutch source copy can
+   never surface as one. `ArticleReader.withSemanticLearning` no longer derives
+   `show_shadow` from learning state, so an optimistically learned word keeps
+   its subtitle.
+4. Real-data path. New `internal/reader/long_reader_parity_test.go` publishes
+   the authored long fixture (12 paragraphs, 48 sentences, 871 glossed words,
+   13 constructions) through the real chunk publication seam and proves every
+   word subtitle, sentence anchor, and exact `member_occurrence_ids` survives a
+   store round trip. Demo-authored discontinuous constructions whose members
+   happen to be adjacent (`vroeg zich af`) publish as contiguous with the
+   merged span, as v3's role/membership shape rule requires. A default-off
+   seed test (`DOUBLANGU_READER_DESIGN_DB=… go test ./internal/reader -run
+   TestSeedReaderDesignLongArticle`) materialized the same fixture into the
+   isolated `data/reader-design` database; the real saved article is
+   `/reader/01M1S0F1BF16R2A4AZDQBQVYE5`. Repo `.gitignore` re-includes
+   `internal/reader/testdata/` because a global `testdata` ignore would
+   otherwise drop the authored fixture from clones.
+5. Phone density correction (bounded, spacing-only): at ≤600px the reader
+   heading/options/body padding and the narration/analysis status card tighten
+   so the real article body starts at 366px (< 370) with all labels visible.
+
+New tests: `internal/semantics/subtitle_parity_test.go` (all six short-sample
+sentences — 66 words with visible glosses, exact membership, same-spelling
+positives and the sofa-`bank` negative, identity labels, two constructions in
+one sentence, inserted-modifier rejection, block-relative UTF-16 offsets,
+coverage/reference rejections, and the two-stage same-spelling rule);
+`internal/reader/chunk_publish_test.go`
+`TestPersistAnalysisChunkKeepsWordSubtitlesVisible`; `internal/httpapi/
+article_occurrences_test.go` `TestArticleHTTPResponseCarriesWordGlossesAndMembers`;
+`TestLongFixturePublishesThroughRealStore` + the seed test. The stale shared-
+slice mutation in `TestValidateResponseRejectsSourceCopiesAndRuleViolations`
+was fixed defensively (`dutchCopyOrdinary` now copies before mutating), and the
+former "special source-copy" invalid case became the new identity-label valid
+case.
+
+Verification on the Mac (all from the repository root):
+
+```sh
+go test ./internal/annotator ./internal/semantics ./internal/reader ./internal/httpapi   # ok
+go test -race ./internal/semantics ./internal/reader ./internal/httpapi                   # ok
+go test ./internal/pipeline ./internal/analysis                                           # ok
+npm --prefix web run validate:openapi                                                      # ok
+npm --prefix web run generate:api && git diff --exit-code -- web/src/lib/api/generated.ts  # no diff
+npm --prefix web run check                                                                 # 0 errors, 0 warnings
+npm --prefix web run test:unit                                                             # 130/130
+npm --prefix web run build                                                                 # ok
+npm --prefix web run test:e2e -- reader-design.spec.ts reader.spec.ts reader-progressive.spec.ts reader-preference.spec.ts  # 20/20
+make verify                                                                                # fails only the known baseline defect, see below
+git diff --check                                                                           # clean
+```
+
+Reproduced baseline failure (not introduced): `make verify` again stops at the
+existing native plugin `TestIntegration_FullMatrix` with `host/plugin module
+graph differs`, exactly as recorded in the previous entry; everything before
+that stage passes.
+
+Live provider smoke blocker (reported, not worked around):
+`DOUBLANGU_TEST_CODEX_LIVE=1 go test ./internal/annotator -run
+'^TestLiveCodexAppServer$'` now fails provider-side: the installed
+`codex-cli 0.147.0` cannot drive the account's default model (`gpt-6-astra`
+"requires a newer version of Codex"), and explicit older models (`gpt-5`,
+`gpt-5.1`, `gpt-5.1-codex-max`, `gpt-5.1-codex-mini`, `gpt-5-codex`,
+`o4-mini`) are each rejected with "not supported when using Codex with a
+ChatGPT account". Upgrading the owner's Codex CLI is a system change outside
+this handoff, so live provider analysis of the local article stays explicitly
+open; the deterministic store/API path is fully verified and the launcher's
+safe analysis-disabled default is untouched.
+
+Browser acceptance on the real saved article (Codex in-app browser, port
+5177, rebuilt server): 871/871 word units render with visible subtitles (0
+empty), 48 sentence cards, 13 constructions with members; no reflow in either
+focus mode at start/middle/end (all 871 word rects, 48 card rects, and
+scrollY unchanged after focus); all four themes switch with distinct
+page/text colors; at 375px marking `komen` learned keeps its subtitle visible,
+the popover opens below the tapped word (no cover), the state survives reload
+through the real API, and the 871-subtitle page has no overflow at
+320/375/1280px. Narration stays "Generating … 0 of 48 ready" honestly: the
+isolated launcher has no Mac worker, so audio is unavailable and the page says
+so instead of faking playback. The app is left running under the
+`doublangu-reader-design` tmux session for owner review.
+
 ## 2026-09-05 — Demo-led reader, realistic mobile sample, and local handoff
 
 1. Recovered the original interactive reader demo from the referenced design

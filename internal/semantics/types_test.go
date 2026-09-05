@@ -149,8 +149,11 @@ func TestValidateResponseRejectsSourceCopiesAndRuleViolations(t *testing.T) {
 	assertInvalid("missing translated token subtitle", missingSubtitle)
 
 	// An ordinary token whose subtitle copies its own Dutch source spelling is
-	// a source copy, never an English subtitle.
+	// a source copy, never an English subtitle, unless the referenced sense's
+	// own translation is spelled the same. Tokens are copied defensively so
+	// this mutation cannot leak into the later variants.
 	dutchCopyOrdinary := base
+	dutchCopyOrdinary.Tokens = append([]TokenResult(nil), base.Tokens...)
 	dutchCopyOrdinary.NewSenses = []NewSense{{
 		Ref: "bank-sofa", Kind: KindWord, CanonicalForm: "bank", NormalizedForm: "bank",
 		SenseDiscriminator: "sofa", PrimaryTranslation: "sofa",
@@ -182,14 +185,20 @@ func TestValidateResponseRejectsSourceCopiesAndRuleViolations(t *testing.T) {
 	}
 	assertInvalid("sensed unchanged token", sensedUnchanged)
 
-	// A special token with a Dutch source-copy subtitle is invalid: specials
-	// may carry only non-source English translations.
-	specialCopy := base
-	specialCopy.Tokens[0] = TokenResult{
+	// A special token may now display its visible identity label: a proper
+	// name displays its name and a number its value, so a same-spelling
+	// subtitle is a legitimate label rather than an untranslated copy.
+	// Tokens are copied defensively because earlier variants in this test
+	// mutate the shared backing array.
+	specialIdentity := base
+	specialIdentity.Tokens = append([]TokenResult(nil), base.Tokens...)
+	specialIdentity.Tokens[0] = TokenResult{
 		TokenID: input.Tokens[0].ID, Classification: "proper_name", Kind: KindWord,
 		ShadowText: "Een", ConfidenceMilli: 1000,
 	}
-	assertInvalid("special source-copy subtitle", specialCopy)
+	if _, err := ValidateResponse(input, specialIdentity); err != nil {
+		t.Fatalf("special identity label rejected: %v", err)
+	}
 
 	// A construction subtitle that copies the joined Dutch member text must
 	// enter correction.

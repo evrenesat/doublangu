@@ -30,7 +30,7 @@ const (
 	// v3 supplies stable server-owned source sentence anchors in every
 	// prepared chunk; caches from earlier contracts never satisfy v3 work.
 	AnalysisContractVersion = "reader.analysis.v3"
-	PromptVersion           = "reader-analysis-prompt.v6"
+	PromptVersion           = "reader-analysis-prompt.v7"
 	ProviderID              = "codex-app-server"
 	MaxAlternatives         = 3
 	MaxShadowScalars        = 160
@@ -641,6 +641,16 @@ func validateResponse(input PreparedArticle, response Response, prior []NewSense
 	return validated, nil
 }
 
+// sameSpellingSense reports whether the referenced sense's own English
+// translation normalizes to the same spelling as the Dutch source. Dutch and
+// English legitimately share spellings (plan, the financial bank, in), and for
+// such a sense the same-spelling subtitle is the real translation rather than
+// an untranslated copy.
+func sameSpellingSense(senseTranslation, normalizedSource string) bool {
+	normalized, err := NormalizeForm(senseTranslation)
+	return err == nil && normalized == normalizedSource
+}
+
 func validateTokenResult(result TokenResult, token Token, sourceLanguage, targetLanguage string, candidates map[string]SenseCandidate, newSenses map[string]NewSense) error {
 	if result.Classification == "" {
 		return errors.New("classification is required")
@@ -679,6 +689,16 @@ func validateTokenResult(result TokenResult, token Token, sourceLanguage, target
 	if strings.TrimSpace(result.ShadowText) != "" {
 		normalizedShadow, shadowErr = NormalizeForm(result.ShadowText)
 	}
+	senseTranslation := ""
+	if result.SemanticSenseID != "" {
+		if candidate, ok := candidates[result.SemanticSenseID]; ok {
+			senseTranslation = candidate.PrimaryTranslation
+		}
+	} else if result.NewSenseRef != "" {
+		if sense, ok := newSenses[result.NewSenseRef]; ok {
+			senseTranslation = sense.PrimaryTranslation
+		}
+	}
 	switch result.Classification {
 	case "unchanged":
 		// Deliberately untranslated: a real English translation is invalid,
@@ -693,25 +713,24 @@ func validateTokenResult(result TokenResult, token Token, sourceLanguage, target
 			return errors.New("an unchanged token shadow_text must be empty or match the source text")
 		}
 	case "proper_name", "number", "acronym":
-		// These may omit a subtitle. When they carry one it must be a real
-		// translation, never a copy of the Dutch source spelling.
+		// These may omit a subtitle, display their visible identity label (a
+		// name displays its name, a number its value), or carry a real
+		// translation such as The Hague. Only unsafe or unnormalizable text is
+		// rejected (checked above).
 		if shadowErr != nil {
 			return shadowErr
 		}
-		if sourceErr == nil && normalizedShadow != "" && normalizedShadow == normalizedSource {
-			return errors.New("source-copy shadow_text is not a translation")
-		}
 	default:
 		// Ordinary translated token: subtitle required (checked above); a
-		// normalized copy of the Dutch source spelling is never an English
-		// subtitle and must enter correction.
+		// normalized copy of the Dutch source spelling is rejected unless the
+		// referenced sense's own English translation is spelled the same.
 		if normalizedShadow == "" {
 			return errors.New("shadow_text is required for a translated token")
 		}
 		if shadowErr != nil {
 			return shadowErr
 		}
-		if sourceErr == nil && normalizedShadow == normalizedSource {
+		if sourceErr == nil && normalizedShadow == normalizedSource && !sameSpellingSense(senseTranslation, normalizedSource) {
 			return errors.New("shadow_text copies the Dutch source text; the subtitle must be an English translation")
 		}
 	}

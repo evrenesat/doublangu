@@ -70,7 +70,7 @@ func TestTranslationPromptCarriesValidatedArtifactAndRules(t *testing.T) {
 	for _, expected := range []string{
 		"never analyze, retokenize, reclassify, renumber, or relink",
 		"exactly one translation entry per supplied token_id",
-		"never copy Dutch source text into a subtitle",
+		"copy Dutch source text into a subtitle",
 		"LINGUISTIC_ARTIFACT_BEGIN",
 		"Never output sentences, token classifications",
 		"reader.translation.v1",

@@ -1136,14 +1136,6 @@ func (s *Store) PersistAnalysis(ctx context.Context, id library.ULID, prepared s
 			}
 			return ""
 		}
-		contiguousTokens := make(map[string]struct{})
-		for _, construction := range validated.Constructions {
-			if construction.Construction.Role == "contiguous_construction" {
-				for _, tokenID := range construction.Construction.TokenIDs {
-					contiguousTokens[tokenID] = struct{}{}
-				}
-			}
-		}
 		tokenByID := make(map[string]semantics.ResolvedToken, len(validated.Tokens))
 		for _, token := range validated.Tokens {
 			tokenByID[token.Token.ID] = token
@@ -1154,12 +1146,16 @@ func (s *Store) PersistAnalysis(ctx context.Context, id library.ULID, prepared s
 			if err != nil {
 				return &Error{Op: "persist analysis", Kind: KindValidation, Err: err}
 			}
-			shadowPolicy := ShadowToken
-			if result.ShadowText == "" || result.Classification == "proper_name" || result.Classification == "number" || result.Classification == "acronym" || result.Classification == "unchanged" {
-				shadowPolicy = ShadowNone
+			// Every word keeps its authored subtitle, including construction
+			// members and visible identity labels; unchanged tokens never
+			// store a Dutch source copy as a subtitle.
+			authored := result.ShadowText
+			if result.Classification == "unchanged" {
+				authored = ""
 			}
-			if _, ok := contiguousTokens[token.Token.ID]; ok {
-				shadowPolicy = ShadowNone
+			shadowPolicy := ShadowNone
+			if authored != "" {
+				shadowPolicy = ShadowToken
 			}
 			occurrenceID := library.NewULID().String()
 			var sentenceID any
@@ -1170,7 +1166,7 @@ func (s *Store) PersistAnalysis(ctx context.Context, id library.ULID, prepared s
 			if sense != nil {
 				senseID = sense.ID.String()
 			}
-			if _, err := tx.ExecContext(ctx, `INSERT INTO article_occurrence (id, article_block_id, article_sentence_id, semantic_sense_id, kind, role, shadow_policy, shadow_text, canonical_pronunciation_text, context_pronunciation_key, confidence_milli) VALUES (?, ?, ?, ?, ?, 'token', ?, ?, ?, ?, ?)`, occurrenceID, blockByIndex[token.Token.BlockIndex].id.String(), sentenceID, senseID, result.Kind, shadowPolicy, result.ShadowText, result.CanonicalPronunciation, result.ContextPronunciationKey, result.ConfidenceMilli); err != nil {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO article_occurrence (id, article_block_id, article_sentence_id, semantic_sense_id, kind, role, shadow_policy, shadow_text, canonical_pronunciation_text, context_pronunciation_key, confidence_milli) VALUES (?, ?, ?, ?, ?, 'token', ?, ?, ?, ?, ?)`, occurrenceID, blockByIndex[token.Token.BlockIndex].id.String(), sentenceID, senseID, result.Kind, shadowPolicy, authored, result.CanonicalPronunciation, result.ContextPronunciationKey, result.ConfidenceMilli); err != nil {
 				return err
 			}
 			if _, err := tx.ExecContext(ctx, `INSERT INTO article_occurrence_span (id, article_occurrence_id, span_index, start_utf16, end_utf16, source_text) VALUES (?, ?, 0, ?, ?, ?)`, library.NewULID().String(), occurrenceID, token.Token.StartUTF16, token.Token.EndUTF16, token.Token.SourceText); err != nil {
@@ -1439,36 +1435,10 @@ func (s *Store) loadV2Tx(ctx context.Context, tx *sql.Tx, id library.ULID, artic
 		return err
 	}
 	rows.Close()
-	// Exact contiguous-construction members never display their own subtitle;
-	// membership rows are v3-only and are never inferred from legacy spans.
-	contiguousMembers := make(map[string]struct{})
-	memberRows, err := tx.QueryContext(ctx, `
-		SELECT m.token_occurrence_id
-		FROM article_construction_member m
-		JOIN article_occurrence c ON c.id = m.construction_occurrence_id
-		JOIN article_block b ON b.id = c.article_block_id
-		WHERE b.article_id = ? AND c.role = 'contiguous_construction'
-	`, id.String())
-	if err != nil {
-		return err
-	}
-	for memberRows.Next() {
-		var tokenOccurrenceID string
-		if err := memberRows.Scan(&tokenOccurrenceID); err != nil {
-			memberRows.Close()
-			return err
-		}
-		contiguousMembers[tokenOccurrenceID] = struct{}{}
-	}
-	if err := memberRows.Err(); err != nil {
-		memberRows.Close()
-		return err
-	}
-	memberRows.Close()
 	// Exact ordered membership for construction occurrences: tokens list the
 	// construction that owns them above; constructions list their members.
 	memberOfConstruction := make(map[string][]string)
-	memberRows, err = tx.QueryContext(ctx, `
+	memberRows, err := tx.QueryContext(ctx, `
 		SELECT m.construction_occurrence_id, m.token_occurrence_id
 		FROM article_construction_member m
 		JOIN article_occurrence c ON c.id = m.construction_occurrence_id
@@ -1547,12 +1517,12 @@ func (s *Store) loadV2Tx(ctx context.Context, tx *sql.Tx, id library.ULID, artic
 	// related rows are attached. Both copies (article-level and block-level)
 	// receive the same derived values.
 	for index := range article.Occurrences {
-		finishOccurrenceDisplay(&article.Occurrences[index], contiguousMembers)
+		finishOccurrenceDisplay(&article.Occurrences[index])
 		article.Occurrences[index].MemberOccurrenceIDs = memberOfConstruction[article.Occurrences[index].ID.String()]
 	}
 	for blockIndex := range article.Blocks {
 		for occurrenceIndex := range article.Blocks[blockIndex].Occurrences {
-			finishOccurrenceDisplay(&article.Blocks[blockIndex].Occurrences[occurrenceIndex], contiguousMembers)
+			finishOccurrenceDisplay(&article.Blocks[blockIndex].Occurrences[occurrenceIndex])
 			article.Blocks[blockIndex].Occurrences[occurrenceIndex].MemberOccurrenceIDs = memberOfConstruction[article.Blocks[blockIndex].Occurrences[occurrenceIndex].ID.String()]
 		}
 	}
@@ -1652,36 +1622,25 @@ func (s *Store) loadV2Tx(ctx context.Context, tx *sql.Tx, id library.ULID, artic
 	return nil
 }
 
-// finishOccurrenceDisplay derives the effective subtitle, the explicit
-// suppression reason, and show_shadow for one occurrence. The effective
-// subtitle is shadow_text with a fallback to the referenced sense's primary
-// translation. A token without a sense whose subtitle normalizes exactly to
-// its own source text carries no effective subtitle at all: a source copy is
-// never a translation.
-func finishOccurrenceDisplay(occurrence *ArticleOccurrence, contiguousMembers map[string]struct{}) {
+// finishOccurrenceDisplay derives the effective subtitle, the suppression
+// reason, and show_shadow for one occurrence. The effective subtitle is
+// shadow_text with a fallback to the referenced sense's primary translation.
+// Subtitles are persistently visible: a word keeps its own meaning inside a
+// construction, after its sense is learned, and when that meaning is
+// legitimately spelled like the Dutch source, so only tokens without any
+// effective subtitle are suppressed.
+func finishOccurrenceDisplay(occurrence *ArticleOccurrence) {
 	effective := occurrence.ShadowText
 	if effective == "" && occurrence.Sense != nil {
 		effective = occurrence.Sense.PrimaryTranslation
 	}
-	if occurrence.Role == OccurrenceToken && occurrence.Sense == nil && effective != "" && len(occurrence.Spans) > 0 {
-		subtitleNormalized, subtitleErr := semantics.NormalizeForm(effective)
-		sourceNormalized, sourceErr := semantics.NormalizeForm(occurrence.Spans[0].SourceText)
-		if subtitleErr == nil && sourceErr == nil && subtitleNormalized == sourceNormalized {
-			effective = ""
-		}
-	}
 	occurrence.ShadowText = effective
 	reason := SubtitleNone
-	switch {
-	case occurrence.Role == OccurrenceToken && effective == "":
+	if occurrence.Role == OccurrenceToken && effective == "" {
 		reason = SubtitleSpecialToken
 	}
-	if _, member := contiguousMembers[occurrence.ID.String()]; member {
-		reason = SubtitleContiguousGroupMember
-	}
 	occurrence.SubtitleSuppressionReason = reason
-	unlearned := occurrence.LearningState == nil || occurrence.LearningState.Status != LearningStatusLearned
-	occurrence.ShowShadow = unlearned && reason == SubtitleNone && effective != ""
+	occurrence.ShowShadow = effective != ""
 }
 
 func loadSemanticSenseTx(ctx context.Context, tx *sql.Tx, id string) (*SemanticSense, error) {
