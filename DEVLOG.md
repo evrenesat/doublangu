@@ -1,5 +1,103 @@
 # Development Log
 
+## 2026-09-04 — Hostname-private continuous deployment
+
+- Added a deterministic root-path Linux/ARM64 release builder and a
+  least-privilege GitHub Actions workflow for every accepted `main` push.
+- Verification and packaging run on GitHub-hosted infrastructure. A dedicated
+  self-hosted runner receives only the release artifact and invokes a fixed
+  server-side activator; deployments are serialized and artifacts expire after
+  one day.
+- The public repository and workflow contain no application hostname, server
+  address, SSH credential, owner password, application secret, provider key,
+  or external health URL. Host routing and every runtime secret remain in
+  protected server-side configuration.
+- Deployment removes the redundant reverse-proxy Basic Auth layer while
+  retaining the built-in owner login, secure session cookie, CSRF checks,
+  login rate limiting, and owner-only API middleware.
+- Verification passed: focused command/auth race tests; all Go packages;
+  OpenAPI validation and stable regeneration; eight reader browser tests;
+  Svelte check; 130 web unit tests; `make verify`; shellcheck; and
+  `git diff --check`. Five consecutive runs cover the repaired asynchronous
+  settings-mirror assertion. Two clean-room release builds were byte-identical,
+  and the default build hash matched the activated live artifact.
+- The authenticated Codex app-server live smoke passed. The optional model-
+  specific chunk smoke remained skipped because no live-test model was set.
+
+
+## 2026-09-03 — Latest settings and Mac relay UI fix deployed to beta
+
+- Fast-forwarded `main` from `9f0caa8` to `5aa0e2b` and preserved the beta-only
+  OpenRouter `/api/v1` validator change. The incoming release includes the
+  restructured Settings pages and the numeric option controls for `mac_relay`.
+- Verification passed with Node 24: Svelte check, 130 web unit tests, production
+  web build, focused provider/config/server race tests, Ansible syntax checks,
+  and `git diff --check`.
+- Deployed immutable beta release
+  `c6e2a40cf7634d0f158d3e6a27412962a00d50b1730b9ebd8b373773e09b0ee7`;
+  production was unchanged. Authenticated health, shell, Codex (9 models), and
+  OpenRouter (425 models) checks passed.
+- The post-deploy Mac relay smoke test did not complete because the enrolled Mac
+  stopped heartbeating at `2026-09-03T18:26:23.476Z`. Six earlier relay jobs
+  remain successful; the timed-out smoke job was canceled without retrying.
+
+
+## 2026-09-03 — Explicit beta providers: OpenRouter and Mac relay
+
+- Replaced beta's legacy single-Codex compatibility environment with a trusted
+  provider file registering `codex-app-server`, `openrouter`, and `mac-omlx`.
+  The existing active Imported Codex profile was preserved.
+- OpenRouter uses `https://openrouter.ai/api/v1` and a server-only key loaded
+  from `DOUBLANGU_OPENROUTER_API_KEY`. The controller key is mode `0600` and
+  Git-ignored; the deployed provider file contains only the environment name.
+- Extended the strict HTTPS base-path allowlist from only `/v1` to `/v1` or
+  `/api/v1`, with regression coverage. The first configuration attempt failed
+  closed on the old validator; compatibility mode was restored immediately
+  before the tested fix was deployed.
+- Focused config/annotator/server race tests, `make verify` (103 web unit
+  tests), Ansible syntax checks, provider startup preflight, deployment health,
+  and authenticated catalog refreshes passed. Live catalogs report 9 Codex
+  models, 424 OpenRouter models, and the Mac relay's two OMLX models:
+  `Qwen3.5-2B-MLX-8bit` and `Qwen3.6-35B-A3B-UD-MLX-4bit`.
+- Immutable beta release
+  `2238b175dc72c624680ec40676099cd82b509b0ff9acd14367676bec823b807d`
+  is active; production was unchanged.
+
+
+## 2026-09-03 — Mac LLM relay deployed to isolated beta
+
+- Fast-forwarded clean `main` from `ad31c44` to reviewed commit `9f0caa8`
+  (`f4b6dca` speech-worker v0.2 implementation, `d4a1203` review fixes,
+  `9f0caa8` cleanup). The checkout remained clean and matched `origin/main`.
+- Pre-deploy verification passed: focused relay/backend race tests, stable
+  OpenAPI validation and generation, `make verify` (including Svelte check and
+  103 unit tests), Ansible syntax validation, and `git diff --check`. Swift
+  verification was not rerun because this controller is Linux and
+  the owner Mac is not reachable from it.
+- Rehearsed the real beta database on a SQLite backup with the `9f0caa8`
+  server. Migration 7 → 11 preserved 423 jobs, 0 dependencies, and 1 worker;
+  `integrity_check` and `foreign_key_check` passed, and the relay result table
+  plus both relay worker columns were present. The live pre-deploy backup is
+  `/var/lib/doublangu-beta/backups/pre-relay-20260903T153427Z.db`.
+- Deployed with `PATH=<Node-24>:<Go-1.26.5>:$PATH
+  DOUBLANGU_BETA_*=<runtime-secret> /root/code/evreniops/ops
+  deploy-doublangu-beta`. Immutable release
+  `22659206e62a5ebbaaab47d5228713fa99ebb9ecc3d6a4e9a3693647bde2829d`
+  was activated on the isolated beta endpoint; production was unchanged.
+- Post-deploy proof: service active; schema 11; counts still 423/0/1;
+  integrity and foreign keys clean; relay schema present; `/` → 302,
+  unauthenticated `/beta/` and worker lease → 401, authenticated shell and
+  health → 200 with core/loader ready. No warning-level service log entries
+  appeared during rollout.
+- Remaining checkpoint-4 proof requires the owner Mac: install/pair v0.2,
+  replace enrollment, configure and enable the trusted `mac-omlx` provider,
+  then capture catalog, real-stage provenance, concurrent TTS, and OMLX-offline
+  retry evidence. Rollback is to disable/remove `mac_relay`, drain relay jobs,
+  and reactivate the previous immutable release while retaining forward-only
+  migration 011. The pre-relay database backup is reserved for disaster
+  recovery rather than normal rollback.
+
+
 ## 2026-09-04 — Profile saves fixed server-side; editor model picker becomes a select
 
 Fixed the "cannot use OpenRouter / create any profile" blocker reported from
