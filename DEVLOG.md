@@ -367,6 +367,42 @@ No plugin code or comparator was changed to mask this checkout-sensitive issue.
   and reactivate the previous immutable release while retaining forward-only
   migration 011. The pre-relay database backup is reserved for disaster
   recovery rather than normal rollback.
+## 2026-09-05 (ailocals.v1 common worker facade, Plan 02)
+
+- Implemented the ailocals.v1 DoubLangu facade on `codex/ailocals-dl-backend`
+  (base 5b27e39a466ec32450db67c118564e3d398216f8): migration 012 adds
+  `speech_worker.ailocals_presence_json` and `job.ailocals_result_sha256`
+  (purely additive; rehearsal test proves enrolled workers, completed speech,
+  active relay, and revoked credentials survive byte-for-field).
+- `internal/localworker` owns the strict transport boundary (duplicate-key,
+  unknown-field, trailing-JSON, NaN rejection; id-discriminated capability
+  parameters; presence state matrix; base64/sha payload envelopes; strict
+  millisecond timestamps). `mapping.go` maps common capability IDs to exact
+  legacy job types and common failure codes to the existing product codes
+  (relay cancellation maps to `v1.relay_canceled`; relay-only codes are
+  invalid for TTS).
+- `internal/workers/ailocals.go` is the facade over the existing service:
+  one non-revoked common enrollment per deployment (grant persisted at
+  enroll; discovery and server demand never widen it), presence snapshots
+  that drive common relay availability, capability-exclusive leasing
+  (`ClaimMatchingCapability` enforces one active lease per worker+capability
+  inside the claim transaction; Apple speech and Chatterbox stay independent),
+  TTS leases built from the existing speech lease domain fields, and relay
+  leases carrying the exact stored `job.PayloadJSON` bytes.
+- Completion commits the common result digest atomically with the existing
+  publication transaction (media commit + `CompleteTx` for TTS,
+  `llmrelay.CompleteTx` for relay). Identical accepted retries verify the
+  stored digest plus artifact/result identity and succeed after lease loss;
+  altered bytes are `result_conflict`.
+- Owner API adds an optional `ailocals_presence` object for common workers
+  (omitted for legacy workers); web API regenerated and checks pass.
+- Frozen `contracts/ailocals-v1/` vendored byte-for-byte from ailocals commit
+  `e4f1cc9`; consumer fixture tests ground the Go decoders against the
+  manifest-verified fixture bytes.
+- Verification: focused suites green (localworker, workers, httpapi, llmrelay,
+  jobs, store), race-enabled runs green, full `go test ./...` green across 21
+  packages, server builds, `git diff --check` clean, web validate/check/unit
+  green (130 tests).
 
 
 ## 2026-09-04 — Profile saves fixed server-side; editor model picker becomes a select

@@ -322,6 +322,16 @@ func newHandlerWithMedia(
 
 	// These routes intentionally do not use browser-session or CSRF middleware.
 	// The worker service authenticates the independent application credential.
+	// Common ailocals.v1 worker routes: dedicated headers apply only here.
+	ailocalsHandler := httpapi.NewAilocalsHandler(workerService, cfg.WorkerEnvironment)
+	mux.HandleFunc("GET /api/ailocals/v1/info", ailocalsHandler.ServeInfo)
+	mux.HandleFunc("POST /api/ailocals/v1/enroll", ailocalsHandler.ServeEnroll)
+	mux.HandleFunc("POST /api/ailocals/v1/presence", ailocalsHandler.ServePresence)
+	mux.HandleFunc("POST /api/ailocals/v1/lease", ailocalsHandler.ServeLease)
+	mux.HandleFunc("POST /api/ailocals/v1/jobs/{id}/heartbeat", ailocalsHandler.ServeHeartbeat)
+	mux.HandleFunc("POST /api/ailocals/v1/jobs/{id}/complete", ailocalsHandler.ServeComplete)
+	mux.HandleFunc("POST /api/ailocals/v1/jobs/{id}/fail", ailocalsHandler.ServeFail)
+
 	mux.HandleFunc("POST /api/v1/speech-worker/enroll", workerHandler.ServeEnroll)
 	mux.HandleFunc("POST /api/v1/speech-worker/lease", workerHandler.ServeLease)
 	mux.HandleFunc("POST /api/v1/speech-worker/jobs/{id}/heartbeat", workerHandler.ServeHeartbeat)

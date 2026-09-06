@@ -15,16 +15,20 @@ import (
 
 // Config holds every validated server setting.
 type Config struct {
-	Listen        string
-	PublicURL     string
-	Secret        []byte // decoded raw bytes from the base64 env var
-	Annotator     string
-	CodexModel    string
-	CodexEffort   string
-	Database      DatabaseConfig
-	Session       SessionConfig
-	Paths         PathsConfig
-	MediaRedirect MediaRedirectConfig
+	Listen    string
+	PublicURL string
+	// WorkerEnvironment is the deployment environment reported by the
+	// common ailocals info endpoint; it never infers production from the
+	// public URL shape.
+	WorkerEnvironment string
+	Secret            []byte // decoded raw bytes from the base64 env var
+	Annotator         string
+	CodexModel        string
+	CodexEffort       string
+	Database          DatabaseConfig
+	Session           SessionConfig
+	Paths             PathsConfig
+	MediaRedirect     MediaRedirectConfig
 }
 
 // DatabaseConfig holds the SQLite path and WAL mode settings.
@@ -83,6 +87,13 @@ func Load() (*Config, error) {
 	cfg.Paths.Media = envOrDefault("DOUBLANGU_MEDIA_PATH", "media")
 	cfg.Paths.Data = envOrDefault("DOUBLANGU_DATA_PATH", "data")
 	cfg.Annotator = envOrDefault("DOUBLANGU_ANNOTATOR", "codex")
+
+	cfg.WorkerEnvironment = envOrDefault("DOUBLANGU_WORKER_ENVIRONMENT", "development")
+	switch cfg.WorkerEnvironment {
+	case "beta", "production", "development":
+	default:
+		return nil, errors.New("DOUBLANGU_WORKER_ENVIRONMENT must be beta, production, or development")
+	}
 	cfg.CodexModel = os.Getenv("DOUBLANGU_CODEX_MODEL")
 	cfg.CodexEffort = envOrDefault("DOUBLANGU_CODEX_EFFORT", "medium")
 

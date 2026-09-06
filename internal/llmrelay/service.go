@@ -45,11 +45,31 @@ func (s *Service) Available(ctx context.Context) bool {
 		return false
 	}
 	cutoff := time.Now().UTC().Add(-PresenceWindow).Format("2006-01-02T15:04:05.000Z")
-	var count int
-	if err := s.db.QueryRow(ctx, `SELECT COUNT(*) FROM speech_worker WHERE revoked_at = '' AND llm_relay_capabilities_json <> '[]' AND relay_last_seen_at > ?`, cutoff).Scan(&count); err != nil {
+	var legacyCount int
+	if err := s.db.QueryRow(ctx, `SELECT COUNT(*) FROM speech_worker WHERE revoked_at = '' AND llm_relay_capabilities_json <> '[]' AND relay_last_seen_at > ?`, cutoff).Scan(&legacyCount); err != nil {
 		return false
 	}
-	return count > 0
+	if legacyCount > 0 {
+		return true
+	}
+	// Common-protocol availability: a non-revoked ailocals enrollment whose
+	// current presence snapshot advertises the relay capability as ready or
+	// busy, seen within the presence window. Paused, setup, error, or omitted
+	// relay entries never count as available; TTS traffic cannot refresh this.
+	const commonQuery = `SELECT COUNT(*) FROM speech_worker sw
+		WHERE sw.revoked_at = ''
+		  AND json_extract(sw.ailocals_presence_json, '$.protocol') = 'ailocals.v1'
+		  AND sw.last_seen_at > ?
+		  AND EXISTS (
+			SELECT 1 FROM json_each(sw.ailocals_presence_json, '$.capabilities') ce
+			WHERE json_extract(ce.value, '$.id') = 'llm.openai-relay.v1'
+			  AND json_extract(ce.value, '$.state') IN ('ready', 'busy')
+		  )`
+	var commonCount int
+	if err := s.db.QueryRow(ctx, commonQuery, cutoff).Scan(&commonCount); err != nil {
+		return false
+	}
+	return commonCount > 0
 }
 
 // BuildChatCompletion marshals one `chat_completion` request, rejects
