@@ -1,5 +1,45 @@
 # Development Log
 
+## 2026-09-06 — Sibling branches merged to main and pushed
+
+Landed all completed sibling-task branches onto `main` (owner-approved
+merge and push; the public repository auto-deploys every main push):
+
+- `codex/reader-parity-review-fixes` (5 commits, tip `10f90b5`) merged
+  first; it already contained all of `codex/reader-demo-design`, so both
+  reader siblings landed together. `codex/progressive-reader-fixes` was
+  verified already merged before this run.
+- `codex/ailocals-dl-backend` (2 commits, tip `23c7bdf`, ailocals.v1
+  common worker facade) merged on top. The only conflict was `DEVLOG.md`
+  (both sides added a 2026-09-05 entry at the top); resolved by keeping
+  both entries, verified zero deletions against each side.
+- `backup/p100-drift-20260905` intentionally not merged; preserved as a
+  recovery ref per repository guidance.
+- Merge commit: `624c9ca`; pushed to `origin/main` with a normal push and
+  verified `HEAD == origin/main`; local `main` fast-forwarded to match.
+
+Validation on the merged tree (merge resolution touched only DEVLOG.md;
+the two branches' code file sets were otherwise disjoint):
+
+- `go test ./...` green across all 21 packages.
+- `npm --prefix web run check`: 0 errors, 0 warnings.
+- `npm --prefix web run test:unit`: 130 tests passed (21 files).
+- `npm --prefix web run generate:api`: regenerated `generated.ts` diff
+  empty against the committed file.
+- No leftover conflict markers; `git diff --check` flags only trailing
+  whitespace inside the frozen `contracts/ailocals-v1` multipart fixtures,
+  which are byte-for-byte vendored and intentionally untouched.
+- Pre-existing, not merge-introduced: `go build ./...` reports
+  `plugins/official/sample` has no `main` (ldflags-injected at plugin
+  build time; unchanged since the merge base).
+- Reader E2E was not rerun; the merged web tree is byte-identical to the
+  individually verified branch state.
+
+Housekeeping: root runtime artifacts `Qwen3.5-2B-Q8_0.gguf` (1.9 GB,
+exceeds GitHub's 100 MB file limit) and `voice_nl.flac` (local TTS
+sample) added to `.gitignore`; they stay local-only. Plan 02 status line
+updated to reflect implementation and merge.
+
 ## 2026-09-05 — Function-word validation enforced; authored expression explanations
 
 Second review round on `codex/reader-parity-review-fixes` rejected two
