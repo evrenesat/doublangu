@@ -1,5 +1,19 @@
 # Development Log
 
+## 2026-09-06 — Dutch voice sample retained as CC0 asset; model file dropped
+
+- Deleted the local-only `Qwen3.5-2B-Q8_0.gguf` (1.9 GB, re-downloadable
+  model weights) from the checkout root; the root ignore entry remains so
+  a future re-download never lands in git.
+- Retained `voice_nl.flac` as a project asset at
+  `assets/voice/voice_nl.flac` for possible future voice retraining.
+  Identified via embedded FLAC metadata and confirmed against Wikimedia
+  Commons: "Linda Voortman - voice - nl.flac", speaker Linda Voortman,
+  recorded by Vera de Kok (User:1Veertje), license CC0 1.0 Universal
+  (public domain; attribution credited in `assets/voice/ATTRIBUTION.md`
+  as good practice). Local file size and duration match the Commons
+  original (979 KB, 28.65 s).
+
 ## 2026-09-06 — Sibling branches merged to main and pushed
 
 Landed all completed sibling-task branches onto `main` (owner-approved

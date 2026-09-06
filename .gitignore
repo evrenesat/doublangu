@@ -12,9 +12,8 @@ macos/speech-worker/python/__pycache__/
 macos/speech-worker/.build/
 macos/speech-worker/app/.build/
 dist/macos/
-# Local Mac reader-design runtime artifacts (model weights, TTS samples)
+# Re-downloadable local model weights; never commit (GitHub 100 MB limit)
 /Qwen3.5-2B-Q8_0.gguf
-/voice_nl.flac
 # Authored fixture data under testdata is source, not runtime state; some
 # global git ignores exclude testdata directories wholesale.
 !internal/reader/testdata/
