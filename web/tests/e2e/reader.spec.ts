@@ -8,6 +8,35 @@ function response(body: unknown, status = 200) {
 	return { status, contentType: 'application/json', body: JSON.stringify(body) };
 }
 
+// The shared dictionary entry served for every explore lookup. Its English
+// strings deliberately differ from the seeded Dutch note fields, so the
+// panel proves it renders generated dictionary content, never the notes.
+const dictionaryDocument = {
+	version: 'reader.dictionary.v1',
+	lookup_form: 'tot rust komen',
+	lookup_kind: 'expression',
+	source_language: 'nl',
+	target_language: 'en',
+	senses: [{
+		part_of_speech: 'expression',
+		translation_en: 'to unwind',
+		meaning_en: 'To relax after effort or worry.',
+		usage_en: 'Common after work or sports.',
+		pattern_nl: 'tot rust komen',
+		parts: [{ source_nl: 'tot rust', explanation_en: 'to rest' }],
+		examples: [{ text_nl: 'Na het werk kom ik tot rust.', translation_en: 'After work I unwind.' }]
+	}]
+};
+
+function dictionaryEnvelope() {
+	return { status: 'ready', entry_id: 'dictionary-entry-1', job_id: 'dictionary-job-1', document: dictionaryDocument };
+}
+
+async function mockDictionaryReady(page: Page) {
+	await page.route('**/api/v1/articles/*/explore**', (route) => route.fulfill(response(dictionaryEnvelope())));
+	await page.route('**/api/v1/dictionary/entries/*', (route) => route.fulfill(response(dictionaryEnvelope())));
+}
+
 test.beforeEach(async ({ page }) => {
 	await page.route('**/api/v1/auth/session', (route) => route.fulfill(response({ authenticated: true })));
 });
@@ -217,6 +246,7 @@ test('saves the pasted article first, enriches it, and renders contextual Englis
 
 test('opens, pins, explores, and closes an expression popover with keyboard input', async ({ page }) => {
 	await setupArticleAPI(page);
+	await mockDictionaryReady(page);
 	await page.goto(`/reader/${articleID}`);
 	const trigger = page.getByRole('button', { name: 'tot rust komen: to calm down' });
 	await trigger.hover();
@@ -228,9 +258,9 @@ test('opens, pins, explores, and closes an expression popover with keyboard inpu
 	await expect(page.getByRole('dialog')).toHaveAttribute('aria-label', 'Translation for tot rust komen');
 	await expect(page.getByRole('dialog').getByText('to calm down')).toBeVisible();
 	await page.getByRole('button', { name: 'Explore' }).click();
-	await expect(page.getByRole('button', { name: 'Meaning' })).toBeVisible();
-	await page.getByRole('button', { name: 'Usage' }).click();
-	await expect(page.getByText('Use after activity, stress, or strong emotion.')).toBeVisible();
+	await expect(page.getByText('Saved dictionary entry')).toBeVisible();
+	await expect(page.getByText('To relax after effort or worry.')).toBeVisible();
+	// The old raw Dutch note strings are never shown as explore details.
 	await expect(page.getByText('To become mentally or physically calm.')).toHaveCount(0);
 	await page.keyboard.press('Escape');
 	await expect(page.getByRole('dialog')).toHaveCount(0);
@@ -238,6 +268,7 @@ test('opens, pins, explores, and closes an expression popover with keyboard inpu
 
 test('persists learned suppression, rolls back a failed save, and works at 320px', async ({ page }) => {
 	const api = await setupArticleAPI(page);
+	await mockDictionaryReady(page);
 	await page.goto(`/reader/${articleID}`);
 	const trigger = page.getByRole('button', { name: 'tot rust komen: to calm down' });
 	await trigger.click();
@@ -258,8 +289,7 @@ test('persists learned suppression, rolls back a failed save, and works at 320px
 	await expect(page.getByRole('alert')).toContainText('Learning state unavailable');
 	await expect(page.locator('.translation-subtitle')).toHaveCount(0);
 	await page.getByRole('button', { name: 'Explore' }).click();
-	await page.getByRole('button', { name: 'Usage' }).click();
-	await expect(page.getByText('Use after activity, stress, or strong emotion.')).toBeVisible();
+	await expect(page.getByText('Saved dictionary entry')).toBeVisible();
 	await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
 	const popover = page.getByRole('dialog');
 	const box = await popover.boundingBox();

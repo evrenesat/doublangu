@@ -170,7 +170,8 @@ func TestStageCorrectionPromptPreservesUnrelatedFields(t *testing.T) {
 	for _, expected := range []string{
 		"Return corrected JSON only",
 		"Preserve every valid, unrelated field exactly",
-		"never add, remove, or rename a token_id, ref, or construction_id",
+		"Preserve valid fields and task identifiers",
+		"never add, remove, or rename an identifier that the schema defines",
 		"VALIDATION_ERRORS_BEGIN",
 		"PREVIOUS_RESPONSE_BEGIN",
 	} {

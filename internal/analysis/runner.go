@@ -67,7 +67,9 @@ func (r *Runner) RunOnce(ctx context.Context) error {
 	if _, err := r.jobs.RecoverExpired(ctx); err != nil {
 		return err
 	}
-	lease, err := r.jobs.Claim(ctx, jobs.TargetServer, r.owner)
+	lease, err := r.jobs.ClaimMatching(ctx, jobs.TargetServer, r.owner, func(job jobs.Job) bool {
+		return job.JobType == jobs.AnalysisJobType
+	})
 	if err != nil {
 		return err
 	}

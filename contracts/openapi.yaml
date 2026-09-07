@@ -479,6 +479,86 @@ paths:
         "500": { $ref: "#/components/responses/Internal" }
         "405": { $ref: "#/components/responses/MethodNotAllowed" }
 
+  /api/v1/articles/{id}/explore:
+    get:
+      summary: Resolve an explore subject and read the shared dictionary entry
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ULID" }
+        - name: occurrence_id
+          in: query
+          required: false
+          schema: { $ref: "#/components/schemas/ULID" }
+        - name: annotation_id
+          in: query
+          required: false
+          schema: { $ref: "#/components/schemas/ULID" }
+      responses:
+        "200":
+          description: Dictionary entry status for the resolved subject.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DictionaryStatusEnvelope" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "405": { $ref: "#/components/responses/MethodNotAllowed" }
+        "500": { $ref: "#/components/responses/Internal" }
+    post:
+      summary: Read the saved entry or start an explicit dictionary generation
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ULID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DictionaryExploreStartInput" }
+      responses:
+        "200":
+          description: Saved entry is ready or terminally failed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DictionaryStatusEnvelope" }
+        "202":
+          description: New or active dictionary generation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DictionaryStatusEnvelope" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "405": { $ref: "#/components/responses/MethodNotAllowed" }
+        "500": { $ref: "#/components/responses/Internal" }
+        "503": { $ref: "#/components/responses/DictionaryProviderUnavailable" }
+
+  /api/v1/dictionary/entries/{id}:
+    get:
+      summary: Poll one saved dictionary entry without the original article
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ULID" }
+      responses:
+        "200":
+          description: Dictionary entry status.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DictionaryStatusEnvelope" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "405": { $ref: "#/components/responses/MethodNotAllowed" }
+        "500": { $ref: "#/components/responses/Internal" }
+
   /api/v1/analysis/runs:
     get:
       summary: List retained owner-visible analysis runs
@@ -2609,6 +2689,96 @@ components:
         size_bytes: { type: integer, format: int64, minimum: 0 }
         error_code: { type: string }
 
+    DictionaryLookupKind:
+      type: string
+      enum: [word, expression]
+      description: Word tokens and collapsed phrase/idiom/expression/proverb subjects.
+
+    DictionarySubjectView:
+      type: object
+      additionalProperties: false
+      required: [lookup_form, lookup_kind, source_language, target_language]
+      properties:
+        lookup_form: { type: string, minLength: 1 }
+        lookup_kind: { $ref: "#/components/schemas/DictionaryLookupKind" }
+        source_language: { type: string, minLength: 1 }
+        target_language: { type: string, minLength: 1 }
+
+    DictionaryPart:
+      type: object
+      additionalProperties: false
+      required: [source_nl, explanation_en]
+      properties:
+        source_nl: { type: string, minLength: 1, maxLength: 120 }
+        explanation_en: { type: string, minLength: 1, maxLength: 300 }
+
+    DictionaryExample:
+      type: object
+      additionalProperties: false
+      required: [text_nl, translation_en]
+      properties:
+        text_nl: { type: string, minLength: 1, maxLength: 240 }
+        translation_en: { type: string, minLength: 1, maxLength: 240 }
+
+    DictionarySense:
+      type: object
+      additionalProperties: false
+      required: [part_of_speech, translation_en, meaning_en, usage_en, pattern_nl, parts, examples]
+      properties:
+        part_of_speech:
+          type: string
+          enum: [noun, verb, adjective, adverb, pronoun, determiner, preposition,
+            conjunction, interjection, numeral, proper_noun, expression, other]
+        translation_en: { type: string, minLength: 1, maxLength: 120 }
+        meaning_en: { type: string, minLength: 1, maxLength: 600 }
+        usage_en: { type: string, maxLength: 400 }
+        pattern_nl: { type: string, maxLength: 160 }
+        parts: { type: array, maxItems: 6, items: { $ref: "#/components/schemas/DictionaryPart" } }
+        examples:
+          type: array
+          minItems: 1
+          maxItems: 2
+          items: { $ref: "#/components/schemas/DictionaryExample" }
+
+    DictionaryDocument:
+      type: object
+      additionalProperties: false
+      required: [version, lookup_form, lookup_kind, source_language, target_language, senses]
+      properties:
+        version: { type: string, enum: [reader.dictionary.v1] }
+        lookup_form: { type: string, minLength: 1, maxLength: 200 }
+        lookup_kind: { $ref: "#/components/schemas/DictionaryLookupKind" }
+        source_language: { type: string, minLength: 1 }
+        target_language: { type: string, minLength: 1 }
+        senses:
+          type: array
+          minItems: 1
+          maxItems: 6
+          items: { $ref: "#/components/schemas/DictionarySense" }
+
+    DictionaryStatusEnvelope:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [missing, queued, generating, ready, failed]
+        entry_id: { nullable: true, allOf: [{ $ref: "#/components/schemas/ULID" }] }
+        job_id: { nullable: true, allOf: [{ $ref: "#/components/schemas/ULID" }] }
+        subject: { nullable: true, allOf: [{ $ref: "#/components/schemas/DictionarySubjectView" }] }
+        document: { nullable: true, allOf: [{ $ref: "#/components/schemas/DictionaryDocument" }] }
+        error_code: { nullable: true, type: string }
+
+    DictionaryExploreStartInput:
+      type: object
+      additionalProperties: false
+      required: [retry]
+      properties:
+        occurrence_id: { $ref: "#/components/schemas/ULID" }
+        annotation_id: { $ref: "#/components/schemas/ULID" }
+        retry: { type: boolean }
+
     SemanticSense:
       type: object
       additionalProperties: false
@@ -3238,6 +3408,11 @@ components:
           schema: { $ref: "#/components/schemas/APIError" }
     NotFound:
       description: Resource not found.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/APIError" }
+    DictionaryProviderUnavailable:
+      description: The configured translation provider is not usable for dictionary generation.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/APIError" }

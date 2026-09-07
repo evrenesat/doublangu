@@ -36,8 +36,14 @@ but that directory may not be on the default shell `PATH`. Prefix Go, `gofmt`,
 and Go-backed `make` commands with
 `PATH=/root/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.5.linux-amd64/bin:$PATH`.
 
-From the repository root, run the focused Go tests and race tests, API
-generation/checks, Svelte checks/unit and reader E2E tests, `make verify`, the
-opt-in authenticated Codex live test, and `git diff --check` as listed in the
-article-hover-shadows MVP handoff. Record outcomes in `DEVLOG.md` and report
-the exact commands at handoff.
+From the repository root, run `make verify` (includes the `test-dictionary`
+target: semantics/annotator/dictionary/jobs/store/httpapi/server-routing
+tests plus the 013 migration rehearsal), the race tests for
+`internal/dictionary`, `internal/jobs`, `internal/semantics`, and
+`internal/httpapi`, `npm --prefix web run validate:openapi`, `generate:api`
+(twice, byte-identical), `check`, the reader unit tests, `build`, the reader
+E2E suites (`reader.spec.ts reader-design.spec.ts reader-progressive.spec.ts
+reader-preference.spec.ts reader-explore.spec.ts`, run separately from
+Svelte sync/build tasks), the opt-in authenticated Codex live tests, and
+`git diff --check`. Record outcomes in `DEVLOG.md` and report the exact
+commands at handoff.

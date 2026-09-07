@@ -25,6 +25,7 @@ const (
 	AVSpeechJobType   = "tts.avspeech.v1"
 	ChatterboxJobType = "tts.chatterbox.v3"
 	LLMRelayJobType   = "llm.relay.v1"
+	DictionaryJobType = "reader.dictionary.v1"
 
 	TargetServer = "server"
 	TargetMacOS  = "macos"
@@ -841,7 +842,7 @@ func reconcileDependencyFailuresTx(ctx context.Context, tx *sql.Tx, now string) 
 }
 
 func validateSpec(spec *Spec) error {
-	if spec.JobType != AnalysisJobType && spec.JobType != AVSpeechJobType && spec.JobType != ChatterboxJobType && spec.JobType != LLMRelayJobType {
+	if spec.JobType != AnalysisJobType && spec.JobType != AVSpeechJobType && spec.JobType != ChatterboxJobType && spec.JobType != LLMRelayJobType && spec.JobType != DictionaryJobType {
 		return fmt.Errorf("unsupported job type %q", spec.JobType)
 	}
 	if spec.ExecutionTarget != TargetServer && spec.ExecutionTarget != TargetMacOS {

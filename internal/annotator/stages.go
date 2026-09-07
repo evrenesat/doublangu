@@ -240,10 +240,10 @@ func TranslationOutputSchema(chunk semantics.PreparedChunk, linguistic *semantic
 }
 
 // BuildStageCorrectionPrompt asks for corrected stage JSON and repeats the
-// preservation rules. It is provider- and stage-neutral apart from the
+// preservation rules. It is provider- and operation-neutral apart from the
 // validation errors, which already name exact artifact paths.
 func BuildStageCorrectionPrompt(validationError, originalResponse string) string {
-	return "The previous stage response failed deterministic validation. Return corrected JSON only, matching the same closed output schema exactly, and repair every listed error, then recheck the whole response. Preserve every valid, unrelated field exactly; never blank or rewrite fields that were not listed as errors. Keep the exact id set: never add, remove, or rename a token_id, ref, or construction_id.\nVALIDATION_ERRORS_BEGIN\n" + validationError + "\nVALIDATION_ERRORS_END\nPREVIOUS_RESPONSE_BEGIN\n" + originalResponse + "\nPREVIOUS_RESPONSE_END"
+	return "The previous stage response failed deterministic validation. Return corrected JSON only, matching the same closed output schema exactly, and repair every listed error, then recheck the whole response. Preserve every valid, unrelated field exactly; never blank or rewrite fields that were not listed as errors. Preserve valid fields and task identifiers: never add, remove, or rename an identifier that the schema defines.\nVALIDATION_ERRORS_BEGIN\n" + validationError + "\nVALIDATION_ERRORS_END\nPREVIOUS_RESPONSE_BEGIN\n" + originalResponse + "\nPREVIOUS_RESPONSE_END"
 }
 
 // StageOutputSchemaJSON marshals a stage schema for the app-server protocol.

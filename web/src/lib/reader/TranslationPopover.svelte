@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import type { ArticleAnnotation, LearningStatus } from '$lib/api/client';
-
-	type Detail = 'meaning' | 'usage' | 'parts';
+	import ExplorePanel from './ExplorePanel.svelte';
 
 	type Props = {
 		annotation: ArticleAnnotation;
+		articleId: string;
 		anchor: HTMLElement | null;
 		feedback: string;
 		feedbackIsError: boolean;
@@ -17,6 +17,7 @@
 
 	let {
 		annotation,
+		articleId,
 		anchor,
 		feedback,
 		feedbackIsError,
@@ -28,17 +29,10 @@
 
 	let popover: HTMLDivElement | null = $state(null);
 	let explored = $state(false);
-	let selectedDetail = $state<Detail | null>(null);
 	let saving = $state(false);
 	let bottomSheet = $state(false);
 	let frame = 0;
 	let resizeObserver: ResizeObserver | undefined;
-
-	const detailText: Record<Detail, () => string> = {
-		meaning: () => annotation.meaning_note,
-		usage: () => annotation.usage_note,
-		parts: () => annotation.parts_note
-	};
 
 	$effect(() => {
 		const currentAnchor = anchor;
@@ -128,15 +122,8 @@
 		currentPopover.style.visibility = 'visible';
 	}
 
-	function availableDetail(detail: Detail): boolean {
-		return detailText[detail]().trim().length > 0;
-	}
-
 	function toggleExplore() {
 		explored = !explored;
-		if (explored && !selectedDetail) {
-			selectedDetail = (['meaning', 'usage', 'parts'] as Detail[]).find(availableDetail) ?? null;
-		}
 	}
 
 	async function mark(status: LearningStatus) {
@@ -148,9 +135,6 @@
 		}
 	}
 
-	function detailLabel(detail: Detail): string {
-		return detail.charAt(0).toUpperCase() + detail.slice(1);
-	}
 </script>
 
 <div
@@ -182,25 +166,7 @@
 	</div>
 
 	{#if explored}
-		<div class="detail-actions" aria-label="Explore annotation">
-			{#each (['meaning', 'usage', 'parts'] as Detail[]) as detail}
-				{#if availableDetail(detail)}
-					<button
-						type="button"
-						class="detail-button"
-						class:selected={selectedDetail === detail}
-						aria-label={detailLabel(detail)}
-						aria-pressed={selectedDetail === detail}
-						onclick={() => (selectedDetail = detail)}
-					>
-						{detailLabel(detail)}
-					</button>
-				{/if}
-			{/each}
-		</div>
-		{#if selectedDetail && availableDetail(selectedDetail)}
-			<p class="detail-line" aria-live="polite">{detailText[selectedDetail]()}</p>
-		{/if}
+		<ExplorePanel {articleId} annotationId={annotation.id} onReposition={schedulePosition} />
 	{/if}
 
 	{#if feedback}
@@ -248,7 +214,6 @@
 	}
 
 	.alternatives,
-	.detail-line,
 	.feedback {
 		margin: 0.45rem 0 0;
 		font-size: 0.85rem;
@@ -260,16 +225,14 @@
 		color: var(--color-muted, #64748b);
 	}
 
-	.popover-actions,
-	.detail-actions {
+	.popover-actions {
 		display: flex;
 		flex-wrap: wrap;
 		gap: 0.45rem;
 		margin-top: 0.8rem;
 	}
 
-	.popover-actions button,
-	.detail-button {
+	.popover-actions button {
 		font: inherit;
 		cursor: pointer;
 	}
@@ -283,28 +246,9 @@
 	}
 
 	.popover-actions button:hover,
-	.popover-actions button:focus-visible,
-	.detail-button:hover,
-	.detail-button:focus-visible {
+	.popover-actions button:focus-visible {
 		outline: 2px solid var(--color-accent, #2563eb);
 		outline-offset: 1px;
-	}
-
-	.detail-button {
-		width: 2.7rem;
-		height: 2.7rem;
-		padding: 0.15rem;
-		border: 1px solid var(--color-border, #cbd5e1);
-		border-radius: 50%;
-		background: transparent;
-		font-size: 0.68rem;
-		color: inherit;
-	}
-
-	.detail-button.selected {
-		background: var(--color-accent, #2563eb);
-		border-color: var(--color-accent, #2563eb);
-		color: #fff;
 	}
 
 	.feedback[role='alert'] {

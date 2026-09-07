@@ -547,6 +547,73 @@ cancels legacy queued analysis with the upgrade code; removing the config
 file and restarting restores compatibility mode on the same database, which
 is the rollback path.
 
+## On-demand dictionary explore (013)
+
+Explore adds a reusable learner dictionary beside the article analysis
+pipeline. The dependency direction is one-way: `internal/dictionary` may use
+`semantics`, `annotator`, `jobs`, `library`, and `store`; no reader,
+semantics, or annotator package imports `dictionary`. Dictionary generation
+never mutates semantic items, senses, article translations, construction
+membership, learning state, or analysis state, and generated alternate
+meanings are never fed back into `EnsureSenseTx`.
+
+### Subject identity
+
+The browser supplies only an article ID plus exactly one occurrence or legacy
+annotation reference. The server joins that row to the article, verifies
+ownership, and derives the subject from stored data: a stored lemma
+(words) or canonical form (expressions) when semantic identity exists, the
+ordered source spans otherwise. A legacy annotation contributes its source
+text; its learning key is never treated as a lemma. The shared dictionary key
+is `(source_language, target_language, lookup_kind, normalized_lookup_form)`
+with `library.ParseBCP47` canonical tags, `lookup_kind` collapsed to
+`word`/`expression`, and normalization through the existing
+`semantics.NormalizeForm`. Sense IDs, discriminators, part of speech, context
+hashes, providers, and models are deliberately not key components, so
+homographs share one bundle of distinct meanings and entries survive
+provider or model changes.
+
+### Storage and publication
+
+Migration 013 adds `dictionary_entry` (unique on the key above) and rebuilds
+`job` solely to widen the job-type CHECK, preserving both referencing child
+tables (`job_dependency`, `llm_relay_result`), every runtime row, all
+indexes, and the 012 `ailocals_result_sha256` column. Before success a
+placeholder row has null document fields; publication fills document, hash,
+contract/prompt versions, and provenance together under a CHECK invariant.
+Readiness is derived, never duplicated: a non-null document is ready;
+otherwise status comes from the joined `last_job_id` (queued, leased/running
+→ generating, terminal → failed).
+
+An explicit POST resolves the active profile's translation binding through
+the shared `usableProfileBindings` checks outside any write transaction, then
+atomically insert-or-finds the key, rechecks for ready or active work,
+enqueues `reader.dictionary.v1` with `MaxAttempts: 1`, and moves
+`last_job_id` with a compare-and-set. The database unique key is the
+authority for concurrent clicks; simultaneous retries converge on one new
+job. GET requests are read-only and never invoke a provider.
+
+### Worker and provider flow
+
+The dictionary runner claims only server jobs of its own type via
+`ClaimMatching`; both article runners were narrowed to claim only
+`reader.analysis.v2`, so neither can steal the other's work. The job payload
+snapshots the derived subject, dictionary contract/prompt versions
+(`reader.dictionary.v1` / `reader-dictionary-prompt.v1`), the exact bounded
+prompt input with its hash, and the resolved translation binding. At claim
+time the runner re-verifies the snapshotted provider id, type, and config
+fingerprint against the registry; removals, disabling, or reconfiguration
+fail explicitly (`v1.dictionary_provider_unavailable` /
+`v1.dictionary_provider_changed`) instead of substituting a model. Generation
+reuses the shared bounded stage executor (one initial turn plus at most two
+corrective turns) against the closed response schema, and validation lives in
+`internal/semantics` so every transport family passes the same checks.
+A valid document publishes together with the job acknowledgement inside one
+transaction: `PublishTx` requires the entry to still point at the publishing
+job and `jobs.CompleteTx` requires the live lease, so a stale or canceled
+worker publishes nothing. Failures are terminal; only an explicit user retry
+creates a new job.
+
 ## Deployment boundary
 
 Pushes to `main` are verified and packaged on a GitHub-hosted runner. Only the

@@ -1,8 +1,13 @@
 <script lang="ts">
+	import { tick } from 'svelte';
 	import type { ArticleOccurrence, LearningStatus } from '$lib/api/client';
+	import ExplorePanel from './ExplorePanel.svelte';
 
 	type Props = {
 		occurrence: ArticleOccurrence;
+		/** The construction occurrence when the selected token is a member. */
+		expressionOccurrence?: ArticleOccurrence | null;
+		articleId: string;
 		anchor: HTMLElement;
 		feedback: string;
 		feedbackIsError: boolean;
@@ -11,25 +16,73 @@
 		onClose: () => void;
 		onLearningStatus: (status: LearningStatus) => Promise<void>;
 		onHear: () => void;
+		/** Pins the popover so the expanded panel survives pointer drift. */
+		onPin?: () => void;
+		/** Notifies the reader so Hear and learning target the new subject. */
+		onSubjectChange?: (subject: 'word' | 'expression') => void;
 		hearReady?: boolean;
 		hearPending?: boolean;
 		learningEnabled?: boolean;
 	};
 
-	let { occurrence, anchor, feedback, feedbackIsError, onEnter, onLeave, onClose, onLearningStatus, onHear, hearReady, hearPending, learningEnabled = true }: Props = $props();
+	let {
+		occurrence,
+		expressionOccurrence = null,
+		articleId,
+		anchor,
+		feedback,
+		feedbackIsError,
+		onEnter,
+		onLeave,
+		onClose,
+		onLearningStatus,
+		onHear,
+		onPin,
+		onSubjectChange,
+		hearReady,
+		hearPending,
+		learningEnabled = true
+	}: Props = $props();
 	let popover: HTMLDivElement | null = $state(null);
 	let bottomSheet = $state(false);
+	let subject = $state<'word' | 'expression'>('word');
 	let explored = $state(false);
-	let selectedDetail = $state<'meaning' | 'usage' | 'parts' | null>(null);
 	let saving = $state(false);
 	let frame = 0;
+	let resizeObserver: ResizeObserver | undefined;
 
-	const sense = $derived(occurrence.sense);
-	const canHear = $derived(hearReady ?? Boolean(occurrence.pronunciation?.ready));
-	const hasPendingHear = $derived(hearPending ?? Boolean(occurrence.pronunciation && !occurrence.pronunciation.ready));
+	// The explicit subject: the selected occurrence itself (word) or its
+	// owning construction (expression). Switching changes the popover's
+	// source, translation, Hear/learning target, and Explore target together
+	// and never generates anything.
+	const currentOccurrence = $derived(
+		subject === 'expression' && expressionOccurrence ? expressionOccurrence : occurrence
+	);
+	const currentText = $derived(currentOccurrence.spans.map((span) => span.source_text).join(' … '));
+	const sense = $derived(currentOccurrence.sense);
+	const canHear = $derived(hearReady ?? Boolean(currentOccurrence.pronunciation?.ready));
+	const hasPendingHear = $derived(hearPending ?? Boolean(currentOccurrence.pronunciation && !currentOccurrence.pronunciation.ready));
+
+	$effect(() => {
+		// A different selected occurrence resets to the word subject and
+		// closes the panel; Explore is always an explicit click.
+		void occurrence.id;
+		subject = 'word';
+		explored = false;
+	});
 
 	$effect(() => {
 		if (anchor && popover) position(anchor, popover);
+	});
+
+	$effect(() => {
+		if (typeof ResizeObserver === 'undefined' || !popover) return;
+		resizeObserver = new ResizeObserver(schedulePosition);
+		resizeObserver.observe(popover);
+		return () => {
+			resizeObserver?.disconnect();
+			resizeObserver = undefined;
+		};
 	});
 
 	function schedulePosition(): void {
@@ -68,16 +121,11 @@
 		currentPopover.style.visibility = 'visible';
 	}
 
-	function detailText(detail: 'meaning' | 'usage' | 'parts'): string {
-		if (!sense) return '';
-		return detail === 'meaning' ? sense.meaning_note : detail === 'usage' ? sense.usage_note : sense.parts_note;
-	}
-
 	async function toggleLearning(): Promise<void> {
 		if (!sense) return;
 		saving = true;
 		try {
-			await onLearningStatus(occurrence.learning_state?.status === 'learned' ? 'unlearned' : 'learned');
+			await onLearningStatus(currentOccurrence.learning_state?.status === 'learned' ? 'unlearned' : 'learned');
 		} finally {
 			saving = false;
 		}
@@ -96,21 +144,41 @@
 	bind:this={popover}
 	role="dialog"
 	tabindex="-1"
-	aria-label={`Translation for ${occurrence.spans.map((span) => span.source_text).join(' … ')}`}
+	aria-label={`Translation for ${currentText}`}
 	onpointerenter={onEnter}
 	onpointerleave={onLeave}
 	onfocusin={onEnter}
 	onfocusout={onLeave}
 >
 	<div class="popover-heading">
-		<span class="kind">{occurrence.kind}</span>
-		<strong>{occurrence.spans.map((span) => span.source_text).join(' … ')}</strong>
+		<span class="kind">{currentOccurrence.kind}</span>
+		<strong>{currentText}</strong>
 	</div>
+	{#if expressionOccurrence}
+		<div class="subject-selector" role="group" aria-label="Explore subject">
+			<button
+				type="button"
+				class:selected={subject === 'word'}
+				aria-pressed={subject === 'word'}
+				onclick={() => { subject = 'word'; onSubjectChange?.('word'); }}
+			>
+				Word: {occurrence.spans.map((span) => span.source_text).join(' … ')}
+			</button>
+			<button
+				type="button"
+				class:selected={subject === 'expression'}
+				aria-pressed={subject === 'expression'}
+				onclick={() => { subject = 'expression'; onSubjectChange?.('expression'); }}
+			>
+				Expression
+			</button>
+		</div>
+	{/if}
 	{#if sense}
 		<p class="primary-translation">{sense.primary_translation}</p>
 		{#if sense.alternatives.length}<p class="alternatives">Also: {sense.alternatives.join(' · ')}</p>{/if}
 	{:else}
-		<p class="primary-translation">{occurrence.shadow_text || 'No translation available yet'}</p>
+		<p class="primary-translation">{currentOccurrence.shadow_text || 'No translation available yet'}</p>
 	{/if}
 
 	<div class="popover-actions">
@@ -121,24 +189,31 @@
 		{/if}
 		{#if sense}
 			<button type="button" class="state-action" disabled={saving || !learningEnabled} title={learningEnabled ? undefined : 'Learning is available on saved articles'} onclick={() => void toggleLearning()}>
-				{occurrence.learning_state?.status === 'learned' ? 'Mark unlearned' : 'Mark learned'}
+				{currentOccurrence.learning_state?.status === 'learned' ? 'Mark unlearned' : 'Mark learned'}
 			</button>
 		{/if}
-		{#if sense && (sense.meaning_note || sense.usage_note || sense.parts_note)}
-			<button type="button" onclick={() => (explored = !explored)} aria-expanded={explored}>Explore</button>
-		{/if}
+		<button
+			type="button"
+			aria-expanded={explored}
+			onclick={() => {
+				onPin?.();
+				explored = true;
+				void tick().then(schedulePosition);
+			}}
+		>
+			Explore
+		</button>
 		<button type="button" class="close-action" aria-label="Close translation" onclick={onClose}>×</button>
 	</div>
 
-	{#if explored && sense}
-		<div class="detail-actions" aria-label="Explore annotation">
-			{#each (['meaning', 'usage', 'parts'] as const) as detail}
-				{#if detailText(detail)}
-					<button type="button" class:selected={selectedDetail === detail} aria-pressed={selectedDetail === detail} onclick={() => (selectedDetail = detail)}>{detail[0]?.toUpperCase()}{detail.slice(1)}</button>
-				{/if}
-			{/each}
-		</div>
-		{#if selectedDetail}<p class="detail-line">{detailText(selectedDetail)}</p>{/if}
+	{#if explored && (onPin || occurrence.id)}
+		{#key `${occurrence.id}:${subject}`}
+			<ExplorePanel
+				{articleId}
+				occurrenceId={currentOccurrence.id}
+				onReposition={schedulePosition}
+			/>
+		{/key}
 	{/if}
 	{#if feedback}<p class="feedback" role={feedbackIsError ? 'alert' : 'status'}>{feedback}</p>{/if}
 </div>
@@ -163,10 +238,33 @@
 	.kind, .alternatives, .audio-state { color: var(--reader-muted); }
 	.kind { font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase; }
 	.primary-translation { margin: 0.55rem 0 0; font-size: 1.1rem; font-weight: 700; }
-	.alternatives, .detail-line, .feedback { margin: 0.45rem 0 0; font-size: 0.85rem; line-height: 1.4; }
-	.popover-actions, .detail-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem; margin-top: 0.8rem; }
-	.popover-actions button, .detail-actions button { padding: 0.35rem 0.55rem; border: 1px solid var(--reader-border); border-radius: 999px; background: transparent; color: inherit; cursor: pointer; }
-	.popover-actions button:hover, .popover-actions button:focus-visible, .detail-actions button:hover, .detail-actions button:focus-visible, .detail-actions button.selected { background: color-mix(in srgb, var(--reader-accent) 16%, transparent); }
+	.alternatives, .feedback { margin: 0.45rem 0 0; font-size: 0.85rem; line-height: 1.4; }
+	.popover-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem; margin-top: 0.8rem; }
+	.popover-actions button { padding: 0.35rem 0.55rem; border: 1px solid var(--reader-border); border-radius: 999px; background: transparent; color: inherit; cursor: pointer; }
+	.popover-actions button:hover, .popover-actions button:focus-visible { background: color-mix(in srgb, var(--reader-accent) 16%, transparent); }
 	.close-action { margin-left: auto; font-size: 1.15rem; line-height: 1; }
 	.feedback[role='alert'] { color: var(--reader-danger); }
+
+	.subject-selector {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.35rem;
+		margin-top: 0.55rem;
+	}
+
+	.subject-selector button {
+		padding: 0.2rem 0.5rem;
+		border: 1px solid var(--reader-border);
+		border-radius: 999px;
+		background: transparent;
+		color: var(--reader-muted);
+		font-size: 0.75rem;
+		cursor: pointer;
+	}
+
+	.subject-selector button.selected {
+		background: color-mix(in srgb, var(--reader-accent) 16%, transparent);
+		color: inherit;
+		border-color: var(--reader-accent);
+	}
 </style>

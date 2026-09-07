@@ -41,6 +41,14 @@ jobs:
       - name: Verify the accepted revision
         run: make verify
 
+      - name: Install Playwright Chromium
+        working-directory: web
+        run: npm exec -- playwright install --with-deps chromium
+
+      - name: Run the reader end-to-end suites
+        working-directory: web
+        run: npm run test:e2e -- reader.spec.ts reader-design.spec.ts reader-progressive.spec.ts reader-preference.spec.ts reader-explore.spec.ts
+
       - name: Build the deployment artifact
         env:
           DOUBLANGU_BUILD_VERSION: ${{ github.sha }}

@@ -913,6 +913,136 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/articles/{id}/explore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Resolve an explore subject and read the shared dictionary entry */
+        get: {
+            parameters: {
+                query?: {
+                    occurrence_id?: components["schemas"]["ULID"];
+                    annotation_id?: components["schemas"]["ULID"];
+                };
+                header?: never;
+                path: {
+                    id: components["schemas"]["ULID"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Dictionary entry status for the resolved subject. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DictionaryStatusEnvelope"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                404: components["responses"]["NotFound"];
+                405: components["responses"]["MethodNotAllowed"];
+                500: components["responses"]["Internal"];
+            };
+        };
+        put?: never;
+        /** Read the saved entry or start an explicit dictionary generation */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["schemas"]["ULID"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["DictionaryExploreStartInput"];
+                };
+            };
+            responses: {
+                /** @description Saved entry is ready or terminally failed. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DictionaryStatusEnvelope"];
+                    };
+                };
+                /** @description New or active dictionary generation. */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DictionaryStatusEnvelope"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                405: components["responses"]["MethodNotAllowed"];
+                500: components["responses"]["Internal"];
+                503: components["responses"]["DictionaryProviderUnavailable"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/dictionary/entries/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Poll one saved dictionary entry without the original article */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["schemas"]["ULID"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Dictionary entry status. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DictionaryStatusEnvelope"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                404: components["responses"]["NotFound"];
+                405: components["responses"]["MethodNotAllowed"];
+                500: components["responses"]["Internal"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/analysis/runs": {
         parameters: {
             query?: never;
@@ -3423,6 +3553,58 @@ export interface components {
             size_bytes: number;
             error_code: string;
         };
+        /**
+         * @description Word tokens and collapsed phrase/idiom/expression/proverb subjects.
+         * @enum {string}
+         */
+        DictionaryLookupKind: "word" | "expression";
+        DictionarySubjectView: {
+            lookup_form: string;
+            lookup_kind: components["schemas"]["DictionaryLookupKind"];
+            source_language: string;
+            target_language: string;
+        };
+        DictionaryPart: {
+            source_nl: string;
+            explanation_en: string;
+        };
+        DictionaryExample: {
+            text_nl: string;
+            translation_en: string;
+        };
+        DictionarySense: {
+            /** @enum {string} */
+            part_of_speech: "noun" | "verb" | "adjective" | "adverb" | "pronoun" | "determiner" | "preposition" | "conjunction" | "interjection" | "numeral" | "proper_noun" | "expression" | "other";
+            translation_en: string;
+            meaning_en: string;
+            usage_en: string;
+            pattern_nl: string;
+            parts: components["schemas"]["DictionaryPart"][];
+            examples: components["schemas"]["DictionaryExample"][];
+        };
+        DictionaryDocument: {
+            /** @enum {string} */
+            version: "reader.dictionary.v1";
+            lookup_form: string;
+            lookup_kind: components["schemas"]["DictionaryLookupKind"];
+            source_language: string;
+            target_language: string;
+            senses: components["schemas"]["DictionarySense"][];
+        };
+        DictionaryStatusEnvelope: {
+            /** @enum {string} */
+            status: "missing" | "queued" | "generating" | "ready" | "failed";
+            entry_id?: components["schemas"]["ULID"] | null;
+            job_id?: components["schemas"]["ULID"] | null;
+            subject?: components["schemas"]["DictionarySubjectView"] | null;
+            document?: components["schemas"]["DictionaryDocument"] | null;
+            error_code?: string | null;
+        };
+        DictionaryExploreStartInput: {
+            occurrence_id?: components["schemas"]["ULID"];
+            annotation_id?: components["schemas"]["ULID"];
+            retry: boolean;
+        };
         SemanticSense: {
             id: components["schemas"]["ULID"];
             semantic_item_id: components["schemas"]["ULID"];
@@ -3928,6 +4110,15 @@ export interface components {
         };
         /** @description Resource not found. */
         NotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["APIError"];
+            };
+        };
+        /** @description The configured translation provider is not usable for dictionary generation. */
+        DictionaryProviderUnavailable: {
             headers: {
                 [name: string]: unknown;
             };

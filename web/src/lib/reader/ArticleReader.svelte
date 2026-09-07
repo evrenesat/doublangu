@@ -60,6 +60,7 @@
 	// newer successful toggle with its stale server snapshot.
 	let settingsSaveVersion = 0;
 	let selectedID = $state<string | null>(null);
+	let selectedSubject = $state<'word' | 'expression'>('word');
 	let anchor = $state<HTMLElement | null>(null);
 	let pinned = $state(false);
 	let activeSentenceID = $state<string | null>(null);
@@ -138,7 +139,31 @@
 	const selectedOccurrence = $derived(
 		selectedID ? occurrences.find((occurrence) => occurrence.id === selectedID) ?? null : null
 	);
-	const selectedHearReference = $derived(selectedOccurrence ? hearReference(selectedOccurrence) : null);
+	// The owning construction of the selected lexical token, if any. The
+	// deterministic ordering of the occurrence collection breaks owner ties;
+	// a currently highlighted construction wins so the previewed expression
+	// stays stable.
+	const selectedExpressionOccurrence = $derived.by((): ArticleOccurrence | null => {
+		const selected = selectedOccurrence;
+		if (!selected || selected.role !== 'token') return null;
+		const owners = occurrences.filter((occurrence) => {
+			if (occurrence.role === 'token') return false;
+			const members = occurrence.member_occurrence_ids ?? [];
+			if (members.length > 0) return members.includes(selected.id);
+			return occurrence.spans.some((span) =>
+				selected.spans.some((tokenSpan) => tokenSpan.start_utf16 >= span.start_utf16 && tokenSpan.end_utf16 <= span.end_utf16)
+			);
+		});
+		if (owners.length === 0) return null;
+		const active = owners.find((owner) => activeConstructionIDs.includes(owner.id));
+		return active ?? owners[0] ?? null;
+	});
+	// The explore/Hear/learning subject: the selected token or, after an
+	// explicit subject switch, its construction.
+	const subjectOccurrence = $derived(
+		selectedSubject === 'expression' ? selectedExpressionOccurrence ?? selectedOccurrence : selectedOccurrence
+	);
+	const selectedHearReference = $derived(subjectOccurrence ? hearReference(subjectOccurrence) : null);
 
 	const narrationView = $derived.by((): Narration => {
 		if (narration && narrationLoadedFor === current.id) return narration;
@@ -367,6 +392,7 @@
 		if (pinned) return;
 		clearCloseTimer();
 		selectedID = occurrence.id;
+		selectedSubject = 'word';
 		anchor = target;
 		feedback = '';
 		feedbackIsError = false;
@@ -375,6 +401,7 @@
 	function openPinned(occurrence: ArticleOccurrence, target: HTMLElement, pin: boolean): void {
 		clearCloseTimer();
 		selectedID = occurrence.id;
+		selectedSubject = occurrence.role === 'token' ? 'word' : 'expression';
 		anchor = target;
 		if (pin) pinned = true;
 		if (occurrence.role === 'discontinuous_construction') activeConstructionIDs = [occurrence.id];
@@ -396,6 +423,7 @@
 		clearCloseTimer();
 		if (pinned) return;
 		selectedID = null;
+		selectedSubject = 'word';
 		anchor = null;
 		activeConstructionIDs = [];
 	}
@@ -403,6 +431,7 @@
 	function closePinned(): void {
 		pinned = false;
 		selectedID = null;
+		selectedSubject = 'word';
 		anchor = null;
 		activeConstructionIDs = [];
 		feedback = '';
@@ -437,7 +466,7 @@
 	}
 
 	async function hearSelected(): Promise<void> {
-		const occurrence = selectedOccurrence;
+		const occurrence = subjectOccurrence;
 		if (!occurrence) return;
 		const reference = hearReference(occurrence);
 		if (!reference?.ready) {
@@ -471,7 +500,7 @@
 	}
 
 	async function saveLearningStatus(status: LearningStatus): Promise<void> {
-		const occurrence = selectedOccurrence;
+		const occurrence = subjectOccurrence;
 		if (!occurrence?.semantic_sense_id) return;
 		const previous = current;
 		const optimistic: SemanticLearningState = {
@@ -770,6 +799,8 @@
 	{#if selectedOccurrence && anchor}
 		<SemanticPopover
 			occurrence={selectedOccurrence}
+			expressionOccurrence={selectedExpressionOccurrence}
+			articleId={current.id}
 			{anchor}
 			feedback={feedback}
 			feedbackIsError={feedbackIsError}
@@ -778,6 +809,8 @@
 			onClose={closePinned}
 			onLearningStatus={saveLearningStatus}
 			onHear={() => void hearSelected()}
+			onPin={() => (pinned = true)}
+			onSubjectChange={(subject) => (selectedSubject = subject)}
 			hearReady={Boolean(selectedHearReference?.ready)}
 			hearPending={Boolean(selectedHearReference && !selectedHearReference.ready)}
 			learningEnabled={!designSample}

@@ -1,5 +1,103 @@
 # Development Log
 
+## 2026-09-07 — Reader brackets removed and on-demand dictionary explore implemented
+
+Implemented `plans/reader-explore-dictionary-handoff.md` (baseline
+`135dc31`). Environment deviation: p100 was unreachable (SSH banner
+timeout), so with the owner's explicit "implement plan and commit"
+instruction the implementation ran in the local Mac checkout (clean, HEAD
+equal to origin/main). p100 sync is still outstanding.
+
+### Implementation
+
+- `internal/semantics/dictionary.go`: closed `reader.dictionary.v1`
+  contract — strict decoder (duplicate/unknown/missing keys, trailing JSON,
+  64 KiB artifact bound), deterministic validation (bounds, markup/control
+  characters, identity echo, enum, duplicate senses/examples), canonical
+  document hash, and hint sanitization.
+- `internal/annotator/dictionary.go`: exact prompt, closed JSON schema,
+  `GenerateDictionary` through the shared bounded stage executor. The
+  corrective-turn wording is now operation-neutral ("preserve valid fields
+  and task identifiers").
+- Migration `013_dictionary_explore`: `dictionary_entry` table (unique
+  dictionary key, null/populated-together CHECK) plus `job` rebuild that
+  widens the job-type CHECK to `reader.dictionary.v1` while preserving
+  `job_dependency`, `llm_relay_result`, all rows/indexes, and the 012
+  ailocals column. Rehearsal proves populated 012→013 upgrade, rollback on
+  injected failure, FK/integrity checks, and type admission/rejection.
+- `internal/dictionary` (new module, owns AGENTS.md): read-only subject
+  resolution (occurrence/annotation join, lemma→canonical→exact-source
+  fallback, nl→en pair check, nonlexical rejection), `dictionary_entry`
+  store, explicit get-or-start service (binding resolved outside the write
+  transaction; atomic insert-or-find + recheck + enqueue + `last_job_id`
+  CAS), and the server runner (claims only its own job type, re-verifies the
+  snapshotted provider fingerprint/type, heartbeat cancels an in-flight
+  provider call, transactional publish+complete so a stale or canceled
+  worker never publishes).
+- `internal/jobs`: `DictionaryJobType` admitted (`MaxAttempts: 1`).
+- Both article runners narrowed to claim only `reader.analysis.v2` via
+  `ClaimMatching` predicates; routing regression tests prove neither
+  runner steals the other's jobs.
+- `internal/httpapi/dictionary.go`: GET/POST
+  `/api/v1/articles/{id}/explore` and GET `/api/v1/dictionary/entries/{id}`
+  (owner auth + CSRF on POST, `no-store`, exactly-one-reference validation,
+  503 `v1.dictionary_provider_unavailable` before any queue mutation,
+  200/202 semantics). Wired in `cmd/doublangu-server/main.go`, which also
+  starts the dictionary runner on the shared shutdown context.
+- OpenAPI extended; `web/src/lib/api/generated.ts` regenerated (second
+  generation is byte-identical); typed client functions added.
+- Reader UI: duplicate per-word construction underlines removed from
+  `TextOccurrence` (grouping overlay untouched); `ExplorePanel.svelte` +
+  `exploreController.ts` (read-first, one explicit POST for missing,
+  1.5 s single-flight polling by entry id, stale-response discard by
+  identity, close/subject-change teardown); `SemanticPopover` gained the
+  explicit "Word / Expression" subject selector and always-available
+  Explore; `TranslationPopover`/`ArticleBlock` share the panel and lost the
+  raw Dutch note tabs; ResizeObserver keeps the anchored popover positioned
+  as the panel grows.
+- Docs/CI: README explore section, ARCHITECTURE dictionary chapter, root
+  AGENTS verification refresh, `make verify` gained `test-dictionary`, and
+  the deploy workflow runs the five reader E2E suites after `make verify`
+  and before packaging.
+
+### Verification (this Mac, Go 1.26.5 darwin/arm64)
+
+```sh
+go test ./internal/semantics ./internal/annotator ./internal/dictionary ./internal/jobs ./internal/store ./internal/httpapi ./cmd/doublangu-server -count=1   # pass
+go test -race ./internal/dictionary ./internal/jobs ./internal/semantics ./internal/httpapi -count=1                                                        # pass
+go test ./internal/analysis ./internal/reader -count=1                                                                                                     # pass
+go test -race ./internal/reader -count=1                                                                                                                   # pass
+make verify              # fails ONLY in TestIntegration_FullMatrix (plugins): also fails on clean baseline 135dc31 on this Mac (darwin/arm64 host/plugin module-graph mismatch). All other targets pass; make -k verify runs test-dictionary: semantics/annotator/dictionary/jobs/store/httpapi/cmd all ok.
+npm --prefix web run validate:openapi                                                                                                                      # FAILS on clean baseline too (pre-existing swagger-parser strictness); not caused by this change
+npm --prefix web run generate:api  # run twice, byte-identical
+npm --prefix web run check            # 0 errors, 0 warnings
+npm --prefix web run test:unit -- src/lib/reader   # 38 passed
+npm --prefix web run build            # pass
+npx playwright test reader.spec.ts reader-design.spec.ts reader-progressive.spec.ts reader-preference.spec.ts reader-explore.spec.ts                       # pass (1 retry after fixing spec expectations)
+git diff --check                                                                                                                                           # clean
+```
+
+### Known limits / follow-ups
+
+- Live-model quality (`DOUBLANGU_TEST_CODEX_LIVE=1 go test
+  ./internal/annotator -run '^TestLiveDictionary$'` with the owner's model
+  input) and real-production smoke remain for the owner; validation proves
+  structure, not linguistic correctness.
+- Reuse across inflections is only as good as stored lemma identity; exact
+  normalized forms otherwise (documented in the handoff).
+- Historical annotation-only articles get the shared Explore UI via their
+  annotations; all-word coverage stays a semantic-reader feature.
+- p100 checkout not synchronized; owner should pull/sync the working
+  environment before the next p100 session.
+- `npm run validate:openapi` fails identically on the untouched baseline
+  (swagger-parser rejects pre-existing speech-worker inline schemas); left
+  as found.
+- `TestIntegration_FullMatrix` (plugins fingerprint integration) fails
+  identically on the untouched baseline on this Mac — the host/plugin
+  module graph differs between sidecar and host builds on darwin/arm64.
+  It passes in CI (ubuntu) and on p100; run `make verify` on p100 before
+  the next release to confirm.
+
 ## 2026-09-06 — Dutch voice sample retained as CC0 asset; model file dropped
 
 - Deleted the local-only `Qwen3.5-2B-Q8_0.gguf` (1.9 GB, re-downloadable

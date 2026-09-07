@@ -130,13 +130,8 @@
 		.translation-subtitle { font-size: 0.585em; line-height: 1.2; }
 	}
 
-	.text-occurrence.construction-member {
-		box-shadow: inset 0 -2px var(--reader-construction);
-	}
-
 	.text-occurrence.construction-active {
 		background: color-mix(in srgb, var(--reader-construction) 13%, transparent);
-		box-shadow: inset 0 -3px var(--reader-construction);
 	}
 
 	@media (prefers-reduced-motion: reduce) {

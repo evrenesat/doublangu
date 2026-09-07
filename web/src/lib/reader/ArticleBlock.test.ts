@@ -3,6 +3,35 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ArticleAnnotation, ArticleBlock } from '$lib/api/client';
 import ArticleBlockView from './ArticleBlock.svelte';
 
+const dictionaryReadyDocument = {
+	version: 'reader.dictionary.v1',
+	lookup_form: 'tot rust komen',
+	lookup_kind: 'expression',
+	source_language: 'nl',
+	target_language: 'en',
+	senses: [
+		{
+			part_of_speech: 'expression',
+			translation_en: 'to calm down',
+			meaning_en: 'To become calm.',
+			usage_en: 'Use after stress or activity.',
+			pattern_nl: '',
+			parts: [{ source_nl: 'rust', explanation_en: 'rest, quiet' }],
+			examples: [{ text_nl: 'Ik wil tot rust komen.', translation_en: 'I want to calm down.' }]
+		}
+	]
+};
+
+vi.mock('$lib/api/client', async (importOriginal) => {
+	const original = await importOriginal<Record<string, unknown>>();
+	return {
+		...original,
+		getDictionaryEntry: vi.fn(async () => ({ status: 'ready', entry_id: 'entry-1', document: dictionaryReadyDocument })),
+		startDictionaryExplore: vi.fn(async () => ({ status: 'queued', entry_id: 'entry-2', job_id: 'job-2' })),
+		getDictionaryEntryById: vi.fn(async () => ({ status: 'ready', entry_id: 'entry-2', document: dictionaryReadyDocument }))
+	};
+});
+
 const annotation: ArticleAnnotation = {
 	id: '01J00000000000000000000002',
 	article_block_id: '01J00000000000000000000001',
@@ -75,19 +104,21 @@ describe('ArticleBlock', () => {
 		expect(screen.getByText('Also: to settle down')).toBeTruthy();
 	});
 
-	it('pins on click, exposes one explore detail at a time, and closes with Escape', async () => {
+	it('pins on click and expands the shared dictionary explore panel', async () => {
 		render(ArticleBlockView, { block, onLearningStatus: vi.fn(async () => {}) });
 		const trigger = screen.getByRole('button', { name: 'tot rust komen: to calm down' });
 		await fireEvent.click(trigger);
 		expect(screen.getByRole('dialog')).toBeTruthy();
 		await fireEvent.click(screen.getByRole('button', { name: 'Explore' }));
-		expect(screen.getByRole('button', { name: 'Meaning' })).toBeTruthy();
-		expect(screen.getByRole('button', { name: 'Usage' })).toBeTruthy();
-		expect(screen.getByRole('button', { name: 'Parts' })).toBeTruthy();
+		// The saved dictionary document renders sequentially with Dutch and
+		// English fields; the old raw Dutch note tabs are gone.
+		await waitFor(() => expect(screen.getByText('Saved dictionary entry')).toBeTruthy());
 		expect(screen.getByText('To become calm.')).toBeTruthy();
-		await fireEvent.click(screen.getByRole('button', { name: 'Usage' }));
 		expect(screen.getByText('Use after stress or activity.')).toBeTruthy();
-		expect(screen.queryByText('To become calm.')).toBeNull();
+		expect(screen.getByText('I want to calm down.')).toBeTruthy();
+		const dutchExample = screen.getByText('Ik wil tot rust komen.');
+		expect(dutchExample.getAttribute('lang')).toBe('nl');
+		expect(screen.queryByRole('button', { name: 'Meaning' })).toBeNull();
 		await fireEvent.keyDown(document, { key: 'Escape' });
 		await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
 	});

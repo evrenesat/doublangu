@@ -12,6 +12,9 @@ The working product is an article reader for one owner:
 - choose the available Codex model and reasoning effort for new analysis runs
 - inspect words, idioms, and discontinuous constructions without altering the
   source text
+- explore any word or whole expression on demand: a generated English
+  dictionary entry with common meanings, usage, parts, and Dutch examples
+  (see "On-demand dictionary explore")
 - mark individual meanings as learned
 - leave and revisit articles while durable analysis jobs continue
 - retry failed analysis, force a fresh run, and inspect retained owner-only run
@@ -110,6 +113,30 @@ password and uses the built-in owner login as the public authentication layer.
 The API contract is in [`contracts/openapi.yaml`](contracts/openapi.yaml).
 See [`ARCHITECTURE.md`](ARCHITECTURE.md) for system details and
 [`DEVLOG.md`](DEVLOG.md) for implementation history.
+
+## On-demand dictionary explore
+
+Explore is an explicit reader action on any lexical word or on a whole
+expression (phrase, idiom, or construction). Word and expression are separate
+subjects; expression members show an explicit "Word / Expression" selector.
+Exploring never rewrites article translations, learning state, or analysis.
+
+- The server derives the lookup subject from stored article data (occurrence
+  or annotation reference) and resolves the shared dictionary key
+  `(source_language, target_language, lookup_kind, normalized_lookup_form)`.
+- Reading a saved entry never contacts a provider. A ready entry is reused
+  unchanged across articles, restarts, and provider/model changes.
+- The first explicit Explore click that finds no saved entry may enqueue one
+  durable `reader.dictionary.v1` job. Generation uses the active analysis
+  profile's translation binding and model; failures are terminal and need an
+  explicit Retry.
+- Generated entries are validated against a closed contract
+  (`reader.dictionary.v1`): 1-6 common meanings, each with an English
+  translation, meaning, optional usage, optional Dutch pattern/parts, and 1-2
+  Dutch examples with English translations. Free-form linguistic quality is
+  reviewed by the owner, not guaranteed by validation.
+- Migration `013_dictionary_explore` adds the `dictionary_entry` table; the
+  job-type CHECK is widened with full preservation of existing job data.
 
 ## Configurable analysis provider pipeline
 

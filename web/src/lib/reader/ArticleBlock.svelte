@@ -105,6 +105,7 @@
 {#if selectedAnnotation && anchor}
 	<TranslationPopover
 		annotation={selectedAnnotation}
+		articleId={block.article_id}
 		anchor={anchor}
 		feedback={feedback}
 		feedbackIsError={feedbackIsError}

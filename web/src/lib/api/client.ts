@@ -61,6 +61,11 @@ export type SpeechWorker = components['schemas']['SpeechWorker'];
 export type WorkerCapability = components['schemas']['WorkerCapability'];
 export type RelayCapability = components['schemas']['RelayCapability'];
 export type WorkerEnrollment = components['schemas']['WorkerEnrollment'];
+export type DictionaryStatusEnvelope = components['schemas']['DictionaryStatusEnvelope'];
+export type DictionaryDocument = components['schemas']['DictionaryDocument'];
+export type DictionarySense = components['schemas']['DictionarySense'];
+export type DictionaryExploreStartInput = components['schemas']['DictionaryExploreStartInput'];
+export type DictionaryStatus = NonNullable<DictionaryStatusEnvelope['status']>;
 
 export interface SessionStatus {
 	authenticated: boolean;
@@ -328,6 +333,21 @@ export async function getReaderSettings(): Promise<ReaderSettings> {
 
 export async function saveReaderSettings(data: ReaderSettingsInput): Promise<ReaderSettings> {
 	return apiFetch('/api/v1/reader/settings', { method: 'PUT', body: JSON.stringify(data), csrf: true });
+}
+
+export async function getDictionaryEntry(articleId: string, ref: { occurrenceId?: string; annotationId?: string }): Promise<DictionaryStatusEnvelope> {
+	const query = new URLSearchParams();
+	if (ref.occurrenceId) query.set('occurrence_id', ref.occurrenceId);
+	if (ref.annotationId) query.set('annotation_id', ref.annotationId);
+	return apiFetch(`/api/v1/articles/${id(articleId)}/explore?${query.toString()}`);
+}
+
+export async function startDictionaryExplore(articleId: string, data: DictionaryExploreStartInput): Promise<DictionaryStatusEnvelope> {
+	return apiFetch(`/api/v1/articles/${id(articleId)}/explore`, { method: 'POST', body: JSON.stringify(data), csrf: true });
+}
+
+export async function getDictionaryEntryById(entryId: string): Promise<DictionaryStatusEnvelope> {
+	return apiFetch(`/api/v1/dictionary/entries/${id(entryId)}`);
 }
 
 export async function listAnalysisRuns(options: { articleId?: string; limit?: number; cursor?: string } = {}): Promise<AnalysisRunsPage> {

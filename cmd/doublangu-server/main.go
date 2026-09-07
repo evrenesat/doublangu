@@ -23,6 +23,7 @@ import (
 	"doublangu/internal/annotator"
 	"doublangu/internal/auth"
 	"doublangu/internal/config"
+	"doublangu/internal/dictionary"
 	"doublangu/internal/httpapi"
 	"doublangu/internal/httpapi/pluginassets"
 	"doublangu/internal/jobs"
@@ -170,6 +171,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	// automatically instead of bypassing it.
 	pipelineRunner := analysis.NewPipelineRunner(db, providerRegistry)
 	go pipelineRunner.Run(analysisContext)
+	dictionaryRunner := dictionary.NewRunner(db, providerRegistry)
+	go dictionaryRunner.Run(analysisContext)
 	if err := serve(cfg.Listen, registry, schema, db, newHandlerWithMedia(registry, schema, authHandler, healthHandler, cfg, db, mediaStore, providerRegistry, workerService, articleAnnotator), stdout); err != nil {
 		fmt.Fprintf(stderr, "server: %v\n", err)
 		return 1
@@ -301,6 +304,18 @@ func newHandlerWithMedia(
 	})
 	mux.Handle("/api/v1/analysis", analysisRoutes)
 	mux.Handle("/api/v1/analysis/", analysisRoutes)
+
+	dictionaryHandler := httpapi.NewDictionaryHandler(db, authHandler.CSRF, providerRegistry, sharedCatalog)
+	dictionaryMux := http.NewServeMux()
+	dictionaryMux.HandleFunc("GET /api/v1/articles/{id}/explore", dictionaryHandler.ServeExplore)
+	dictionaryMux.HandleFunc("POST /api/v1/articles/{id}/explore", dictionaryHandler.ServeExplore)
+	dictionaryMux.HandleFunc("GET /api/v1/dictionary/entries/{id}", dictionaryHandler.ServeEntry)
+	dictionaryRoutes := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		authHandler.RequireAuth(dictionaryMux).ServeHTTP(w, r)
+	})
+	mux.Handle("/api/v1/articles/{id}/explore", dictionaryRoutes)
+	mux.Handle("/api/v1/dictionary/entries/", dictionaryRoutes)
 
 	readerSettingsHandler := httpapi.NewReaderSettingsHandler(db, authHandler.CSRF)
 	readerSettingsRoutes := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
