@@ -13,12 +13,35 @@
 	let sessionError = $state('');
 	let requestSequence = 0;
 
+	// The single owner menu shared by article and non-article headers. It is a
+	// disclosure pattern: plain links/buttons, closed on Escape (with focus
+	// return), outside pointer-down, and every route change.
+	let menuOpen = $state(false);
+	let menuArea = $state<HTMLElement | null>(null);
+	let menuButton = $state<HTMLButtonElement | null>(null);
+
 	const isLoginPage = $derived($page.route.id === '/login');
 	const isArticlePage = $derived($page.route.id === '/reader/[id]');
 
 	afterNavigate(() => {
+		menuOpen = false;
 		void synchronizeSession();
 	});
+
+	function toggleMenu(): void {
+		menuOpen = !menuOpen;
+	}
+
+	function handleMenuEscape(event: KeyboardEvent): void {
+		if (!menuOpen || event.key !== 'Escape') return;
+		menuOpen = false;
+		menuButton?.focus();
+	}
+
+	function closeMenuOnOutsidePointerDown(event: PointerEvent): void {
+		if (!menuOpen || !menuArea) return;
+		if (!menuArea.contains(event.target as Node)) menuOpen = false;
+	}
 
 	async function synchronizeSession() {
 		const sequence = ++requestSequence;
@@ -64,6 +87,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
 </svelte:head>
 
+<svelte:window onkeydown={handleMenuEscape} />
+<svelte:document onpointerdown={closeMenuOnOutsidePointerDown} />
+
 <UIHostProvider>
 	{#if !isLoginPage && authenticated}
 		<header class:reader-header={isArticlePage}>
@@ -71,14 +97,36 @@
 				<a class="brand" href={appPath('/reader')} aria-label="Doublangu reader">Doublangu</a>
 				{#if isArticlePage}
 					<span class="article-label">Article reader</span>
-					<a class="reader-settings" href={appPath('/settings')}>Settings</a>
 				{:else}
-				<a href={appPath('/reader')}>Articles</a>
-				<a class="new-article" href={appPath('/reader/new')}>Paste article</a>
-				<a href={appPath('/analysis-runs')}>Analysis runs</a>
-				<a href={appPath('/settings')}>Settings</a>
-				<button class="sign-out" type="button" onclick={() => void signOut()}>Sign out</button>
+					<a href={appPath('/reader')}>Articles</a>
+					<a class="new-article" href={appPath('/reader/new')}>Paste article</a>
 				{/if}
+				<div class="menu-area" bind:this={menuArea}>
+					<button
+						class="menu-button"
+						type="button"
+						aria-label="Menu"
+						aria-expanded={menuOpen}
+						aria-controls="owner-menu"
+						bind:this={menuButton}
+						onclick={toggleMenu}
+					>
+						<!-- Lucide "menu" glyph inlined: the installed lucide-svelte ships
+							legacy components that cannot compile in this runes-only app. -->
+						<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+							<line x1="4" x2="20" y1="6" y2="6" />
+							<line x1="4" x2="20" y1="12" y2="12" />
+							<line x1="4" x2="20" y1="18" y2="18" />
+						</svg>
+					</button>
+					{#if menuOpen}
+						<div class="menu-panel" id="owner-menu">
+							<a href={appPath('/analysis-runs')}>Analysis runs</a>
+							<a href={appPath('/settings')}>Settings</a>
+							<button class="menu-logout" type="button" onclick={() => void signOut()}>Logout</button>
+						</div>
+					{/if}
+				</div>
 			</nav>
 		</header>
 	{/if}
@@ -131,7 +179,6 @@
 		color: var(--color-text);
 	}
 	.article-label { color: var(--color-muted); }
-	.reader-settings { margin-left: auto; color: var(--color-muted); font-size: 0.85rem; }
 
 	.new-article {
 		margin-left: auto;
@@ -140,11 +187,67 @@
 		border-radius: 0.5rem;
 	}
 
-	.sign-out {
-		border: 0;
+	/* On the article header nothing else pushes right, so the menu does. */
+	.reader-header .menu-area {
+		margin-left: auto;
+	}
+
+	.menu-area {
+		position: relative;
+	}
+
+	.menu-button {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 2.4rem;
+		height: 2.4rem;
+		border: 1px solid var(--color-border);
+		border-radius: 0.5rem;
 		background: transparent;
-		color: var(--color-muted);
+		color: var(--color-text);
 		cursor: pointer;
+	}
+
+	.menu-panel {
+		position: absolute;
+		top: calc(100% + 0.5rem);
+		right: 0;
+		z-index: 25;
+		min-width: 11rem;
+		display: grid;
+		padding: 0.4rem;
+		border: 1px solid var(--color-border);
+		border-radius: 0.6rem;
+		background: var(--color-surface-raised);
+		box-shadow: 0 14px 34px rgb(0 0 0 / 0.35);
+	}
+
+	.menu-panel a,
+	.menu-logout {
+		padding: 0.5rem 0.65rem;
+		border: 0;
+		border-radius: 0.45rem;
+		background: transparent;
+		color: var(--color-text);
+		font: inherit;
+		font-weight: 650;
+		text-align: left;
+		text-decoration: none;
+		white-space: nowrap;
+		cursor: pointer;
+	}
+
+	.menu-logout {
+		color: var(--color-muted);
+	}
+
+	.menu-panel a:hover,
+	.menu-panel a:focus-visible,
+	.menu-logout:hover,
+	.menu-logout:focus-visible {
+		background: var(--color-surface-hover);
+		color: var(--color-text);
 	}
 
 	main {
@@ -199,8 +302,13 @@
 			padding: 0.35rem 0.5rem;
 		}
 
-		.sign-out {
-			font-size: 0.9rem;
+		.menu-button {
+			width: 2.1rem;
+			height: 2.1rem;
+		}
+
+		.menu-panel {
+			min-width: 9.5rem;
 		}
 	}
 	@media (max-width: 350px) { .reader-header .article-label { display: none; } }

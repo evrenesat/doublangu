@@ -177,5 +177,7 @@ test('keeps developer diagnostics out of the learner navigation', async ({ page 
 	await page.goto('/settings');
 	await expect(page.getByText('No plugins are loaded.')).toHaveCount(0);
 	await expect(page.getByRole('banner').getByRole('link', { name: 'Plugins' })).toHaveCount(0);
-	await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible();
+	// Sign-out moved into the shared owner menu.
+	await page.getByRole('banner').getByRole('button', { name: 'Menu' }).click();
+	await expect(page.getByRole('button', { name: 'Logout' })).toBeVisible();
 });

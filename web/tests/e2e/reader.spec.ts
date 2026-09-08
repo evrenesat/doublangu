@@ -225,6 +225,9 @@ test('keeps implementation scaffolds out of learner navigation', async ({ page }
 	const navigation = page.getByRole('navigation', { name: 'Main navigation' });
 	await expect(navigation.getByRole('link', { name: 'Articles' })).toBeVisible();
 	await expect(navigation.getByRole('link', { name: 'Paste article' })).toBeVisible();
+	await expect(navigation.getByRole('link', { name: /Library|Plugins/ })).toHaveCount(0);
+	// Settings moved into the shared owner menu; scaffolds never appear anywhere.
+	await navigation.getByRole('button', { name: 'Menu' }).click();
 	await expect(navigation.getByRole('link', { name: 'Settings' })).toBeVisible();
 	await expect(navigation.getByRole('link', { name: /Library|Plugins/ })).toHaveCount(0);
 });

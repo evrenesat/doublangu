@@ -1,5 +1,72 @@
 # Development Log
 
+## 2026-09-08 — Checkpoint 2 review approval
+
+Reviewed pending burger-navigation changes against approved `cp1 v01` (`da3a5d5`) using the worktree fallback; no material findings. Reviewer verification: `PATH=/opt/node-v24.20.0-linux-x64/bin:$PATH npm --prefix web run test:unit -- src/lib/routes` (21 passed); `PATH=/opt/node-v24.20.0-linux-x64/bin:$PATH npm --prefix web run check` (0 errors/warnings); `PATH=/opt/node-v24.20.0-linux-x64/bin:/root/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.5.linux-amd64/bin:$PATH npm --prefix web run test:e2e -- navigation-menu.spec.ts` (8 passed); `git diff --check` (passed). Accepted the documented inline Lucide glyph workaround after inspecting the installed legacy component and forced-runes compiler setting. Backend/full-suite/live-provider checks were not rerun for this navigation-only review. Ignored plan and review artifacts remain local; checkpoint 3 is next.
+
+## 2026-09-08 — Checkpoint 2: burger menu with Analysis runs/Settings/Logout
+
+Implemented Checkpoint 2 of
+`plans/in-progress/reader-settings-prompt-experiments-20260908.md` on top of
+the approved Checkpoint 1 commit `da3a5d5` (plan baseline `7779c6d`).
+Implementation was submitted uncommitted; the reviewer subsequently approved
+and committed it as `cp2 v01`.
+
+### Implementation
+
+- `web/src/routes/+layout.svelte`: both authenticated header variants (article
+  and non-article) now end in one shared owner menu — a disclosure-pattern
+  menu button (accessible name "Menu", `aria-expanded`, `aria-controls`) with
+  a controlled panel containing Analysis runs, Settings, and Logout in the
+  requested order. Plain links/buttons keep Tab navigation in DOM order.
+- Articles and Paste article remain direct header links outside the menu on
+  non-article routes; the article route keeps the brand (back to library) and
+  the "Article reader" label. Login never renders the header/menu.
+- Close behaviors: Escape returns focus to the menu button, a pointer-down
+  outside the menu closes it, and every route change closes it
+  (`afterNavigate`). Logout reuses the existing `signOut()`/`logoutSession()`
+  and all links reuse `appPath` — no session logic rewrite.
+- Layering: the panel is absolutely positioned inside the sticky header
+  (z-index 20, above `main` content), with shadow; verified clickable above
+  the article body in E2E.
+- Deviation (recorded): section 6.4 asks for lucide-svelte icons, but the
+  installed `lucide-svelte@1.0.1` (deprecated upstream, unused so far) ships
+  legacy Svelte-4 components that fail this app's forced
+  `runes: true` compile — the dev-server dependency optimizer errors with
+  "Cannot use `$$props` in runes mode" and Vite refuses to boot. To avoid
+  out-of-scope build/dependency changes, the button inlines the same
+  ISC-licensed Lucide "menu" glyph as SVG, with a source comment. Swapping to
+  a runes-compatible icon library later is a one-line change.
+- Tests: new `web/tests/e2e/navigation-menu.spec.ts` (8 cases): menu contents
+  and order, Articles/Paste article outside, article-route menu above content,
+  navigation + route-change closure, Escape with focus return and outside
+  click, Tab order, logout to /login, no menu on Login, and 320px fit on both
+  route kinds (no horizontal overflow, panel inside the viewport).
+- Mechanical adaptations required by the approved navigation change: the
+  "Sign out"/direct-Settings assertions in `reader.spec.ts`
+  ("keeps implementation scaffolds out of learner navigation") and
+  `library-settings.spec.ts` ("keeps developer diagnostics out of the learner
+  navigation") now open the menu and assert Settings/Logout inside it. Both
+  still verify their original scaffold/diagnostic exclusions.
+
+### Verification
+
+Environment: Node v24.20.0 (`/opt/node-v24.20.0-linux-x64/bin`); Go toolchain
+PATH exported for the Playwright-managed Go server.
+
+- `npm --prefix web run test:unit -- src/lib/routes` — 6 files, 21 tests, all
+  passed.
+- `npm --prefix web run check` — 0 errors, 0 warnings (run before E2E, per
+  the browser-change rule, and again after the icon change).
+- `npm --prefix web run test:e2e -- navigation-menu.spec.ts` — 8 passed.
+- `npx playwright test reader.spec.ts library-settings.spec.ts --grep
+  "scaffolds|diagnostics"` — 2 passed (the adapted cases; E2E run strictly
+  separated from Svelte sync/check/build tasks).
+- Prettier check on the changed layout/spec files — clean.
+- Observation "the three actions work through the menu from article and
+  non-article routes; Login has no owner menu" is evidenced by the E2E cases
+  above.
+
 ## 2026-09-08 — Checkpoint 1 review approval
 
 Reviewer approved `cp1 v01` using the worktree fallback against `7779c6d`; no material findings. Re-ran with `PATH=/opt/node-v24.20.0-linux-x64/bin:$PATH`: `npm --prefix web run test:unit -- src/lib/settings` (31 passed) and `npm --prefix web run check` (0 errors/warnings). `git diff --check` passed. No browser, backend or live-provider verification in this scoped review. Reviewer creates the checkpoint commit; ignored plan/review artifacts remain local.
