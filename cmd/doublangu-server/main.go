@@ -32,6 +32,7 @@ import (
 	"doublangu/internal/media"
 	"doublangu/internal/pipeline"
 	manifest "doublangu/internal/plugins"
+	"doublangu/internal/prompts"
 	"doublangu/internal/reader"
 	"doublangu/internal/speech"
 	"doublangu/internal/store"
@@ -85,6 +86,13 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	defer db.Close()
 	if err := analysis.NewSettingsStore(db).Seed(context.Background(), cfg.CodexModel, cfg.CodexEffort); err != nil {
 		fmt.Fprintf(stderr, "analysis settings: %v\n", err)
+		return 1
+	}
+	// Prompt defaults seed right after migration and before recovery, job
+	// workers, and the listener: every startup re-proves the immutable v1
+	// rows and per-profile default selections exist (idempotent).
+	if err := prompts.NewStore(db).EnsureSeed(context.Background()); err != nil {
+		fmt.Fprintf(stderr, "prompt seed: %v\n", err)
 		return 1
 	}
 

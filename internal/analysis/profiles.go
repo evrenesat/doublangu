@@ -11,6 +11,7 @@ import (
 	"doublangu/internal/config"
 	"doublangu/internal/library"
 	"doublangu/internal/pipeline"
+	"doublangu/internal/prompts"
 	"doublangu/internal/store"
 )
 
@@ -192,6 +193,10 @@ func (s *ProfileStore) validateProfile(name string, bindings []pipeline.BindingS
 }
 
 // Create stores a new profile. On duplicate names it returns a typed conflict.
+// The same transaction also writes the profile's Explore binding (an exact
+// copy of its translation binding, independently editable afterwards) and
+// pins the five seeded default prompt versions, so an empty installation
+// seeds on profile creation exactly like startup seeding would.
 func (s *ProfileStore) Create(ctx context.Context, name string, bindings []pipeline.BindingSnapshot) (*Profile, error) {
 	if err := s.validateProfile(name, bindings); err != nil {
 		return nil, err
@@ -201,7 +206,13 @@ func (s *ProfileStore) Create(ctx context.Context, name string, bindings []pipel
 		if _, err := tx.ExecContext(ctx, `INSERT INTO analysis_pipeline_profile (id, name, updated_at) VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`, profile.ID, profile.Name); err != nil {
 			return writeProfileConflict(err)
 		}
-		return insertBindingsTx(ctx, tx, profile.ID, bindings)
+		if err := insertBindingsTx(ctx, tx, profile.ID, bindings); err != nil {
+			return err
+		}
+		if err := copyTranslationToExploreTx(ctx, tx, profile.ID, bindings); err != nil {
+			return err
+		}
+		return prompts.SeedProfileSelectionsTx(ctx, tx, profile.ID)
 	})
 	if err != nil {
 		return nil, err
@@ -365,4 +376,98 @@ func writeProfileConflict(err error) error {
 // ListProfileDescriptors is a small view used by the owner API tests.
 func (s *ProfileStore) ListProfileDescriptors(ctx context.Context) ([]Profile, error) {
 	return s.List(ctx)
+}
+
+// copyTranslationToExploreTx seeds one new profile's Explore binding as an
+// exact copy of its translation binding. The copy happens once, at creation;
+// later edits to either binding never touch the other.
+func copyTranslationToExploreTx(ctx context.Context, tx *sql.Tx, profileID string, bindings []pipeline.BindingSnapshot) error {
+	for _, binding := range bindings {
+		if binding.StageID != pipeline.StageTranslation {
+			continue
+		}
+		options, err := json.Marshal(binding.Options)
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO analysis_profile_explore_binding (profile_id, provider_id, model_id, options_json, options_hash)
+			VALUES (?, ?, ?, ?, ?)`, profileID, binding.ProviderID, binding.ModelID, string(options), binding.OptionsHash)
+		if err != nil {
+			return fmt.Errorf("seed explore binding for profile %s: %w", profileID, err)
+		}
+		return nil
+	}
+	return fmt.Errorf("profile %s has no translation binding to copy into Explore", profileID)
+}
+
+// ExploreBinding returns the profile's stored Explore binding, or nil when
+// the profile predates Explore seeding and startup seeding has not run.
+func (s *ProfileStore) ExploreBinding(ctx context.Context, profileID string) (*pipeline.BindingSnapshot, error) {
+	var binding pipeline.BindingSnapshot
+	var options string
+	err := s.db.QueryRow(ctx, `SELECT provider_id, model_id, options_json, options_hash
+		FROM analysis_profile_explore_binding WHERE profile_id = ?`, profileID).Scan(
+		&binding.ProviderID, &binding.ModelID, &options, &binding.OptionsHash)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal([]byte(options), &binding.Options); err != nil {
+		return nil, err
+	}
+	return &binding, nil
+}
+
+// SaveExploreBinding stores one Explore binding for the profile. The transport
+// stage identity of an Explore binding stays translation (provider adapters
+// only know the two registered stages); its operation identity remains
+// explore. Options must already be canonical: the caller passes the hash that
+// the stored options must verify against.
+func (s *ProfileStore) SaveExploreBinding(ctx context.Context, profileID string, providerID, modelID string, options json.RawMessage, optionsHash string) error {
+	if strings.TrimSpace(providerID) == "" || strings.TrimSpace(modelID) == "" {
+		return errors.New("explore binding needs a provider and a model")
+	}
+	canonical, err := pipeline.OptionsHashOf(options)
+	if err != nil {
+		return fmt.Errorf("explore binding options: %w", err)
+	}
+	if canonical != optionsHash {
+		return errors.New("explore binding options hash does not match its options")
+	}
+	encoded, err := json.Marshal(options)
+	if err != nil {
+		return err
+	}
+	return s.db.WithTransaction(ctx, func(tx *sql.Tx) error {
+		var exists int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM analysis_pipeline_profile WHERE id = ?`, profileID).Scan(&exists); err != nil {
+			return err
+		}
+		if exists == 0 {
+			return ErrProfileNotFound
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO analysis_profile_explore_binding (profile_id, provider_id, model_id, options_json, options_hash)
+			VALUES (?, ?, ?, ?, ?)
+			ON CONFLICT(profile_id) DO UPDATE SET provider_id = excluded.provider_id, model_id = excluded.model_id,
+				options_json = excluded.options_json, options_hash = excluded.options_hash`,
+			profileID, providerID, modelID, string(encoded), optionsHash)
+		return err
+	})
+}
+
+// PromptSelections returns the profile's pinned prompt version ids by type.
+// Types without a stored selection (only possible before startup seeding)
+// are absent from the map.
+func (s *ProfileStore) PromptSelections(ctx context.Context, profileID string) (map[prompts.PromptType]string, error) {
+	selections, err := prompts.NewStore(s.db).SelectionsByProfile(ctx, profileID)
+	if err != nil {
+		return nil, err
+	}
+	pinned := make(map[prompts.PromptType]string, len(selections))
+	for promptType, selection := range selections {
+		pinned[promptType] = selection.VersionID
+	}
+	return pinned, nil
 }

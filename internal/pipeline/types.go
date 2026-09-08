@@ -80,12 +80,66 @@ type BindingSnapshot struct {
 	PromptVersion             string          `json:"prompt_version"`
 }
 
+// PromptSnapshot is the provider-neutral capture of one exact prompt version
+// a job will use. Values are copied from the prompt library before enqueue;
+// this package imports no prompt store, and a running job never re-resolves
+// "latest" text. Type is one of the five fixed prompt types (as plain text to
+// avoid a store dependency), and EnvelopeVersion names the fixed code-owned
+// data-envelope contract that wraps the captured instruction.
+type PromptSnapshot struct {
+	Type            string `json:"type"`
+	ID              string `json:"id"`
+	Version         int    `json:"version"`
+	ContentHash     string `json:"content_hash"`
+	InstructionText string `json:"instruction_text"`
+	EnvelopeVersion string `json:"envelope_version"`
+}
+
+// PromptEnvelopeVersion is the fixed version of the code-owned prompt data
+// envelope (quoted *_BEGIN/*_END data sections, schema, and validation). A
+// captured prompt snapshot is only meaningful together with this envelope
+// identity.
+const PromptEnvelopeVersion = "doublangu.prompt-envelope.v1"
+
+// PromptExecutionDomain is the hash domain for effective prompt identities
+// derived from captured generation and correction prompt content.
+const PromptExecutionDomain = "doublangu.prompt-execution.v1"
+
+// Validate checks one captured prompt snapshot's required identity fields.
+func (s PromptSnapshot) Validate() error {
+	if strings.TrimSpace(s.Type) == "" {
+		return errors.New("prompt snapshot type is required")
+	}
+	if strings.TrimSpace(s.ID) == "" {
+		return errors.New("prompt snapshot id is required")
+	}
+	if s.Version <= 0 {
+		return errors.New("prompt snapshot version must be positive")
+	}
+	if len(strings.TrimSpace(s.ContentHash)) != 64 {
+		return errors.New("prompt snapshot content hash must be a SHA-256 hex digest")
+	}
+	if strings.TrimSpace(s.InstructionText) == "" {
+		return errors.New("prompt snapshot instruction text is required")
+	}
+	if strings.TrimSpace(s.EnvelopeVersion) == "" {
+		return errors.New("prompt snapshot envelope version is required")
+	}
+	return nil
+}
+
 // ProfileSnapshot is the immutable profile value resolved before any queue or
 // article state changes. Bindings appear in registered stage order.
 type ProfileSnapshot struct {
 	ID       string            `json:"id"`
 	Name     string            `json:"name"`
 	Bindings []BindingSnapshot `json:"bindings"`
+	// PromptSnapshots optionally carries the exact prompt versions this
+	// profile's job will run. It stays nil for legacy payloads so existing
+	// snapshot hash serializations are byte-stable; execution integration
+	// fills it (article jobs: linguistic_analysis, article_translation, and
+	// correction only — Explore and sentence settings never touch it).
+	PromptSnapshots []PromptSnapshot `json:"prompt_snapshots,omitempty"`
 }
 
 // StageOrder compares bindings by the registered stage order.
@@ -161,6 +215,13 @@ func (p ProfileSnapshot) Validate() error {
 	for _, stage := range RegisteredStages() {
 		if !seen[stage] {
 			return fmt.Errorf("profile is missing stage %q", stage)
+		}
+	}
+	// Legacy payloads carry no prompt snapshots; when present, each capture
+	// must be complete so a queued job can verify its content later.
+	for index, snapshot := range p.PromptSnapshots {
+		if err := snapshot.Validate(); err != nil {
+			return fmt.Errorf("prompt_snapshots[%d]: %w", index, err)
 		}
 	}
 	return nil

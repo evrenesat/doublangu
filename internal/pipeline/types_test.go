@@ -225,3 +225,68 @@ func TestJobPayloadStrictDecodeAndVerification(t *testing.T) {
 		t.Fatal("wrong pipeline version accepted")
 	}
 }
+
+func TestPromptSnapshotsStayOptionalAndLegacyStable(t *testing.T) {
+	profile := validProfile()
+
+	// Legacy serialization: the new field is omitted entirely, so existing
+	// snapshot hash fixtures and queued payload bytes are unchanged.
+	legacyJSON, err := json.Marshal(profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(legacyJSON), "prompt_snapshots") {
+		t.Fatalf("legacy profile JSON gained a prompt_snapshots key: %s", legacyJSON)
+	}
+	legacyHash, err := profile.SnapshotHash()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacyHash == "" {
+		t.Fatal("legacy snapshot hash empty")
+	}
+
+	// A present snapshot set must be complete and internally consistent.
+	withSnapshots := cloneProfile(profile)
+	withSnapshots.PromptSnapshots = []PromptSnapshot{{
+		Type: "linguistic_analysis", ID: "01J00000000000000000000000P",
+		Version: 1, ContentHash: strings.Repeat("a", 64),
+		InstructionText: "instruction", EnvelopeVersion: PromptEnvelopeVersion,
+	}}
+	if err := withSnapshots.Validate(); err != nil {
+		t.Fatalf("valid snapshot rejected: %v", err)
+	}
+
+	broken := cloneProfile(withSnapshots)
+	broken.PromptSnapshots[0].ContentHash = "short"
+	if err := broken.Validate(); err == nil {
+		t.Fatal("incomplete prompt snapshot accepted")
+	}
+
+	// Old payloads that predate the field still decode strictly.
+	decoded, err := DecodeJobPayload(mustEncodePayload(t, profile))
+	if err != nil {
+		t.Fatalf("legacy payload decode: %v", err)
+	}
+	if len(decoded.Profile.PromptSnapshots) != 0 {
+		t.Fatalf("legacy decode produced snapshots: %+v", decoded.Profile.PromptSnapshots)
+	}
+}
+
+func mustEncodePayload(t *testing.T, profile ProfileSnapshot) []byte {
+	t.Helper()
+	snapshotHash, err := profile.SnapshotHash()
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := EncodeJobPayload(JobPayload{
+		ArticleID: "article-1", ContentHash: "content",
+		AnalysisContractVersion: AnalysisContractVersion,
+		PipelineVersion:         PipelineVersion, Fresh: false,
+		Profile: profile, ProfileSnapshotHash: snapshotHash,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encoded
+}

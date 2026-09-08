@@ -1,5 +1,108 @@
 # Development Log
 
+## 2026-09-08 — Checkpoint 3 review approval
+
+Reviewed pending checkpoint 3 against approved `cp2 v01` (`00dad45`) using the worktree fallback. No material findings. Approved prompt/profile persistence, migration 014, builtin defaults, atomic startup/profile seeding, and optional legacy-compatible snapshot fields. The reviewer creates `cp3 v01`; checkpoint 4 remains next. Plans and review artifacts stay ignored and uncommitted.
+
+Reviewer verification (all passed):
+
+```sh
+export PATH=/root/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.5.linux-amd64/bin:$PATH
+go test ./internal/prompts ./internal/analysis ./internal/store ./internal/pipeline -count=1
+go test -race ./internal/prompts ./internal/analysis -count=1
+go test ./internal/... ./cmd/... -count=1
+git diff --check
+```
+
+Frontend, full make verify, broader race suites, and authenticated live checks were not rerun for this backend persistence review; no whole-plan or deployment approval is implied.
+
+## 2026-09-08 — Checkpoint 3: immutable prompt versions and independent profile choices
+
+Implemented Checkpoint 3 of
+`plans/in-progress/reader-settings-prompt-experiments-20260908.md` on top of
+the approved Checkpoint 2 commit `00dad45` (plan baseline `7779c6d`).
+Verified work is left uncommitted for review; no checkpoint commits were
+created.
+
+### Implementation
+
+- New `internal/prompts` (types.go, defaults.go, store.go, AGENTS.md): the
+  five fixed prompt types (linguistic_analysis, article_translation, explore,
+  sentence_translation, correction); immutable `Version` rows with ULID ids,
+  optional trimmed labels (≤80 Unicode scalars), nonblank valid UTF-8
+  instruction text (≤64 KiB), and a SHA-256 content hash over the exact
+  CRLF-normalized bytes. `Save` allocates the next (prompt_type, version)
+  under one transaction with the UNIQUE index as the backstop; there is no
+  update or delete path. `Resolve` enforces matching-type reads.
+- `defaults.go` instruction bytes: linguistic_analysis, article_translation,
+  explore, and correction are byte-exact copies of the builtin annotator
+  builders' instruction prefixes at baseline 7779c6d (extraction was
+  scripted from the Go sources, not retyped); sentence_translation is the new
+  operation's approved default. A guard test in `internal/analysis`
+  (`TestSeededDefaultsMatchBuiltinBuilders`) asserts each default stays the
+  exact prefix its annotator builder emits, so seeded v1 reproduces builtin
+  behavior. Data envelopes, schemas, and validation remain in code.
+- Migration `014_prompt_profiles_and_run_operations.sql`: `prompt_version`
+  (insert-only, UNIQUE(prompt_type, version)); `profile_prompt_selection`
+  (PK (profile_id, prompt_type), composite FK making cross-type selections
+  impossible at the schema level, RESTRICT on versions);
+  `analysis_profile_explore_binding` seeded by copying each profile's
+  translation binding exactly once; `analysis_run` gains operation_type
+  (default article_analysis), subject_id, subject_label, and phase (legacy
+  terminal rows backfilled to 'finished', in-flight rows stay '' until
+  startup recovery finalizes them); `analysis_stage_attempt` gains
+  error_phase (empty by default); `dictionary_entry` gains nullable
+  last_run_id (FK analysis_run ON DELETE SET NULL). Additive only; no
+  existing column, row, hash input, or queued payload changes.
+- `internal/pipeline/types.go`: provider-neutral `PromptSnapshot` (type, id,
+  version, content_hash, instruction_text, envelope_version) plus
+  `PromptEnvelopeVersion` and `PromptExecutionDomain` constants. The new
+  optional `ProfileSnapshot.PromptSnapshots` field is `omitempty` so legacy
+  snapshot JSON and hashes are byte-stable; a regression test proves the
+  legacy key is absent and legacy payloads still strict-decode.
+- `internal/analysis/profiles.go`: `Create` now also writes the Explore
+  binding (exact copy of the translation binding, editable independently
+  afterwards) and pins the five seeded defaults in the same transaction, so
+  empty installations seed on profile creation exactly like startup. New
+  accessors `ExploreBinding`/`SaveExploreBinding`/`PromptSelections` keep
+  the stored profile JSON shape unchanged (asserted: no new response fields).
+- Startup wiring (`cmd/doublangu-server/main.go`): one unconditional
+  `prompts.NewStore(db).EnsureSeed` right after the analysis settings seed —
+  after migration, before recovery, job workers, and the listener. Scope
+  note: main.go was not in the checkpoint's file list, but step 2's
+  "seed before requests/workers" has no other unconditional hook; the change
+  is nine lines and touches no forbidden category (no UI/API behavior, no
+  job types, no hash changes).
+- Tests: `internal/prompts` (defaults coverage/order, ascending version
+  allocation, normalization + content hash, input bounds with astral-scalar
+  labels and 64 KiB boundaries, matching-type resolution, idempotent seeding
+  with active-profile survival, concurrent saves under `-race`),
+  `internal/store/prompts_migration_test.go` (populated 013→014 rehearsal
+  with exact explore copy, legacy column defaults/backfill, cross-type
+  rejection, ON DELETE SET NULL, integrity + FK checks; fresh install and
+  repeated-startup no-op), `internal/analysis/profiles_prompts_test.go`
+  (explore copy + default selections on create, two-profile independence,
+  replace/delete interactions, builder-prefix guard), `internal/pipeline`
+  snapshot optionality. Pre-existing version-count assertions in
+  `internal/store/db_test.go` updated 13→14 for the new migration.
+
+### Verification
+
+Toolchain: Go 1.26.5 at
+`/root/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.5.linux-amd64/bin`.
+
+- `go test ./internal/prompts ./internal/analysis ./internal/store ./internal/pipeline -count=1` — all ok.
+- `go test -race ./internal/prompts ./internal/analysis -count=1` — all ok
+  (includes the concurrent version-save case).
+- `go test ./internal/... ./cmd/... -count=1` — full backend suite green (no
+  fallout from the new Create-time seeding or columns).
+- `gofmt -l` clean on all changed Go files (the only flagged file,
+  `internal/httpapi/ailocals.go`, is pre-existing and untouched).
+- Observations: version rows cannot be mutated (insert-only store, rows
+  byte-stable across repeated reads and seedings); two profiles retain
+  independent selections and explore bindings; existing data and the active
+  profile survive seeding twice (all asserted by the named tests).
+
 ## 2026-09-08 — Checkpoint 2 review approval
 
 Reviewed pending burger-navigation changes against approved `cp1 v01` (`da3a5d5`) using the worktree fallback; no material findings. Reviewer verification: `PATH=/opt/node-v24.20.0-linux-x64/bin:$PATH npm --prefix web run test:unit -- src/lib/routes` (21 passed); `PATH=/opt/node-v24.20.0-linux-x64/bin:$PATH npm --prefix web run check` (0 errors/warnings); `PATH=/opt/node-v24.20.0-linux-x64/bin:/root/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.5.linux-amd64/bin:$PATH npm --prefix web run test:e2e -- navigation-menu.spec.ts` (8 passed); `git diff --check` (passed). Accepted the documented inline Lucide glyph workaround after inspecting the installed legacy component and forced-runes compiler setting. Backend/full-suite/live-provider checks were not rerun for this navigation-only review. Ignored plan and review artifacts remain local; checkpoint 3 is next.

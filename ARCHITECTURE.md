@@ -520,6 +520,21 @@ re-hashed when the runner claims them (`pipeline.JobPayload`). Queue
 idempotency keys include the pipeline version, snapshot hash, content hash,
 and fresh/normal mode. Settings changes never mutate queued or running work.
 
+Migration 014 adds the owner-editable prompt version library and the
+independent Explore binding. `prompt_version` stores insert-only, immutable
+versions of the five fixed prompt types (linguistic_analysis,
+article_translation, explore, sentence_translation, correction) with SHA-256
+content hashes over the CRLF-normalized UTF-8 instruction text.
+`profile_prompt_selection` pins exactly one same-type version per profile and
+type (a composite foreign key makes cross-type selections impossible), seeded
+to the builtin v1 defaults at startup and on profile creation.
+`analysis_profile_explore_binding` starts as a one-time copy of each
+profile's translation binding and is edited independently afterwards. Run
+rows gain operation_type/subject_id/subject_label and a phase column, and
+stage attempts gain error_phase; legacy rows keep empty/default values until
+the new on-demand operations land. Stored instruction text never changes
+output schemas, source anchors, or validation, which stay code-owned.
+
 ### Two-stage execution, caches, and publication
 
 The `PipelineRunner` processes one article job at a time: per block it
