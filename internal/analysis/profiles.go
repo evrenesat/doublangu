@@ -471,3 +471,33 @@ func (s *ProfileStore) PromptSelections(ctx context.Context, profileID string) (
 	}
 	return pinned, nil
 }
+
+// ArticlePromptSnapshots captures the profile's pinned linguistic_analysis,
+// article_translation, and correction versions as immutable execution
+// snapshots for one article job. Capture happens before enqueue; a running
+// job never re-resolves the stored versions. A profile without a selection
+// for a required type is an integration error, not a silent legacy fallback.
+func (s *ProfileStore) ArticlePromptSnapshots(ctx context.Context, profileID string) ([]pipeline.PromptSnapshot, error) {
+	selections, err := s.PromptSelections(ctx, profileID)
+	if err != nil {
+		return nil, err
+	}
+	promptStore := prompts.NewStore(s.db)
+	snapshots := make([]pipeline.PromptSnapshot, 0, 3)
+	for _, promptType := range []prompts.PromptType{prompts.TypeLinguisticAnalysis, prompts.TypeArticleTranslation, prompts.TypeCorrection} {
+		versionID, ok := selections[promptType]
+		if !ok {
+			return nil, fmt.Errorf("profile %s has no %s prompt selection", profileID, promptType)
+		}
+		version, err := promptStore.Resolve(ctx, promptType, versionID)
+		if err != nil {
+			return nil, err
+		}
+		snapshots = append(snapshots, pipeline.PromptSnapshot{
+			Type: string(version.PromptType), ID: version.ID, Version: version.Version,
+			ContentHash: version.ContentHash, InstructionText: version.InstructionText,
+			EnvelopeVersion: pipeline.PromptCapturedEnvelopeVersion,
+		})
+	}
+	return snapshots, nil
+}

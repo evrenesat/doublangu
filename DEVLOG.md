@@ -1,5 +1,192 @@
 # Development Log
 
+## 2026-09-08 — Checkpoint 4 review approval
+
+Reviewed pending cp4 v01 against cp3 v01 (`0b92c0a`) using worktree fallback.
+Both prior findings resolved; no material findings. Reviewer verification with
+Go 1.26.5 on PATH passed:
+
+- `go test ./internal/pipeline ./internal/annotator ./internal/analysis ./internal/reader ./internal/httpapi -count=1`
+- `go test -race ./internal/analysis -count=1`
+- `git diff --check`
+
+Checkpoint 4 approved for its reviewer-owned commit; checkpoint 5 remains pending.
+Full integration/UI/live verification remains later-plan work.
+
+## 2026-09-08 — Fix plan cp04-v01: explicit-profile fresh runs capture prompts
+
+Implemented the review fix plan
+`plans/in-progress/reader-settings-prompt-experiments-20260908-cp04-v01.md`
+(P2: a `fresh:true` + `profile_id` reanalysis built its snapshot with
+bindings only, so the runner executed builtin instructions instead of the
+named profile's selected prompts) on top of the pending checkpoint 4 work
+(base HEAD `0b92c0a`). Verified work is left uncommitted for review; no
+commits were created.
+
+### Implementation
+
+- `internal/httpapi/pipeline_articles.go`: the explicit-profile branch of
+  `queuePipelineAnalysis` now calls the existing
+  `ProfileStore.ArticlePromptSnapshots` for the selected profile before
+  enqueueing and attaches the three captured snapshots to the snapshot —
+  matching the active-profile capture behavior. A capture failure returns
+  the service-unavailable analysis error and queues nothing. Legacy retry
+  behavior and the runner's legacy fallback are unchanged; no shared helper
+  was introduced because the surrounding error handling differs per branch.
+- `internal/httpapi/pipeline_articles_test.go`: the profile-rules test now
+  pins distinct article prompt selections on the active and override
+  profiles, issues `fresh:true` with the override `profile_id`, and decodes
+  the queued job payload to assert exactly the override profile's
+  linguistic_analysis, article_translation, and correction snapshots —
+  including ids, instruction bytes, content hashes, and the captured
+  envelope version. Changing a selection after enqueue is proven unable to
+  mutate the queued payload bytes; a profile with deleted selections fails
+  the fresh override with 503 and enqueues no job. Existing active-profile,
+  legacy-retry, and disabled-provider cases are retained and pass.
+
+### Verification
+
+Toolchain: Go 1.26.5 at
+`/root/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.5.linux-amd64/bin`.
+
+- `go test ./internal/pipeline ./internal/annotator ./internal/analysis ./internal/reader ./internal/httpapi -count=1` — all ok.
+- `go test -race ./internal/analysis -count=1` — ok.
+- `git diff --check` — clean.
+- Expected outcomes confirmed: named-profile fresh jobs freeze their
+  selected prompts like active-profile fresh jobs; post-enqueue edits cannot
+  change the payload; missing prompt selections fail before enqueue.
+
+## 2026-09-08 — Fix plan cp05-v01: code-owned prompt data boundaries
+
+Implemented the review fix plan
+`plans/in-progress/reader-settings-prompt-experiments-20260908-cp05-v01.md`
+(P2: editable instructions could remove the quoted-data boundary) on top of
+the existing uncommitted checkpoint 4 work (base HEAD `0b92c0a`). Verified
+work is left uncommitted for review; no commits were created.
+
+### Implementation
+
+- `internal/annotator/stages.go`: new fixed, newline-delimited
+  `capturedDataBoundary` statement plus a `Captured` flag on `StagePrompts`
+  with `CapturedStagePrompts`/`DefaultStagePrompts` constructors and
+  `generationPrefix`/`correctionPrefix` renderers. Captured prompts render
+  instruction → boundary → data sections; the leading newline guarantees
+  separation even when the owner instruction has no trailing newline.
+  Legacy rendering (builtin defaults) never inserts the boundary and stays
+  byte-identical to the historical prompts, golden fixtures unchanged.
+- `internal/annotator/stage_executor.go`: the linguistic and translation
+  adapters render through the new prefixes for both initial and corrective
+  turns. The dictionary adapter keeps its existing fallback (no carrier →
+  builtin corrective builder) untouched.
+- Envelope versioning: `pipeline.PromptCapturedEnvelopeVersion`
+  (`doublangu.prompt-envelope.v2`) identifies the captured rendering
+  contract; `PromptEnvelopeVersion` (v1) remains the builtin legacy
+  identity. Enqueue capture stamps v2, and the runner rejects captured
+  snapshots with any other envelope version via the visible
+  `v1.analysis_prompt_invalid` failure before article state changes.
+- Tests: new `stages_boundary_test.go` — full replacement by a
+  newline-less instruction ("Translate concisely.") for linguistic,
+  translation, and correction proves the fixed statement and delimiters
+  survive; execution-level cases run captured and legacy adapters through a
+  real corrective turn, proving the captured initial/corrective prompts
+  carry the boundary while legacy initial/corrective prompts stay
+  byte-identical to the builtin builders (no boundary text). The cp4
+  custom-envelope test now exercises the captured-prefix contract;
+  runner tests stamp the captured envelope version and a new case rejects
+  an unsupported version end to end. Effective prompt identity coverage
+  unchanged (envelope input now the captured version constant).
+- Docs: ARCHITECTURE frozen-instruction paragraph updated for the boundary
+  statement and versioned envelope contract.
+
+### Verification
+
+Toolchain: Go 1.26.5 at
+`/root/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.5.linux-amd64/bin`.
+
+- `go test ./internal/pipeline ./internal/annotator ./internal/analysis ./internal/reader ./internal/httpapi -count=1` — all ok.
+- `go test -race ./internal/analysis -count=1` — ok.
+- `git diff --check` — clean.
+- Expected outcomes confirmed: full custom-text replacement preserves the
+  code-owned data boundaries; legacy initial and corrective prompts remain
+  byte-identical (golden fixtures untouched and execution-verified).
+
+## 2026-09-08 — Checkpoint 4: frozen prompt execution and exact caches
+
+Implemented Checkpoint 4 of
+`plans/in-progress/reader-settings-prompt-experiments-20260908.md` on top of
+the approved Checkpoint 3 commit (plan baseline `7779c6d`). Verified work is
+left uncommitted for review; no checkpoint commits were created.
+
+### Implementation
+
+- Builder split (internal/annotator/stages.go): the stage builders are now
+  instruction + deterministic data envelope —
+  `BuildLinguisticStagePrompt`/`BuildTranslationStagePrompt`/
+  `BuildStageCorrectionPromptWithInstruction` take the exact instruction
+  while envelope serialization, output schemas, and validation stay in code.
+  The legacy wrappers (`BuildLinguisticChunkPrompt`,
+  `BuildTranslationChunkPrompt`, `BuildStageCorrectionPrompt`) resolve the
+  builtin defaults from the prompt library and remain byte-compatible.
+  Golden fixtures recorded from the pre-refactor builders
+  (`testdata/golden_{linguistic,translation,correction}_prompt.txt`) pin the
+  builtin bytes; committed tests prove byte equality and that a custom
+  instruction changes only the instruction prefix, never the envelope.
+- Builder injection (internal/annotator/stage_executor.go):
+  `StagePrompts{Generation, Correction}` plus `DefaultStagePrompts(stage)`;
+  the linguistic/translation adapters carry captured instructions, and
+  corrective turns render through the carried correction instruction with
+  code-serialized VALIDATION_ERRORS/PREVIOUS_RESPONSE data (adapter carrier
+  interface; adapters without a capture fall back to the builtin builder, so
+  the dictionary path is untouched). `ExecuteLinguisticStage`/
+  `ExecuteTranslationStage` take the stage prompts; the two conformance
+  fixture call sites in `internal/httpapi/pipeline_analysis.go` pass the
+  builtin defaults (mechanical adaptation).
+- Effective hashes (internal/pipeline/types.go):
+  `EffectivePromptVersion(operation, generationHash, correctionHash,
+  envelopeVersion)` under `doublangu.prompt-execution.v1`. The runner stores
+  this identity in the stage cache `prompt_version` column for jobs that run
+  captured prompts; human version ids stay on the snapshots.
+- Enqueue capture (internal/httpapi/pipeline_articles.go +
+  internal/analysis/profiles.go): `resolvePipelineSnapshot` now captures the
+  active profile's pinned linguistic_analysis/article_translation/correction
+  versions via `ProfileStore.ArticlePromptSnapshots` before enqueue, so the
+  job freezes instructions together with its bindings; snapshot hash and
+  idempotency key move with them automatically.
+- Runner execution (internal/analysis/pipeline_runner.go): `resolveStagePrompts`
+  resolves each stage's instructions from the payload. Payloads without
+  snapshots keep recognized legacy behavior (builtin builders, legacy cache
+  constants); snapshot-carrying payloads must carry exactly the three article
+  prompt types (Explore/sentence types are rejected — no accidental article
+  coupling) with bytes that verify against their captured content hashes,
+  else the job fails closed with `v1.analysis_prompt_invalid` before any
+  article state changes.
+- Tests: golden byte-equality + envelope separation + defaults (annotator);
+  captured instructions execute verbatim and stored prompt rows can drift
+  after queueing without changing a claimed job's bytes; a translation-only
+  instruction change misses exactly the translation stage while the
+  linguistic stage keeps hitting (effective identities asserted per stage,
+  legacy constants absent); legacy payloads run builtin instructions and
+  keep the legacy cache constant; tampered content hashes fail closed with
+  the visible prompt error and no provider call. Existing runner, executor,
+  and provider tests pass unchanged with builtin prompts.
+- Docs: ARCHITECTURE "Profiles, snapshots, and jobs" extended with the
+  frozen-instruction execution model and effective cache identity.
+
+### Verification
+
+Toolchain: Go 1.26.5 at
+`/root/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.5.linux-amd64/bin`.
+
+- `go test ./internal/pipeline ./internal/annotator ./internal/analysis ./internal/reader -count=1` — all ok.
+- `go test -race ./internal/analysis -count=1` — ok.
+- `go test ./internal/... ./cmd/... -count=1` — full backend suite green.
+- `gofmt -l` clean on changed files (the flagged `internal/httpapi/ailocals.go`
+  is a pre-existing condition, untouched).
+- Observations: queued/retried work retains original instructions/options
+  (captured snapshots persist on the article and in payloads; drift test);
+  exact cache eligibility changes only for affected prompt/correction inputs
+  (operation-specific identity test).
+
 ## 2026-09-08 — Checkpoint 3 review approval
 
 Reviewed pending checkpoint 3 against approved `cp2 v01` (`00dad45`) using the worktree fallback. No material findings. Approved prompt/profile persistence, migration 014, builtin defaults, atomic startup/profile seeding, and optional legacy-compatible snapshot fields. The reviewer creates `cp3 v01`; checkpoint 4 remains next. Plans and review artifacts stay ignored and uncommitted.

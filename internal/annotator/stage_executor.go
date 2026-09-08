@@ -77,6 +77,23 @@ type stageAdapter interface {
 	Validate(raw string) error
 }
 
+// correctivePromptCarrier is implemented by stage adapters that carry a
+// captured correction instruction. Adapters without one (legacy contract)
+// resolve to the preserved builtin correction builder.
+type correctivePromptCarrier interface {
+	CorrectivePrompt(validationError, previousResponse string) string
+}
+
+// correctivePromptFor renders the corrective turn for an adapter: the
+// captured correction instruction when the stage carries one, otherwise the
+// builtin default. Feedback and previous-response serialization stay in code.
+func correctivePromptFor(adapter stageAdapter, validationError, previousResponse string) string {
+	if carrier, ok := adapter.(correctivePromptCarrier); ok {
+		return carrier.CorrectivePrompt(validationError, previousResponse)
+	}
+	return BuildStageCorrectionPrompt(validationError, previousResponse)
+}
+
 // maxStagePromptSchemaBytes is the hard pre-invocation bound for one turn's
 // prompt and generated schema (handoff §8.4). It mirrors
 // analysis.stagePromptLimitBytes: oversized stages fail locally before any
@@ -116,7 +133,7 @@ func executeStage(ctx context.Context, provider Provider, binding ResolvedBindin
 	for {
 		prompt := adapter.Prompt()
 		if correctiveUsed > 0 {
-			prompt = BuildStageCorrectionPrompt(validationErr.Error(), raw)
+			prompt = correctivePromptFor(adapter, validationErr.Error(), raw)
 		}
 		// Materialize the schema once per turn and enforce the size bound
 		// before invoking the provider: an oversized prompt or schema is a
@@ -245,12 +262,22 @@ func jsonNumber(value any) (float64, bool) {
 // Linguistic adapter
 
 type linguisticStageAdapter struct {
-	chunk semantics.PreparedChunk
+	chunk        semantics.PreparedChunk
+	stagePrompts StagePrompts
 }
 
 func (a *linguisticStageAdapter) StageID() pipeline.StageID { return pipeline.StageLinguisticAnalysis }
 
-func (a *linguisticStageAdapter) Prompt() string { return BuildLinguisticChunkPrompt(a.chunk) }
+func (a *linguisticStageAdapter) Prompt() string {
+	return BuildLinguisticStagePrompt(a.stagePrompts.generationPrefix(), a.chunk)
+}
+
+// CorrectivePrompt renders corrective turns from the stage's correction
+// prefix (captured instruction plus fixed data boundary, or the builtin
+// default) plus code-serialized feedback and the rejected response.
+func (a *linguisticStageAdapter) CorrectivePrompt(validationError, previousResponse string) string {
+	return BuildStageCorrectionPromptWithInstruction(a.stagePrompts.correctionPrefix(), validationError, previousResponse)
+}
 
 func (a *linguisticStageAdapter) OutputSchema() json.RawMessage {
 	raw, _ := json.Marshal(LinguisticOutputSchema(a.chunk))
@@ -267,9 +294,10 @@ func (a *linguisticStageAdapter) Validate(raw string) error {
 }
 
 // ExecuteLinguisticStage runs the linguistic stage for one paragraph and
-// returns the validated artifact.
-func ExecuteLinguisticStage(ctx context.Context, provider Provider, binding ResolvedBinding, chunk semantics.PreparedChunk) (*semantics.ValidatedLinguistic, StageAttemptResult, error) {
-	adapter := &linguisticStageAdapter{chunk: chunk}
+// returns the validated artifact. The stage runs the exact captured
+// instructions in stagePrompts.
+func ExecuteLinguisticStage(ctx context.Context, provider Provider, binding ResolvedBinding, chunk semantics.PreparedChunk, stagePrompts StagePrompts) (*semantics.ValidatedLinguistic, StageAttemptResult, error) {
+	adapter := &linguisticStageAdapter{chunk: chunk, stagePrompts: stagePrompts}
 	raw, result, err := executeStage(ctx, provider, binding, adapter)
 	if err != nil {
 		return nil, result, err
@@ -289,14 +317,22 @@ func ExecuteLinguisticStage(ctx context.Context, provider Provider, binding Reso
 // Translation adapter
 
 type translationStageAdapter struct {
-	chunk      semantics.PreparedChunk
-	linguistic *semantics.ValidatedLinguistic
+	chunk        semantics.PreparedChunk
+	linguistic   *semantics.ValidatedLinguistic
+	stagePrompts StagePrompts
 }
 
 func (a *translationStageAdapter) StageID() pipeline.StageID { return pipeline.StageTranslation }
 
 func (a *translationStageAdapter) Prompt() string {
-	return BuildTranslationChunkPrompt(a.chunk, a.linguistic)
+	return BuildTranslationStagePrompt(a.stagePrompts.generationPrefix(), a.chunk, a.linguistic)
+}
+
+// CorrectivePrompt renders corrective turns from the stage's correction
+// prefix (captured instruction plus fixed data boundary, or the builtin
+// default) plus code-serialized feedback and the rejected response.
+func (a *translationStageAdapter) CorrectivePrompt(validationError, previousResponse string) string {
+	return BuildStageCorrectionPromptWithInstruction(a.stagePrompts.correctionPrefix(), validationError, previousResponse)
 }
 
 func (a *translationStageAdapter) OutputSchema() json.RawMessage {
@@ -320,10 +356,11 @@ type TranslationStageOutput struct {
 }
 
 // ExecuteTranslationStage runs the translation stage and merges both
-// artifacts. Merge or final-validation failures surface as a
+// artifacts. The stage runs the exact captured instructions in stagePrompts.
+// Merge or final-validation failures surface as a
 // final_validation phase error on the translation stage.
-func ExecuteTranslationStage(ctx context.Context, provider Provider, binding ResolvedBinding, chunk semantics.PreparedChunk, linguistic *semantics.ValidatedLinguistic) (*TranslationStageOutput, StageAttemptResult, error) {
-	adapter := &translationStageAdapter{chunk: chunk, linguistic: linguistic}
+func ExecuteTranslationStage(ctx context.Context, provider Provider, binding ResolvedBinding, chunk semantics.PreparedChunk, linguistic *semantics.ValidatedLinguistic, stagePrompts StagePrompts) (*TranslationStageOutput, StageAttemptResult, error) {
+	adapter := &translationStageAdapter{chunk: chunk, linguistic: linguistic, stagePrompts: stagePrompts}
 	raw, result, err := executeStage(ctx, provider, binding, adapter)
 	if err != nil {
 		return nil, result, err

@@ -144,7 +144,7 @@ func TestExecuteStageAggregatesUsageAcrossCorrections(t *testing.T) {
 			`{"time_to_first_token":150,"total_time":700}`,
 		},
 	}
-	_, result, err := ExecuteLinguisticStage(context.Background(), provider, executorBinding(t), chunk)
+	_, result, err := ExecuteLinguisticStage(context.Background(), provider, executorBinding(t), chunk, DefaultStagePrompts(pipeline.StageLinguisticAnalysis))
 	if err != nil {
 		t.Fatalf("linguistic stage failed: %v", err)
 	}
@@ -174,7 +174,7 @@ func TestExecuteLinguisticStageCorrectsOnceAndValidates(t *testing.T) {
 		descriptor: ProviderDescriptor{ID: "codex-app-server", Type: ProviderTypeCodexAppServer, Enabled: true},
 		turns:      []string{`{"version":"reader.linguistic.v1","tokens":[],"new_senses":[],"constructions":[]}`, valid},
 	}
-	validated, result, err := ExecuteLinguisticStage(context.Background(), provider, executorBinding(t), chunk)
+	validated, result, err := ExecuteLinguisticStage(context.Background(), provider, executorBinding(t), chunk, DefaultStagePrompts(pipeline.StageLinguisticAnalysis))
 	if err != nil {
 		t.Fatalf("linguistic stage failed: %v", err)
 	}
@@ -226,7 +226,7 @@ func TestExecuteLinguisticStageExhaustsCorrections(t *testing.T) {
 			`{"version":"reader.linguistic.v1","tokens":[],"new_senses":[],"constructions":[]}`,
 		},
 	}
-	_, result, err := ExecuteLinguisticStage(context.Background(), provider, executorBinding(t), chunk)
+	_, result, err := ExecuteLinguisticStage(context.Background(), provider, executorBinding(t), chunk, DefaultStagePrompts(pipeline.StageLinguisticAnalysis))
 	var stageErr *StageError
 	if !errors.As(err, &stageErr) || stageErr.Phase != "stage_validation" || stageErr.Code != CodeInvalidOutput {
 		t.Fatalf("exhaustion error = %v", err)
@@ -245,7 +245,7 @@ func TestExecuteTranslationStageReportsFinalValidation(t *testing.T) {
 	chunk := executorChunk(t)
 	valid := validLinguisticRaw(t, chunk)
 	linguisticProvider := &scriptedSessionProvider{turns: []string{valid}}
-	linguistic, _, err := ExecuteLinguisticStage(context.Background(), linguisticProvider, executorBinding(t), chunk)
+	linguistic, _, err := ExecuteLinguisticStage(context.Background(), linguisticProvider, executorBinding(t), chunk, DefaultStagePrompts(pipeline.StageLinguisticAnalysis))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,7 +262,7 @@ func TestExecuteTranslationStageReportsFinalValidation(t *testing.T) {
 		ConfigFingerprint: "fp", ModelID: "model", Options: options, OptionsHash: hash,
 		ContractVersion: pipeline.TranslationContractVersion, PromptVersion: pipeline.TranslationPromptVersion,
 	}
-	_, _, err = ExecuteTranslationStage(context.Background(), translationProvider, binding, chunk, linguistic)
+	_, _, err = ExecuteTranslationStage(context.Background(), translationProvider, binding, chunk, linguistic, DefaultStagePrompts(pipeline.StageTranslation))
 	var stageErr *StageError
 	if !errors.As(err, &stageErr) {
 		t.Fatalf("translation error = %v", err)
@@ -278,7 +278,7 @@ func TestExecuteStageProviderFailureIsRecorded(t *testing.T) {
 		descriptor: ProviderDescriptor{ID: "codex-app-server", Type: ProviderTypeCodexAppServer, Enabled: true},
 		turnErrors: []error{&Error{Code: CodeProviderFailure, Err: errors.New("provider down")}},
 	}
-	_, result, err := ExecuteLinguisticStage(context.Background(), provider, executorBinding(t), chunk)
+	_, result, err := ExecuteLinguisticStage(context.Background(), provider, executorBinding(t), chunk, DefaultStagePrompts(pipeline.StageLinguisticAnalysis))
 	var stageErr *StageError
 	if !errors.As(err, &stageErr) || stageErr.Phase != "provider" || stageErr.Code != CodeProviderFailure {
 		t.Fatalf("provider error = %v", err)

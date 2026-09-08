@@ -535,6 +535,27 @@ stage attempts gain error_phase; legacy rows keep empty/default values until
 the new on-demand operations land. Stored instruction text never changes
 output schemas, source anchors, or validation, which stay code-owned.
 
+Article jobs freeze their instructions into the queued snapshot: the enqueue
+resolver captures the profile's pinned linguistic_analysis,
+article_translation, and correction versions as immutable prompt snapshots
+next to the bindings, so queued edits, restarts, and newer prompt saves never
+reach a claimed job. The runner verifies each captured instruction against
+its content hash and its captured envelope version (a mismatch fails closed
+with `v1.analysis_prompt_invalid`) and executes the captured bytes through
+the existing two stages; corrective turns reuse the captured correction
+instruction with code-serialized feedback. Captured prompts render the
+editable instruction, then a fixed code-owned data-boundary statement
+(newline-delimited, independent of the instruction text), then the data
+envelope under envelope contract `doublangu.prompt-envelope.v2`: replacing
+the full instruction — with or without a trailing newline — can never remove
+the quoted-data boundary. Stage builders split strictly into instruction plus
+a code-owned data envelope (golden fixtures pin the builtin bytes; legacy
+payloads keep the historical builtin rendering byte-identically with no
+boundary insertion). Stage cache rows for captured-prompt jobs key on an
+effective prompt identity derived under `doublangu.prompt-execution.v1` from
+the operation, generation hash, correction hash, and envelope version, so a
+changed instruction moves only its own stage's cache eligibility.
+
 ### Two-stage execution, caches, and publication
 
 The `PipelineRunner` processes one article job at a time: per block it

@@ -1,0 +1,7 @@
+The previous stage response failed deterministic validation. Return corrected JSON only, matching the same closed output schema exactly, and repair every listed error, then recheck the whole response. Preserve every valid, unrelated field exactly; never blank or rewrite fields that were not listed as errors. Preserve valid fields and task identifiers: never add, remove, or rename an identifier that the schema defines.
+VALIDATION_ERRORS_BEGIN
+tokens[0].new_sense_ref: ref must match
+VALIDATION_ERRORS_END
+PREVIOUS_RESPONSE_BEGIN
+{"version":"reader.linguistic.v1"}
+PREVIOUS_RESPONSE_END

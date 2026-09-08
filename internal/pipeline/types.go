@@ -95,15 +95,34 @@ type PromptSnapshot struct {
 	EnvelopeVersion string `json:"envelope_version"`
 }
 
-// PromptEnvelopeVersion is the fixed version of the code-owned prompt data
-// envelope (quoted *_BEGIN/*_END data sections, schema, and validation). A
-// captured prompt snapshot is only meaningful together with this envelope
-// identity.
+// PromptEnvelopeVersion is the fixed version of the builtin legacy prompt
+// rendering contract (instruction directly followed by the data envelope).
 const PromptEnvelopeVersion = "doublangu.prompt-envelope.v1"
+
+// PromptCapturedEnvelopeVersion is the version of the captured-prompt
+// rendering contract: the editable instruction, the fixed code-owned
+// data-boundary statement, then the data envelope. Enqueue capture stamps
+// this version on every snapshot; the runner rejects captured snapshots with
+// any other version instead of silently rendering different semantics.
+const PromptCapturedEnvelopeVersion = "doublangu.prompt-envelope.v2"
 
 // PromptExecutionDomain is the hash domain for effective prompt identities
 // derived from captured generation and correction prompt content.
 const PromptExecutionDomain = "doublangu.prompt-execution.v1"
+
+// EffectivePromptVersion derives the deterministic execution identity of one
+// captured prompt set under doublangu.prompt-execution.v1: the operation the
+// prompts serve, the generation content hash, the correction content hash,
+// and the fixed envelope version. Stage cache keys for jobs that run captured
+// prompts store this identity instead of the legacy builtin constants, so a
+// changed generation or correction instruction changes exactly the cache
+// eligibility of the stage it belongs to. Human-readable prompt version ids
+// stay recorded on the captured snapshots, never folded into this hash.
+func EffectivePromptVersion(operation, generationContentHash, correctionContentHash, envelopeVersion string) string {
+	return hashParts(PromptExecutionDomain,
+		[]byte(operation), []byte(generationContentHash),
+		[]byte(correctionContentHash), []byte(envelopeVersion))
+}
 
 // Validate checks one captured prompt snapshot's required identity fields.
 func (s PromptSnapshot) Validate() error {

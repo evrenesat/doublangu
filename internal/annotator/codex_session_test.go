@@ -74,7 +74,7 @@ func TestCodexStageExecutorEndToEnd(t *testing.T) {
 		descriptor: ProviderDescriptor{ID: "codex-app-server", Type: ProviderTypeCodexAppServer, Enabled: true},
 		binary:     "true", timeout: 10 * time.Second,
 	}
-	validated, result, err := ExecuteLinguisticStage(context.Background(), provider, executorBinding(t), chunk)
+	validated, result, err := ExecuteLinguisticStage(context.Background(), provider, executorBinding(t), chunk, DefaultStagePrompts(pipeline.StageLinguisticAnalysis))
 	if err != nil {
 		t.Fatalf("executor: %v", err)
 	}

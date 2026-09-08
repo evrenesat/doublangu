@@ -15,6 +15,7 @@ import (
 	"doublangu/internal/jobs"
 	"doublangu/internal/library"
 	"doublangu/internal/pipeline"
+	"doublangu/internal/prompts"
 	"doublangu/internal/reader"
 	"doublangu/internal/semantics"
 	"doublangu/internal/speech"
@@ -151,6 +152,20 @@ func (r *PipelineRunner) process(ctx context.Context, lease *jobs.Lease) error {
 		return r.preflightFail(ctx, lease, id, "v1.analysis_invalid_job")
 	}
 
+	// Resolve the exact stage instructions before any article state changes.
+	// Payloads without captured snapshots run the preserved builtin defaults
+	// for their recognized legacy contract versions; snapshot-carrying
+	// payloads must carry exactly the three article prompt types with bytes
+	// that verify against their captured content hashes.
+	linguisticStagePrompts, linguisticGenHash, linguisticCorrHash, err := resolveStagePrompts(payload, pipeline.StageLinguisticAnalysis)
+	if err != nil {
+		return r.preflightFail(ctx, lease, id, "v1.analysis_prompt_invalid")
+	}
+	translationStagePrompts, translationGenHash, translationCorrHash, err := resolveStagePrompts(payload, pipeline.StageTranslation)
+	if err != nil {
+		return r.preflightFail(ctx, lease, id, "v1.analysis_prompt_invalid")
+	}
+
 	if err := r.reader.MarkAnalysisProcessing(ctx, id, lease.ID); err != nil {
 		return r.failJob(ctx, lease, "v1.analysis_processing_conflict")
 	}
@@ -249,12 +264,19 @@ func (r *PipelineRunner) process(ctx context.Context, lease *jobs.Lease) error {
 			ConfigFingerprint: linguisticBinding.ProviderConfigFingerprint,
 			ModelID:           linguisticBinding.ModelID, OptionsHash: linguisticBinding.OptionsHash,
 		}
+		// Captured prompts execute under their effective identity; legacy
+		// payloads keep the builtin prompt version constant.
+		if linguisticGenHash != "" {
+			linguisticSpec.PromptVersion = pipeline.EffectivePromptVersion(
+				string(pipeline.StageLinguisticAnalysis), linguisticGenHash, linguisticCorrHash, pipeline.PromptCapturedEnvelopeVersion)
+		}
 		attempt, _, err := r.startAttempt(ctx, run.ID.String(), blockIndex, linguisticBinding, linguisticSpec)
 		if err != nil {
 			return failRun("v1.analysis_history_failed", err, blockIndex, "", "")
 		}
 		linguistic, artifactHash, outcome, stageErr := r.runLinguistic(runCtx, lease, chunk, linguisticBinding,
-			providerByStage[pipeline.StageLinguisticAnalysis], linguisticSpec, payload.Fresh, run.ID.String())
+			providerByStage[pipeline.StageLinguisticAnalysis], linguisticSpec, payload.Fresh, run.ID.String(),
+			linguisticStagePrompts)
 		if stageErr != nil {
 			// The heartbeat may have canceled the run while the provider call
 			// was blocked; never write turns or failure state for a run whose
@@ -286,12 +308,17 @@ func (r *PipelineRunner) process(ctx context.Context, lease *jobs.Lease) error {
 			ConfigFingerprint: translationBinding.ProviderConfigFingerprint,
 			ModelID:           translationBinding.ModelID, OptionsHash: translationBinding.OptionsHash,
 		}
+		if translationGenHash != "" {
+			translationSpec.PromptVersion = pipeline.EffectivePromptVersion(
+				string(pipeline.StageTranslation), translationGenHash, translationCorrHash, pipeline.PromptCapturedEnvelopeVersion)
+		}
 		attempt, _, err = r.startAttempt(ctx, run.ID.String(), blockIndex, translationBinding, translationSpec)
 		if err != nil {
 			return failRun("v1.analysis_history_failed", err, blockIndex, "", "")
 		}
 		output, outcome, stageErr := r.runTranslation(runCtx, lease, chunk, linguistic, translationBinding,
-			providerByStage[pipeline.StageTranslation], translationSpec, payload.Fresh, run.ID.String())
+			providerByStage[pipeline.StageTranslation], translationSpec, payload.Fresh, run.ID.String(),
+			translationStagePrompts)
 		if stageErr != nil {
 			if err := checkOwnership(); err != nil {
 				return leaseLostPath(err, blockIndex)
@@ -530,7 +557,8 @@ type stageOutcome struct {
 // validated artifact. Lease ownership is re-verified around provider calls and
 // before the cache write; a canceled runCtx aborts the provider session.
 func (r *PipelineRunner) runLinguistic(ctx context.Context, lease *jobs.Lease, chunk semantics.PreparedChunk,
-	binding pipeline.BindingSnapshot, provider annotator.Provider, spec StageCacheSpec, fresh bool, runID string) (*semantics.ValidatedLinguistic, string, stageOutcome, error) {
+	binding pipeline.BindingSnapshot, provider annotator.Provider, spec StageCacheSpec, fresh bool, runID string,
+	stagePrompts annotator.StagePrompts) (*semantics.ValidatedLinguistic, string, stageOutcome, error) {
 	outcome := stageOutcome{disposition: "miss"}
 	if !fresh {
 		if hit, err := r.history.ReadStageCache(ctx, spec); err == nil && hit != nil {
@@ -558,7 +586,7 @@ func (r *PipelineRunner) runLinguistic(ctx context.Context, lease *jobs.Lease, c
 	if err != nil {
 		return nil, "", outcome, err
 	}
-	validated, result, err := annotator.ExecuteLinguisticStage(ctx, provider, resolved, chunk)
+	validated, result, err := annotator.ExecuteLinguisticStage(ctx, provider, resolved, chunk, stagePrompts)
 	outcome.result = result
 	if err != nil {
 		// Turn records accumulated before the failure (provider errors and
@@ -604,7 +632,8 @@ func rawLinguisticArtifact(validated *semantics.ValidatedLinguistic) semantics.L
 // hash in the cache identity.
 func (r *PipelineRunner) runTranslation(ctx context.Context, lease *jobs.Lease, chunk semantics.PreparedChunk,
 	linguistic *semantics.ValidatedLinguistic, binding pipeline.BindingSnapshot, provider annotator.Provider,
-	spec StageCacheSpec, fresh bool, runID string) (*annotator.TranslationStageOutput, stageOutcome, error) {
+	spec StageCacheSpec, fresh bool, runID string,
+	stagePrompts annotator.StagePrompts) (*annotator.TranslationStageOutput, stageOutcome, error) {
 	outcome := stageOutcome{disposition: "miss"}
 	if !fresh {
 		if hit, err := r.history.ReadStageCache(ctx, spec); err == nil && hit != nil {
@@ -634,7 +663,7 @@ func (r *PipelineRunner) runTranslation(ctx context.Context, lease *jobs.Lease, 
 	if err != nil {
 		return nil, outcome, err
 	}
-	output, result, err := annotator.ExecuteTranslationStage(ctx, provider, resolved, chunk, linguistic)
+	output, result, err := annotator.ExecuteTranslationStage(ctx, provider, resolved, chunk, linguistic, stagePrompts)
 	outcome.result = result
 	if err != nil {
 		// Turn records accumulated before the failure are returned with the
@@ -770,4 +799,55 @@ func stageErrorArticleCode(err error) string {
 		return "v1.analysis_provider_unavailable"
 	}
 	return "v1.analysis_stage_failed"
+}
+
+// articlePromptSnapshotTypes are the only prompt types an article job payload
+// may capture. Explore and sentence settings never ride on article payloads,
+// so they can never invalidate an article stage cache.
+var articlePromptSnapshotTypes = []prompts.PromptType{
+	prompts.TypeLinguisticAnalysis, prompts.TypeArticleTranslation, prompts.TypeCorrection,
+}
+
+// resolveStagePrompts returns the exact instructions one stage must run plus
+// the generation and correction content hashes that feed the effective cache
+// identity. A payload without captured snapshots resolves to the preserved
+// builtin defaults for its recognized legacy contract versions (empty hashes;
+// the cache keeps the legacy prompt constant). A snapshot-carrying payload
+// must carry exactly the three article prompt types, and every captured
+// instruction must verify against its content hash: a mismatch fails closed
+// instead of running text nobody hashed.
+func resolveStagePrompts(payload pipeline.JobPayload, stage pipeline.StageID) (annotator.StagePrompts, string, string, error) {
+	if len(payload.Profile.PromptSnapshots) == 0 {
+		return annotator.DefaultStagePrompts(stage), "", "", nil
+	}
+	byType := make(map[prompts.PromptType]pipeline.PromptSnapshot, len(payload.Profile.PromptSnapshots))
+	for index, snapshot := range payload.Profile.PromptSnapshots {
+		promptType := prompts.PromptType(snapshot.Type)
+		if promptType != prompts.TypeLinguisticAnalysis && promptType != prompts.TypeArticleTranslation && promptType != prompts.TypeCorrection {
+			return annotator.StagePrompts{}, "", "", fmt.Errorf("prompt_snapshots[%d] carries unsupported article prompt type %q", index, snapshot.Type)
+		}
+		if snapshot.EnvelopeVersion != pipeline.PromptCapturedEnvelopeVersion {
+			return annotator.StagePrompts{}, "", "", fmt.Errorf("prompt_snapshots[%d] (%s) has unsupported envelope version %q", index, snapshot.Type, snapshot.EnvelopeVersion)
+		}
+		if _, duplicated := byType[promptType]; duplicated {
+			return annotator.StagePrompts{}, "", "", fmt.Errorf("prompt_snapshots carries %q twice", snapshot.Type)
+		}
+		if prompts.ContentHashOf(snapshot.InstructionText) != snapshot.ContentHash {
+			return annotator.StagePrompts{}, "", "", fmt.Errorf("prompt_snapshots[%d] (%s) instruction bytes do not match the captured content hash", index, snapshot.Type)
+		}
+		byType[promptType] = snapshot
+	}
+	for _, required := range articlePromptSnapshotTypes {
+		if _, ok := byType[required]; !ok {
+			return annotator.StagePrompts{}, "", "", fmt.Errorf("article payload is missing its %s prompt snapshot", required)
+		}
+	}
+	generationType := prompts.TypeLinguisticAnalysis
+	if stage == pipeline.StageTranslation {
+		generationType = prompts.TypeArticleTranslation
+	}
+	generation := byType[generationType]
+	correction := byType[prompts.TypeCorrection]
+	return annotator.CapturedStagePrompts(generation.InstructionText, correction.InstructionText),
+		generation.ContentHash, correction.ContentHash, nil
 }

@@ -325,7 +325,7 @@ func TestOMLXTransportThroughLinguisticExecutor(t *testing.T) {
 	}))
 	defer server.Close()
 	provider := omlxProvider(server.URL, 5*time.Second)
-	validated, result, err := ExecuteLinguisticStage(context.Background(), provider, omlxBinding(t), chunk)
+	validated, result, err := ExecuteLinguisticStage(context.Background(), provider, omlxBinding(t), chunk, DefaultStagePrompts(pipeline.StageLinguisticAnalysis))
 	if err != nil {
 		t.Fatalf("omlx executor: %v", err)
 	}

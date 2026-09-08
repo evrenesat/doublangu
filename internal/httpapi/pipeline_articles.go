@@ -27,7 +27,16 @@ func (h *ArticleHandler) resolvePipelineSnapshot(ctx context.Context) (*pipeline
 	if err != nil {
 		return nil, err
 	}
-	return &pipeline.ProfileSnapshot{ID: profile.ID, Name: profile.Name, Bindings: bindings}, nil
+	snapshot := &pipeline.ProfileSnapshot{ID: profile.ID, Name: profile.Name, Bindings: bindings}
+	// Capture the profile's exact prompt versions before enqueueing: the job
+	// freezes its instructions together with its bindings, and later prompt
+	// saves or settings edits never reach a queued or running snapshot.
+	promptSnapshots, err := h.profiles.ArticlePromptSnapshots(ctx, profile.ID)
+	if err != nil {
+		return nil, err
+	}
+	snapshot.PromptSnapshots = promptSnapshots
+	return snapshot, nil
 }
 
 // enrichBindings fills provider type/fingerprint and stage contract/prompt
@@ -72,7 +81,15 @@ func (h *ArticleHandler) queuePipelineAnalysis(w http.ResponseWriter, r *http.Re
 				WriteError(w, http.StatusServiceUnavailable, "profile is not usable", ErrCodeAnalysisUnavailable)
 				return
 			}
-			snapshot = &pipeline.ProfileSnapshot{ID: profile.ID, Name: profile.Name, Bindings: bindings}
+			// Named-profile fresh runs freeze the selected profile's exact
+			// prompt versions just like active-profile runs: capture before
+			// enqueueing, and never queue a snapshot without them.
+			promptSnapshots, err := h.profiles.ArticlePromptSnapshots(r.Context(), profile.ID)
+			if err != nil {
+				WriteError(w, http.StatusServiceUnavailable, "profile prompt selections are unavailable", ErrCodeAnalysisUnavailable)
+				return
+			}
+			snapshot = &pipeline.ProfileSnapshot{ID: profile.ID, Name: profile.Name, Bindings: bindings, PromptSnapshots: promptSnapshots}
 		} else {
 			snapshot, err = h.resolvePipelineSnapshot(r.Context())
 			if err != nil || snapshot == nil {

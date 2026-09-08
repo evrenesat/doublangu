@@ -290,3 +290,25 @@ func mustEncodePayload(t *testing.T, profile ProfileSnapshot) []byte {
 	}
 	return encoded
 }
+
+func TestEffectivePromptVersionIsDeterministicAndSensitive(t *testing.T) {
+	linguistic := EffectivePromptVersion("linguistic_analysis", "gen-hash", "corr-hash", PromptEnvelopeVersion)
+	linguisticAgain := EffectivePromptVersion("linguistic_analysis", "gen-hash", "corr-hash", PromptEnvelopeVersion)
+	if linguistic == "" || linguistic != linguisticAgain {
+		t.Fatalf("effective prompt version not deterministic: %q", linguistic)
+	}
+	if linguistic == LinguisticPromptVersion || linguistic == TranslationPromptVersion {
+		t.Fatal("effective identity collided with a legacy builtin constant")
+	}
+	variants := map[string]string{
+		"operation":  EffectivePromptVersion("article_translation", "gen-hash", "corr-hash", PromptEnvelopeVersion),
+		"generation": EffectivePromptVersion("linguistic_analysis", "gen-hash-2", "corr-hash", PromptEnvelopeVersion),
+		"correction": EffectivePromptVersion("linguistic_analysis", "gen-hash", "corr-hash-2", PromptEnvelopeVersion),
+		"envelope":   EffectivePromptVersion("linguistic_analysis", "gen-hash", "corr-hash", "doublangu.prompt-envelope.v2"),
+	}
+	for name, variant := range variants {
+		if variant == linguistic {
+			t.Fatalf("%s change did not move the effective prompt identity", name)
+		}
+	}
+}

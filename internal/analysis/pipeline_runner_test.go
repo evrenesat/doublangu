@@ -33,6 +33,9 @@ type fakeStageProvider struct {
 	// turnDelay sleeps before every successful completion so tests can
 	// observe nonzero attempt durations deterministically.
 	turnDelay time.Duration
+	// prompts records every turn prompt in arrival order for instruction
+	// retention assertions.
+	prompts []string
 }
 
 func newFakeStageProvider(id, providerType string, blockOnCall int) *fakeStageProvider {
@@ -63,6 +66,13 @@ func (p *fakeStageProvider) TurnCount() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.turns
+}
+
+// Prompts returns every turn prompt the provider received, in order.
+func (p *fakeStageProvider) Prompts() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.prompts...)
 }
 
 type fakeStageSession struct {
@@ -140,6 +150,7 @@ func (s *fakeStageSession) Turn(_ context.Context, request annotator.TurnRequest
 	s.provider.mu.Lock()
 	index := s.provider.turns
 	s.provider.turns++
+	s.provider.prompts = append(s.provider.prompts, request.Prompt)
 	blocked := s.provider.blocked && index == s.provider.blockOnCall
 	s.provider.mu.Unlock()
 	if blocked {

@@ -12,8 +12,10 @@ import (
 	"doublangu/internal/annotator"
 	"doublangu/internal/config"
 	"doublangu/internal/httpapi"
+	"doublangu/internal/jobs"
 	"doublangu/internal/library"
 	"doublangu/internal/pipeline"
+	"doublangu/internal/prompts"
 	"doublangu/internal/reader"
 	"doublangu/internal/store"
 )
@@ -151,6 +153,21 @@ func TestPipelineArticleReanalyzeProfileRules(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Distinct prompt selections: the override profile pins custom versions
+	// while the active profile keeps the seeded defaults.
+	promptStore := prompts.NewStore(env.db)
+	overrideSelections := make(map[prompts.PromptType]prompts.Version, 3)
+	for _, promptType := range []prompts.PromptType{prompts.TypeLinguisticAnalysis, prompts.TypeArticleTranslation, prompts.TypeCorrection} {
+		version, err := promptStore.Save(context.Background(), promptType, "Override "+string(promptType)+" instruction v2.", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := env.db.Exec(context.Background(), `UPDATE profile_prompt_selection SET prompt_version_id = ? WHERE profile_id = ? AND prompt_type = ?`,
+			version.ID, override.ID, string(promptType)); err != nil {
+			t.Fatal(err)
+		}
+		overrideSelections[promptType] = *version
+	}
 	id := createArticleViaHandler(t, env)
 	ctx := context.Background()
 	articleStore := reader.NewStore(env.db)
@@ -195,6 +212,77 @@ func TestPipelineArticleReanalyzeProfileRules(t *testing.T) {
 	}
 	if after.AnalysisStatus != reader.AnalysisQueued && after.AnalysisStatus != reader.AnalysisProcessing {
 		t.Fatalf("status = %q", after.AnalysisStatus)
+	}
+
+	// The named-profile fresh job froze exactly the override profile's three
+	// prompt snapshots: ids, instruction bytes, content hashes, and the
+	// captured envelope version.
+	overrideJobID := after.AnalysisJobID
+	if overrideJobID == "" {
+		t.Fatal("fresh override enqueued no job")
+	}
+	var payloadJSON string
+	if err := env.db.QueryRow(ctx, `SELECT payload_json FROM job WHERE id = ?`, overrideJobID).Scan(&payloadJSON); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := pipeline.DecodeJobPayload([]byte(payloadJSON))
+	if err != nil {
+		t.Fatalf("queued payload decode: %v", err)
+	}
+	if payload.Profile.ID != override.ID || len(payload.Profile.PromptSnapshots) != 3 {
+		t.Fatalf("queued payload profile = %s with %d prompt snapshots", payload.Profile.ID, len(payload.Profile.PromptSnapshots))
+	}
+	seenTypes := make(map[prompts.PromptType]bool, 3)
+	for _, snapshot := range payload.Profile.PromptSnapshots {
+		promptType := prompts.PromptType(snapshot.Type)
+		version, ok := overrideSelections[promptType]
+		if !ok {
+			t.Fatalf("queued payload carries unexpected prompt type %q", snapshot.Type)
+		}
+		seenTypes[promptType] = true
+		if snapshot.ID != version.ID || snapshot.InstructionText != version.InstructionText ||
+			snapshot.ContentHash != version.ContentHash || snapshot.EnvelopeVersion != pipeline.PromptCapturedEnvelopeVersion {
+			t.Fatalf("queued %s snapshot = %+v, want the pinned override version", promptType, snapshot)
+		}
+	}
+	if len(seenTypes) != 3 {
+		t.Fatalf("queued payload prompt types = %v", seenTypes)
+	}
+
+	// Changing the override selections after enqueue cannot change the
+	// already-queued payload.
+	changed, err := promptStore.Save(context.Background(), prompts.TypeArticleTranslation, "Override translation instruction v3.", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.db.Exec(ctx, `UPDATE profile_prompt_selection SET prompt_version_id = ? WHERE profile_id = ? AND prompt_type = ?`,
+		changed.ID, override.ID, string(prompts.TypeArticleTranslation)); err != nil {
+		t.Fatal(err)
+	}
+	var payloadAfterChange string
+	if err := env.db.QueryRow(ctx, `SELECT payload_json FROM job WHERE id = ?`, overrideJobID).Scan(&payloadAfterChange); err != nil {
+		t.Fatal(err)
+	}
+	if payloadAfterChange != payloadJSON {
+		t.Fatal("post-enqueue selection change mutated the queued payload")
+	}
+
+	// A profile without the required prompt selections cannot enqueue at all.
+	bare, err := env.profiles.Create(context.Background(), "Bare", pipelineProfileBindings(t, "codex-app-server"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.db.Exec(ctx, `DELETE FROM profile_prompt_selection WHERE profile_id = ?`, bare.ID); err != nil {
+		t.Fatal(err)
+	}
+	jobsBefore := countArticleJobs(t, env.db, id)
+	rec = httptest.NewRecorder()
+	env.h.ServeReanalyze(rec, authedRequest(http.MethodPost, "/api/v1/articles/"+id+"/reanalyze", `{"fresh":true,"profile_id":"`+bare.ID+`"}`, "id", id))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("fresh override without selections = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if countArticleJobs(t, env.db, id) != jobsBefore {
+		t.Fatal("rejected fresh run enqueued a job")
 	}
 
 	// fresh with no profile uses the active profile.
@@ -282,4 +370,14 @@ func mustParseULID(t *testing.T, value string) library.ULID {
 		t.Fatal(err)
 	}
 	return id
+}
+
+func countArticleJobs(t *testing.T, db *store.DB, articleID string) int {
+	t.Helper()
+	var count int
+	if err := db.QueryRow(context.Background(), `SELECT COUNT(*) FROM job WHERE owner_type = 'article' AND owner_id = ? AND job_type = ?`,
+		articleID, jobs.AnalysisJobType).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	return count
 }

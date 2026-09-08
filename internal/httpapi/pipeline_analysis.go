@@ -820,15 +820,17 @@ func runProviderFixture(ctx context.Context, provider annotator.Provider, input 
 	if err != nil {
 		return err
 	}
-	if pipeline.StageID(input.StageID) == pipeline.StageLinguisticAnalysis {
-		_, _, err := annotator.ExecuteLinguisticStage(ctx, provider, resolved, chunk)
+	// The conformance fixture runs the builtin default instructions.
+	stage := pipeline.StageID(input.StageID)
+	if stage == pipeline.StageLinguisticAnalysis {
+		_, _, err := annotator.ExecuteLinguisticStage(ctx, provider, resolved, chunk, annotator.DefaultStagePrompts(stage))
 		return err
 	}
 	linguistic, err := fixtureLinguistic(chunk)
 	if err != nil {
 		return err
 	}
-	_, _, err = annotator.ExecuteTranslationStage(ctx, provider, resolved, chunk, linguistic)
+	_, _, err = annotator.ExecuteTranslationStage(ctx, provider, resolved, chunk, linguistic, annotator.DefaultStagePrompts(stage))
 	return err
 }
 
