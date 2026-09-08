@@ -11,11 +11,15 @@
 		savePipelineAnalysisSettings,
 		testAnalysisProvider,
 		updateAnalysisProfile,
+		listPromptVersions,
 		type AnalysisProfile,
-		type AnalysisProvider
+		type AnalysisProvider,
+		type AnalysisPromptType,
+		type AnalysisPromptVersion
 	} from '$lib/api/client';
 	import ProfileEditor from '$lib/settings/ProfileEditor.svelte';
 	import {
+		PROMPT_TYPES,
 		STAGES,
 		STAGE_LABELS,
 		blankProfileDraft,
@@ -28,6 +32,7 @@
 		stageOptionsError,
 		defaultStageOptions,
 		modelChoices,
+		initializeExploreFromTranslation,
 		profileDraftComplete,
 		profileNameError,
 		profileRequestFromDraft,
@@ -38,6 +43,8 @@
 		stageLabel,
 		supportedEfforts,
 		usesNumericStageOptions,
+		profileDraftFromProfile,
+		promptSelectionsComplete,
 		testFormKey,
 		testTupleFingerprint,
 		type ProfileDraft,
@@ -60,6 +67,32 @@
 	let panelError = $state('');
 	let activationBusy = $state('');
 
+	// Saved prompt versions per type, fetched once for the editor's selectors.
+	// A load failure disables the selectors with a notice; it never blocks
+	// viewing profiles.
+	let promptLibraries = $state<Record<string, AnalysisPromptVersion[]>>({});
+	let promptLibrariesError = $state('');
+
+	interface Props {
+		registerPromptVersionMerge?: (merge: (promptType: AnalysisPromptType, version: AnalysisPromptVersion) => void) => void;
+	}
+	let { registerPromptVersionMerge }: Props = $props();
+
+	/**
+	 * Merges a just-saved immutable version into the selector catalog by
+	 * prompt type and id. It only extends the available versions: open
+	 * drafts, their dirty state, and pinned selections are never replaced.
+	 */
+	function mergePromptVersion(promptType: AnalysisPromptType, version: AnalysisPromptVersion): void {
+		const existing = promptLibraries[promptType] ?? [];
+		if (existing.some((candidate) => candidate.id === version.id)) return;
+		promptLibraries = { ...promptLibraries, [promptType]: [version, ...existing] };
+	}
+
+	$effect(() => {
+		registerPromptVersionMerge?.(mergePromptVersion);
+	});
+
 	// The editor renders inline: once opened, the panel remembers which trigger
 	// opened it so closing restores focus, and which draft it started from so a
 	// switch away from unsaved edits can ask before discarding.
@@ -76,7 +109,28 @@
 	let refreshingProvider = $state('');
 	let refreshErrors = $state<Record<string, string>>({});
 
-	onMount(() => void loadAll());
+	onMount(() => {
+		void loadAll();
+		void loadPromptLibraries();
+	});
+
+	/** Fetch every fixed prompt type's saved versions for the selectors. */
+	async function loadPromptLibraries(): Promise<void> {
+		promptLibrariesError = '';
+		const next: Record<string, AnalysisPromptVersion[]> = {};
+		try {
+			await Promise.all(
+				PROMPT_TYPES.map(async (promptType) => {
+					const response = await listPromptVersions(promptType);
+					next[promptType] = response.versions;
+				})
+			);
+		} catch (cause) {
+			promptLibrariesError = errorMessage(cause, 'Could not load saved prompt versions.');
+			return;
+		}
+		promptLibraries = next;
+	}
 
 	const providersByID = $derived(new Map(providers.map((provider) => [provider.id, provider])));
 	const enabledProviders = $derived(providers.filter((provider) => provider.enabled));
@@ -97,9 +151,18 @@
 	);
 	const nameBlocked = $derived(profileNameError(draft.name));
 	const canSave = $derived(profileDraftComplete(draft) && !saving && !draftBlocked && !optionsBlocked && !nameBlocked);
+	// The independent Explore binding and the five prompt selections block
+	// saving just like the stage bindings do.
+	const exploreBlocked = $derived(
+		draft.explore.provider_id === '' || draft.explore.model_id === '' ? 'Explore needs a provider and a model.' : ''
+	);
+	const selectionsBlocked = $derived(promptSelectionsComplete(draft) ? '' : 'Pin a saved version for each of the five prompt types.');
 	// Single explanation for a draft that cannot be saved yet, in the same
 	// precedence the inline editor status always used.
-	const draftBlockedText = $derived(nameBlocked || draftBlocked || optionsBlocked || 'Both stages need a provider and a model before saving.');
+	const draftBlockedText = $derived(
+		nameBlocked || draftBlocked || optionsBlocked || exploreBlocked || selectionsBlocked ||
+		'Both stages and Explore need a provider and a model, and every prompt needs a pinned version, before saving.'
+	);
 
 	function errorMessage(cause: unknown, fallback: string): string {
 		if (cause instanceof DoublanguAPIError) return cause.message;
@@ -158,21 +221,7 @@
 
 	function startEditing(target: EditorTarget, trigger: HTMLElement | null): void {
 		if (target.kind === 'existing') {
-			const profile = target.profile;
-			draft = blankProfileDraft();
-			draft.name = profile.name;
-			for (const binding of profile.bindings) {
-				if (!STAGES.includes(binding.stage_id as StageID)) continue;
-				const stage = binding.stage_id as StageID;
-				const provider = providersByID.get(binding.provider_id);
-				draft.stages[stage] = {
-					stage_id: stage,
-					provider_id: binding.provider_id,
-					provider_type: provider?.type ?? '',
-					model_id: binding.model_id,
-					options: { ...binding.options }
-				};
-			}
+			draft = profileDraftFromProfile(target.profile, providersByID);
 		} else {
 			draft = blankProfileDraft();
 		}
@@ -229,6 +278,11 @@
 			// '' (no advertised efforts) blocks Save with an explanation.
 			stageDraft.options.reasoning_effort = firstAdvertisedEffort(provider, stageDraft.model_id);
 		}
+		if (stage === 'translation') {
+			// A completed translation binding seeds the untouched Explore
+			// binding exactly once.
+			initializeExploreFromTranslation(draft);
+		}
 	}
 
 	function chooseBindingModel(stage: StageID, modelId: string): void {
@@ -239,6 +293,44 @@
 			const current = String(stageDraft.options.reasoning_effort ?? '');
 			if (!supportedEfforts(provider, modelId).includes(current)) {
 				stageDraft.options.reasoning_effort = firstAdvertisedEffort(provider, modelId);
+			}
+		}
+		if (stage === 'translation') {
+			initializeExploreFromTranslation(draft);
+		}
+	}
+
+	/** Translation option edits also complete the translation binding. */
+	function onStageOptionsChanged(stage: StageID): void {
+		if (stage === 'translation') {
+			initializeExploreFromTranslation(draft);
+		}
+	}
+
+	// The Explore binding reuses the stage binding controls and semantics but
+	// edits its own draft entry: after the first save, changing it never
+	// touches the translation binding again.
+	function assignExploreProvider(providerId: string): void {
+		draft.exploreTouched = true;
+		const provider = providersByID.get(providerId);
+		draft.explore.provider_id = providerId;
+		draft.explore.provider_type = provider?.type ?? draft.explore.provider_type;
+		draft.explore.options = defaultStageOptions(provider?.type ?? draft.explore.provider_type);
+		const choices = provider ? modelChoices(provider) : [];
+		draft.explore.model_id = choices[0] ?? draft.explore.model_id;
+		if (!usesNumericStageOptions(draft.explore.provider_type)) {
+			draft.explore.options.reasoning_effort = firstAdvertisedEffort(provider, draft.explore.model_id);
+		}
+	}
+
+	function chooseExploreModel(modelId: string): void {
+		draft.exploreTouched = true;
+		const provider = providersByID.get(draft.explore.provider_id);
+		draft.explore.model_id = modelId;
+		if (!usesNumericStageOptions(draft.explore.provider_type)) {
+			const current = String(draft.explore.options.reasoning_effort ?? '');
+			if (!supportedEfforts(provider, modelId).includes(current)) {
+				draft.explore.options.reasoning_effort = firstAdvertisedEffort(provider, modelId);
 			}
 		}
 	}
@@ -415,7 +507,12 @@
 					confirmMessage={pendingSwitch ? 'You have unsaved changes. Discard them and switch?' : ''}
 					enabledProviders={enabledProviders}
 					{providersByID}
+					{promptLibraries}
+					{promptLibrariesError}
 					onassignprovider={assignProvider}
+					onstageoptionschange={onStageOptionsChanged}
+					onassignexploreprovider={assignExploreProvider}
+					onchooseexploremodel={chooseExploreModel}
 					onchoosemodel={chooseBindingModel}
 					onsave={() => void saveProfile()}
 					oncancel={closeEditor}
@@ -477,7 +574,12 @@
 									confirmMessage={pendingSwitch ? 'You have unsaved changes. Discard them and switch?' : ''}
 									enabledProviders={enabledProviders}
 									{providersByID}
+									{promptLibraries}
+									{promptLibrariesError}
 									onassignprovider={assignProvider}
+									onstageoptionschange={onStageOptionsChanged}
+									onassignexploreprovider={assignExploreProvider}
+									onchooseexploremodel={chooseExploreModel}
 									onchoosemodel={chooseBindingModel}
 									onsave={() => void saveProfile()}
 									oncancel={closeEditor}

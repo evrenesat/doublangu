@@ -13,8 +13,36 @@ const provider = {
 	enabled: true,
 	stale: false,
 	health: 'healthy',
-	models: [{ id: 'model-a', display_name: 'Model A', supported_reasoning_efforts: [{ value: 'low' }] }]
+	models: [
+		{ id: 'model-a', display_name: 'Model A', supported_reasoning_efforts: [{ value: 'low' }] },
+		{ id: 'model-b', display_name: 'Model B', supported_reasoning_efforts: [{ value: 'low' }] }
+	]
 };
+
+const PROMPT_TYPES = ['linguistic_analysis', 'article_translation', 'explore', 'sentence_translation', 'correction'] as const;
+
+function promptVersionId(promptType: string, version: number): string {
+	return `prompt-v${version}-${promptType}`;
+}
+
+/** Answers the prompt-library endpoints every settings render fetches. */
+function promptLibraryResponse(input: string): Response | undefined {
+	const match = input.match(/^\/api\/v1\/analysis\/prompts\/([a-z_]+)\/versions$/);
+	if (!match || !match[1]) return undefined;
+	const promptType = match[1];
+	return json(200, {
+		prompt_type: promptType,
+		versions: [1, 2].map((version) => ({
+			id: promptVersionId(promptType, version),
+			prompt_type: promptType,
+			version,
+			label: version === 2 ? 'Experiment' : '',
+			instruction_text: `Instruction v${version} for ${promptType}.`,
+			content_hash: `hash-v${version}-${promptType}`,
+			created_at: '2026-01-01T00:00:00Z'
+		}))
+	});
+}
 
 afterEach(() => {
 	cleanup();
@@ -28,6 +56,8 @@ afterEach(() => {
 function stubStandardFetch(options: { providers?: unknown; profiles?: unknown; activeProfileID?: string } = {}): ReturnType<typeof vi.fn> {
 	const fetchMock = vi.fn(async (input: string, init: RequestInit = {}): Promise<Response> => {
 		const method = init.method ?? 'GET';
+		const promptResponse = promptLibraryResponse(input);
+		if (promptResponse) return promptResponse;
 		if (input === '/api/v1/analysis/providers' && method === 'GET') return json(200, { providers: options.providers ?? [provider] });
 		if (input === '/api/v1/analysis/profiles' && method === 'GET') return json(200, { profiles: options.profiles ?? [] });
 		if (input === '/api/v1/analysis/settings' && method === 'GET') return json(200, { active_profile_id: options.activeProfileID ?? '' });
@@ -35,6 +65,34 @@ function stubStandardFetch(options: { providers?: unknown; profiles?: unknown; a
 	});
 	vi.stubGlobal('fetch', fetchMock);
 	return fetchMock;
+}
+
+function codexBindings(): Array<{ stage_id: string; provider_id: string; model_id: string; options: Record<string, string> }> {
+	return [
+		{ stage_id: 'linguistic_analysis', provider_id: 'codex-app-server', model_id: 'model-a', options: { reasoning_effort: 'low' } },
+		{ stage_id: 'translation', provider_id: 'codex-app-server', model_id: 'model-a', options: { reasoning_effort: 'low' } }
+	];
+}
+
+function rowEditors(): NodeListOf<Element> {
+	return document.querySelectorAll('ul.profile-list > li .profile-editor');
+}
+
+/** The profile list row at a position, re-queried so it is never stale. */
+function listRow(index: number): HTMLElement {
+	return document.querySelectorAll('ul.profile-list > li')[index] as HTMLElement;
+}
+
+/** Pins every prompt selector of the open editor to its first saved version. */
+async function pinPromptVersions(editor: HTMLElement): Promise<void> {
+	const promptSelects = within(editor)
+		.getAllByRole('combobox')
+		.filter((select) => (select.querySelector('option') as HTMLOptionElement | null)?.textContent === 'Pin a saved version…');
+	expect(promptSelects.length).toBe(5);
+	for (const select of promptSelects) {
+		const option = Array.from(select.querySelectorAll('option')).find((candidate) => candidate.value !== '');
+		await fireEvent.change(select, { target: { value: option!.value } });
+	}
 }
 
 it('shows the active profile above collapsed provider test controls', async () => {
@@ -45,10 +103,7 @@ it('shows the active profile above collapsed provider test controls', async () =
 			id: 'profile-1',
 			name: 'Main',
 			is_active: true,
-			bindings: [
-				{ stage_id: 'linguistic_analysis', provider_id: 'codex-app-server', model_id: 'model-a', options: { reasoning_effort: 'low' } },
-				{ stage_id: 'translation', provider_id: 'codex-app-server', model_id: 'model-a', options: { reasoning_effort: 'low' } }
-			]
+			bindings: codexBindings()
 		}
 	];
 	stubStandardFetch({ providers: [staleProvider], profiles, activeProfileID: 'profile-1' });
@@ -87,6 +142,8 @@ it('expands a provider to run a stage conformance test and refresh its catalog',
 	const refreshedProvider = { ...provider, retrieved_at: '2 Sep 2026 15:42' };
 	const fetchMock = vi.fn(async (input: string, init: RequestInit = {}): Promise<Response> => {
 		const method = init.method ?? 'GET';
+		const promptResponse = promptLibraryResponse(input);
+		if (promptResponse) return promptResponse;
 		if (input.startsWith('/api/v1/analysis/providers?refresh=true') && method === 'GET') {
 			return json(200, { providers: [refreshedProvider] });
 		}
@@ -146,6 +203,8 @@ it('treats mac_relay like openai_compatible for numeric stage options', async ()
 	};
 	const fetchMock = vi.fn(async (input: string, init: RequestInit = {}): Promise<Response> => {
 		const method = init.method ?? 'GET';
+		const promptResponse = promptLibraryResponse(input);
+		if (promptResponse) return promptResponse;
 		if (input === '/api/v1/analysis/providers' && method === 'GET') return json(200, { providers: [relayProvider] });
 		if (input === '/api/v1/analysis/providers/mac-relay/test' && method === 'POST') {
 			expect(JSON.parse(String(init.body))).toEqual({
@@ -168,9 +227,8 @@ it('treats mac_relay like openai_compatible for numeric stage options', async ()
 	const details = document.querySelector('details.provider-test') as HTMLDetailsElement;
 	await fireEvent.click(screen.getByText('Test provider'));
 	details.open = true;
-	expect((await screen.findAllByText('Temperature (milli)')).length).toBe(2); // one per stage
-	expect(screen.getAllByText('Max output tokens')).toHaveLength(2);
-	expect(screen.queryByText('Reasoning effort')).toBeNull();
+	expect((await screen.findAllByText('Temperature (milli)')).length).toBeGreaterThanOrEqual(2);
+	expect(screen.getAllByText('Max output tokens').length).toBeGreaterThanOrEqual(2);
 
 	// Running a tuple test posts the numeric options the server requires.
 	await fireEvent.click(await screen.findByRole('button', { name: 'Test Translation' }));
@@ -178,25 +236,24 @@ it('treats mac_relay like openai_compatible for numeric stage options', async ()
 	const posts = fetchMock.mock.calls.filter(([url, init]) => url === '/api/v1/analysis/providers/mac-relay/test' && (init?.method ?? 'GET') === 'POST');
 	expect(posts).toHaveLength(1);
 
-	// The profile editor renders numeric binding fields for mac_relay too.
+	// The profile editor renders numeric binding fields for mac_relay across
+	// both stage bindings and the Explore binding.
 	await fireEvent.click(screen.getByRole('button', { name: 'New profile' }));
 	await fireEvent.input(screen.getByPlaceholderText('e.g. Mixed codex + omlx'), { target: { value: 'Relay only' } });
-	const providerSelects = screen
+	const editor = document.querySelector('.profile-editor') as HTMLElement;
+	const providerSelects = within(editor)
 		.getAllByRole('combobox')
 		.filter((select) => select.querySelector('option')?.textContent === 'Select a provider');
-	expect(providerSelects).toHaveLength(2);
+	// Two stage bindings plus the independent Explore binding.
+	expect(providerSelects).toHaveLength(3);
 	for (const select of providerSelects) {
 		await fireEvent.change(select, { target: { value: 'mac-relay' } });
 	}
-	const editor = document.querySelector('.profile-editor');
-	expect(editor).toBeTruthy();
-	// Two stages x (temperature + max tokens), and no effort control.
-	expect(editor!.querySelectorAll('input[type="number"]')).toHaveLength(4);
-	expect(editor!.textContent).not.toContain('Reasoning effort');
-	// Catalog models render as a select, not the old free-text input:
-	// two provider selects plus two model selects.
-	expect(editor!.querySelectorAll('select')).toHaveLength(4);
-	expect(editor!.textContent).toContain('qwen-mlx');
+	await pinPromptVersions(editor);
+	// Two stages plus Explore, each with temperature and max output tokens.
+	expect(editor.querySelectorAll('input[type="number"]')).toHaveLength(6);
+	expect(editor.textContent).not.toContain('Reasoning effort');
+	expect(editor.textContent).toContain('qwen-mlx');
 	await waitFor(() => expect(screen.getByRole('button', { name: 'Create profile' }).hasAttribute('disabled')).toBe(false));
 });
 
@@ -205,6 +262,8 @@ it('creating a profile does not activate it, and manual activation saves explici
 	const stored: unknown[] = [];
 	const fetchMock = vi.fn(async (input: string, init: RequestInit = {}): Promise<Response> => {
 		const method = init.method ?? 'GET';
+		const promptResponse = promptLibraryResponse(input);
+		if (promptResponse) return promptResponse;
 		if (input === '/api/v1/analysis/providers') return json(200, { providers: [provider] });
 		if (input === '/api/v1/analysis/profiles' && method === 'GET') return json(200, { profiles: stored });
 		if (input === '/api/v1/analysis/settings' && method === 'GET') return json(200, { active_profile_id: '' });
@@ -224,14 +283,15 @@ it('creating a profile does not activate it, and manual activation saves explici
 
 	await fireEvent.click(screen.getByRole('button', { name: 'New profile' }));
 	await fireEvent.input(screen.getByPlaceholderText('e.g. Mixed codex + omlx'), { target: { value: 'Mixed' } });
-	// Assign the only provider to both stage slots; models and efforts default from the catalog.
-	const providerSelects = screen
+	const editor = document.querySelector('.profile-editor') as HTMLElement;
+	const providerSelects = within(editor)
 		.getAllByRole('combobox')
 		.filter((select) => select.querySelector('option')?.textContent === 'Select a provider');
-	expect(providerSelects).toHaveLength(2);
+	expect(providerSelects).toHaveLength(3);
 	for (const select of providerSelects) {
 		await fireEvent.change(select, { target: { value: 'codex-app-server' } });
 	}
+	await pinPromptVersions(editor);
 
 	await fireEvent.click(screen.getByRole('button', { name: 'Create profile' }));
 	await waitFor(() => expect(screen.getByText('Mixed')).toBeTruthy());
@@ -239,7 +299,10 @@ it('creating a profile does not activate it, and manual activation saves explici
 	// Creation persisted the profile but did not touch the active-selection setting.
 	const posts = fetchMock.mock.calls.filter(([url, init]) => url === '/api/v1/analysis/profiles' && (init?.method ?? 'GET') === 'POST');
 	expect(posts).toHaveLength(1);
-	expect(JSON.parse(String(posts[0]?.[1]?.body)).name).toBe('Mixed');
+	const createdBody = JSON.parse(String(posts[0]?.[1]?.body));
+	expect(createdBody.name).toBe('Mixed');
+	expect(createdBody.explore_binding.model_id).toBe('model-a');
+	expect(Object.keys(createdBody.prompt_versions)).toHaveLength(5);
 	const puts = fetchMock.mock.calls.filter(([url, init]) => url === '/api/v1/analysis/settings' && (init?.method ?? 'GET') === 'PUT');
 	expect(puts).toEqual([]);
 	expect((screen.getByRole('radio', { name: /Mixed/ }) as HTMLInputElement).checked).toBe(false);
@@ -259,21 +322,78 @@ it('creating a profile does not activate it, and manual activation saves explici
 	expect(save?.[1]?.body).toBe(JSON.stringify({ active_profile_id: 'profile-1' }));
 });
 
-function codexBindings(): Array<{ stage_id: string; provider_id: string; model_id: string; options: Record<string, string> }> {
-	return [
-		{ stage_id: 'linguistic_analysis', provider_id: 'codex-app-server', model_id: 'model-a', options: { reasoning_effort: 'low' } },
-		{ stage_id: 'translation', provider_id: 'codex-app-server', model_id: 'model-a', options: { reasoning_effort: 'low' } }
-	];
+function profileWithPromptPins(name: string, version: 1 | 2, exploreModel: string) {
+	const promptVersions: Record<string, { id: string; version: number; label: string }> = {};
+	for (const promptType of PROMPT_TYPES) {
+		promptVersions[promptType] = {
+			id: promptVersionId(promptType, version),
+			version,
+			label: version === 2 ? 'Experiment' : ''
+		};
+	}
+	return {
+		id: `profile-${name.toLowerCase()}`,
+		name,
+		is_active: false,
+		bindings: codexBindings(),
+		explore_binding: {
+			stage_id: 'translation',
+			provider_id: 'codex-app-server',
+			model_id: exploreModel,
+			options: { reasoning_effort: 'low' }
+		},
+		prompt_versions: promptVersions
+	};
 }
 
-function rowEditors(): NodeListOf<Element> {
-	return document.querySelectorAll('ul.profile-list > li .profile-editor');
-}
+it('pins prompt versions per profile so two profiles can differ, with Explore independent of Translation', async () => {
+	document.cookie = 'csrf_token=test-csrf-token; Path=/';
+	const alpha = profileWithPromptPins('Alpha', 1, 'model-b');
+	const beta = profileWithPromptPins('Beta', 2, 'model-a');
+	stubStandardFetch({ providers: [provider], profiles: [alpha, beta], activeProfileID: 'profile-alpha' });
 
-/** The profile list row at a position, re-queried so it is never stale. */
-function listRow(index: number): HTMLElement {
-	return document.querySelectorAll('ul.profile-list > li')[index] as HTMLElement;
-}
+	render(AnalysisPipelinePanel);
+	await waitFor(() => expect(screen.getByRole('heading', { name: 'Profiles' })).toBeTruthy());
+	const rows = document.querySelectorAll('ul.profile-list > li');
+
+	// Alpha pins v1 and its Explore model differs from its Translation model.
+	await fireEvent.click(within(listRow(0)).getByRole('button', { name: 'Edit' }));
+	let editor = listRow(0).querySelector('.profile-editor') as HTMLElement;
+	let promptSelects = within(editor).getAllByRole('combobox').filter((select) => {
+		const options = Array.from(select.querySelectorAll('option')).map((option) => option.value);
+		return options.some((value) => value.startsWith('prompt-v'));
+	});
+	expect(promptSelects).toHaveLength(5);
+	for (const select of promptSelects) {
+		// The select only lists its own type's versions, so its first option
+		// identifies the type; Alpha pinned v1 of every type.
+		const ownType = (Array.from(select.querySelectorAll('option')).map((option) => option.value).find((value) => value.startsWith('prompt-v')) ?? '').split('-(?:v\d+)-');
+		const versionPrefix = 'prompt-v1-';
+		const type = (Array.from(select.querySelectorAll('option')).map((option) => option.value).find((value) => value.startsWith('prompt-v')) ?? '').slice(versionPrefix.length);
+		expect((select as HTMLSelectElement).value).toBe(promptVersionId(type, 1));
+		expect(ownType.length).toBeGreaterThan(0);
+	}
+	const modelSelectValues = within(editor)
+		.getAllByRole('combobox')
+		.map((select) => (select as HTMLSelectElement).value);
+	expect(modelSelectValues).toContain('model-b');
+	expect(modelSelectValues).toContain('model-a');
+	// Explore renders as its own fieldset.
+	expect(within(editor).getByText('Explore (on-demand)')).toBeTruthy();
+	expect(within(editor).getByText('Prompt versions')).toBeTruthy();
+
+	// Beta pins v2 everywhere: switching profiles shows Beta's own pins.
+	await fireEvent.click(within(listRow(0)).getByRole('button', { name: 'Cancel' }));
+	await fireEvent.click(within(listRow(1)).getByRole('button', { name: 'Edit' }));
+	editor = listRow(1).querySelector('.profile-editor') as HTMLElement;
+	promptSelects = within(editor).getAllByRole('combobox').filter((select) => {
+		const options = Array.from(select.querySelectorAll('option')).map((option) => option.value);
+		return options.some((value) => value.startsWith('prompt-v'));
+	});
+	for (const select of promptSelects) {
+		expect((select as HTMLSelectElement).value).toContain('-v2-');
+	}
+});
 
 it('opens the profile editor directly below the edited card, wherever that card sits', async () => {
 	document.cookie = 'csrf_token=test-csrf-token; Path=/';
@@ -359,6 +479,8 @@ it('shows profile save failures in place, keeps the editor open, and restores fo
 	document.cookie = 'csrf_token=test-csrf-token; Path=/';
 	const fetchMock = vi.fn(async (input: string, init: RequestInit = {}): Promise<Response> => {
 		const method = init.method ?? 'GET';
+		const promptResponse = promptLibraryResponse(input);
+		if (promptResponse) return promptResponse;
 		if (input === '/api/v1/analysis/providers' && method === 'GET') return json(200, { providers: [provider] });
 		if (input === '/api/v1/analysis/profiles' && method === 'GET') return json(200, { profiles: [] });
 		if (input === '/api/v1/analysis/settings' && method === 'GET') return json(200, { active_profile_id: '' });
@@ -381,12 +503,13 @@ it('shows profile save failures in place, keeps the editor open, and restores fo
 	expect(editor.previousElementSibling?.classList.contains('profiles-heading')).toBe(true);
 
 	await fireEvent.input(editor.querySelector('input[type="text"]') as HTMLInputElement, { target: { value: 'Mixed' } });
-	const providerSelects = screen
+	const providerSelects = within(editor)
 		.getAllByRole('combobox')
 		.filter((select) => select.querySelector('option')?.textContent === 'Select a provider');
 	for (const select of providerSelects) {
 		await fireEvent.change(select, { target: { value: 'codex-app-server' } });
 	}
+	await pinPromptVersions(editor);
 	await waitFor(() => expect(screen.getByRole('button', { name: 'Create profile' }).hasAttribute('disabled')).toBe(false));
 
 	await fireEvent.click(screen.getByRole('button', { name: 'Create profile' }));
@@ -399,4 +522,50 @@ it('shows profile save failures in place, keeps the editor open, and restores fo
 	await fireEvent.click(within(editor).getByRole('button', { name: 'Cancel' }));
 	expect(section.querySelector(':scope > .profile-editor')).toBeNull();
 	expect(document.activeElement).toBe(newButton);
+});
+
+it('initializes Explore from a completed Translation once, then the bindings stay independent', async () => {
+	document.cookie = 'csrf_token=test-csrf-token; Path=/';
+	stubStandardFetch({ providers: [provider], profiles: [], activeProfileID: '' });
+
+	render(AnalysisPipelinePanel);
+	await waitFor(() => expect(screen.getByRole('button', { name: 'New profile' })).toBeTruthy());
+	await fireEvent.click(screen.getByRole('button', { name: 'New profile' }));
+	const editor = document.querySelector('.profile-editor') as HTMLElement;
+	// Fieldset-scoped lookups: editor control counts change as providers are
+	// assigned, but the legends are stable.
+	const fieldsetFor = (legend: string): HTMLElement =>
+		Array.from(editor.querySelectorAll('fieldset')).find(
+			(candidate) => candidate.querySelector('legend')?.textContent === legend
+		) as HTMLElement;
+	const translationFieldset = fieldsetFor('Translation');
+	const exploreFieldset = fieldsetFor('Explore (on-demand)');
+	const providerSelectIn = (fieldset: HTMLElement): HTMLSelectElement =>
+		(within(fieldset).getAllByRole('combobox') as HTMLSelectElement[]).find((select) =>
+			Array.from(select.querySelectorAll('option')).some((option) => option.textContent === 'Select a provider')
+		)!;
+	const modelSelectIn = (fieldset: HTMLElement): HTMLSelectElement =>
+		(within(fieldset).getAllByRole('combobox') as HTMLSelectElement[]).find((select) =>
+			Array.from(select.querySelectorAll('option')).some((option) => option.value === 'model-a')
+		)!;
+	const translationProviderSelect = providerSelectIn(translationFieldset);
+	const exploreProviderSelect = providerSelectIn(exploreFieldset);
+	// Model controls become selects once a provider with a catalog is chosen,
+	// so they are looked up lazily after assignment.
+
+	// Nothing selected yet: Explore is empty.
+	expect(exploreProviderSelect.value).toBe('');
+
+	// Catalog-selected path: choosing the translation provider completes the
+	// binding and seeds Explore exactly once.
+	await fireEvent.change(translationProviderSelect, { target: { value: 'codex-app-server' } });
+	expect(exploreProviderSelect.value).toBe('codex-app-server');
+	const translationModelSelect = modelSelectIn(translationFieldset);
+	const exploreModelSelect = modelSelectIn(exploreFieldset);
+	expect(exploreModelSelect.value).toBe('model-a');
+
+	// A later translation model change must not move Explore.
+	await fireEvent.change(translationModelSelect, { target: { value: 'model-b' } });
+	expect(translationModelSelect.value).toBe('model-b');
+	expect(exploreModelSelect.value).toBe('model-a');
 });

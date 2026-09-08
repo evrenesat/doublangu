@@ -198,6 +198,14 @@ func (s *ProfileStore) validateProfile(name string, bindings []pipeline.BindingS
 // pins the five seeded default prompt versions, so an empty installation
 // seeds on profile creation exactly like startup seeding would.
 func (s *ProfileStore) Create(ctx context.Context, name string, bindings []pipeline.BindingSnapshot) (*Profile, error) {
+	return s.CreateWithChoices(ctx, name, bindings, nil, nil)
+}
+
+// CreateWithChoices stores a new profile with explicit Explore binding and
+// prompt selections. A nil explore binding seeds the translation copy; a nil
+// selections map seeds the builtin defaults. Explicit choices are stored
+// exactly as given and must be complete.
+func (s *ProfileStore) CreateWithChoices(ctx context.Context, name string, bindings []pipeline.BindingSnapshot, explore *pipeline.BindingSnapshot, selections map[prompts.PromptType]string) (*Profile, error) {
 	if err := s.validateProfile(name, bindings); err != nil {
 		return nil, err
 	}
@@ -209,10 +217,34 @@ func (s *ProfileStore) Create(ctx context.Context, name string, bindings []pipel
 		if err := insertBindingsTx(ctx, tx, profile.ID, bindings); err != nil {
 			return err
 		}
-		if err := copyTranslationToExploreTx(ctx, tx, profile.ID, bindings); err != nil {
-			return err
+		if explore == nil {
+			if err := copyTranslationToExploreTx(ctx, tx, profile.ID, bindings); err != nil {
+				return err
+			}
+		} else {
+			options, err := json.Marshal(explore.Options)
+			if err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO analysis_profile_explore_binding (profile_id, provider_id, model_id, options_json, options_hash)
+				VALUES (?, ?, ?, ?, ?)`, profile.ID, explore.ProviderID, explore.ModelID, string(options), explore.OptionsHash); err != nil {
+				return fmt.Errorf("store explore binding for profile %s: %w", profile.ID, err)
+			}
 		}
-		return prompts.SeedProfileSelectionsTx(ctx, tx, profile.ID)
+		if selections == nil {
+			return prompts.SeedProfileSelectionsTx(ctx, tx, profile.ID)
+		}
+		for _, promptType := range prompts.Types {
+			versionID, ok := selections[promptType]
+			if !ok {
+				return fmt.Errorf("profile %s is missing its %s prompt selection", profile.ID, promptType)
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO profile_prompt_selection (profile_id, prompt_type, prompt_version_id) VALUES (?, ?, ?)`,
+				profile.ID, string(promptType), versionID); err != nil {
+				return fmt.Errorf("store %s prompt selection for profile %s: %w", promptType, profile.ID, err)
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -222,6 +254,16 @@ func (s *ProfileStore) Create(ctx context.Context, name string, bindings []pipel
 
 // Replace atomically replaces one profile's name and complete binding set.
 func (s *ProfileStore) Replace(ctx context.Context, id, name string, bindings []pipeline.BindingSnapshot) (*Profile, error) {
+	return s.ReplaceWithChoices(ctx, id, name, bindings, nil, nil)
+}
+
+// ReplaceWithChoices atomically replaces one profile's name, stage bindings,
+// Explore binding, and prompt selections. A nil explore binding or nil
+// selections map preserves the stored value (old clients omitting the
+// fields); a present value fully replaces it, and a selections map must name
+// every fixed prompt type. Everything lands in one transaction, so a partial
+// profile save is impossible.
+func (s *ProfileStore) ReplaceWithChoices(ctx context.Context, id, name string, bindings []pipeline.BindingSnapshot, explore *pipeline.BindingSnapshot, selections map[prompts.PromptType]string) (*Profile, error) {
 	if err := s.validateProfile(name, bindings); err != nil {
 		return nil, err
 	}
@@ -237,7 +279,39 @@ func (s *ProfileStore) Replace(ctx context.Context, id, name string, bindings []
 		if _, err := tx.ExecContext(ctx, `DELETE FROM analysis_pipeline_binding WHERE profile_id = ?`, id); err != nil {
 			return err
 		}
-		return insertBindingsTx(ctx, tx, id, bindings)
+		if err := insertBindingsTx(ctx, tx, id, bindings); err != nil {
+			return err
+		}
+		if explore != nil {
+			options, err := json.Marshal(explore.Options)
+			if err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO analysis_profile_explore_binding (profile_id, provider_id, model_id, options_json, options_hash)
+				VALUES (?, ?, ?, ?, ?)
+				ON CONFLICT(profile_id) DO UPDATE SET provider_id = excluded.provider_id, model_id = excluded.model_id,
+					options_json = excluded.options_json, options_hash = excluded.options_hash`,
+				id, explore.ProviderID, explore.ModelID, string(options), explore.OptionsHash); err != nil {
+				return fmt.Errorf("replace explore binding for profile %s: %w", id, err)
+			}
+		}
+		if selections != nil {
+			for _, promptType := range prompts.Types {
+				if _, ok := selections[promptType]; !ok {
+					return fmt.Errorf("profile %s is missing its %s prompt selection", id, promptType)
+				}
+			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM profile_prompt_selection WHERE profile_id = ?`, id); err != nil {
+				return err
+			}
+			for _, promptType := range prompts.Types {
+				if _, err := tx.ExecContext(ctx, `INSERT INTO profile_prompt_selection (profile_id, prompt_type, prompt_version_id) VALUES (?, ?, ?)`,
+					id, string(promptType), selections[promptType]); err != nil {
+					return fmt.Errorf("replace %s prompt selection for profile %s: %w", promptType, id, err)
+				}
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err

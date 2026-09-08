@@ -1,7 +1,9 @@
 # internal/pipeline
 
 Owns the fixed two-stage analysis pipeline identities and provider-neutral
-profile snapshots.
+profile snapshots. There remain exactly two article analysis stages;
+Explore and sentence translation are separate on-demand operations that reuse
+the executor, never extra stages.
 
 Rules:
 
@@ -12,3 +14,6 @@ Rules:
 - Profile bindings are provider-neutral snapshots: they contain no endpoint,
   credential, or secret.
 - Hash functions are domain-separated and deterministic over canonical JSON.
+- Prompt snapshots capture exact owner-selected instruction versions; the
+  captured envelope contract is versioned and unsupported versions are
+  rejected rather than silently re-rendered.

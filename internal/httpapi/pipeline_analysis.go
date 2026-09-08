@@ -16,6 +16,7 @@ import (
 	"doublangu/internal/config"
 	"doublangu/internal/library"
 	"doublangu/internal/pipeline"
+	"doublangu/internal/prompts"
 	"doublangu/internal/semantics"
 	"doublangu/internal/store"
 )
@@ -29,6 +30,7 @@ type providerRegistry interface {
 
 type pipelineAnalysisHandler struct {
 	profiles *analysis.ProfileStore
+	prompts  *prompts.Store
 	registry providerRegistry
 	csrf     CSRFVerifier
 	catalog  *ProviderCatalogService
@@ -46,7 +48,7 @@ func NewPipelineAnalysisHandler(db *store.DB, csrf CSRFVerifier, registry provid
 		service = catalog[0]
 	}
 	return &PipelineAnalysisHandler{
-		profiles: analysis.NewProfileStore(db), registry: registry, csrf: csrf, catalog: service,
+		profiles: analysis.NewProfileStore(db), prompts: prompts.NewStore(db), registry: registry, csrf: csrf, catalog: service,
 		conform: make(map[string]conformanceResult),
 	}
 }
@@ -139,9 +141,16 @@ type providersResponse struct {
 	Providers []providerListEntry `json:"providers"`
 }
 
+// profileRequest is the complete create/replace input. explore_binding and
+// prompt_versions are optional: omitting them preserves the stored values on
+// replacement, while on creation the builtin defaults (translation copied to
+// Explore, seeded default versions) are seeded. A present prompt_versions map
+// must name exactly the five fixed types with same-type saved version ids.
 type profileRequest struct {
-	Name     string                     `json:"name"`
-	Bindings []pipeline.BindingSnapshot `json:"bindings"`
+	Name           string                     `json:"name"`
+	Bindings       []pipeline.BindingSnapshot `json:"bindings"`
+	ExploreBinding *pipeline.BindingSnapshot  `json:"explore_binding"`
+	PromptVersions map[string]string          `json:"prompt_versions"`
 }
 
 // profileBindingResponse is the explicit owner-visible binding row declared by
@@ -224,16 +233,106 @@ func (h *PipelineAnalysisHandler) profileResponse(ctx context.Context, profile *
 			Valid: valid, ValidityReason: reason,
 		})
 	}
-	return profileResponse{
+	response := profileResponse{
 		ID: profile.ID, Name: profile.Name, Bindings: bindings, IsActive: profile.IsActive,
 	}
+	// Resolved Explore binding and prompt selections: the transport stage id
+	// of Explore stays translation; the on-demand operation identity stays
+	// explore.
+	if explore, err := h.profiles.ExploreBinding(ctx, profile.ID); err == nil && explore != nil {
+		valid, reason := h.bindingValidity(ctx, *explore)
+		response.ExploreBinding = &profileBindingResponse{
+			StageID: string(pipeline.StageTranslation), ProviderID: explore.ProviderID,
+			ModelID: explore.ModelID, Options: explore.Options,
+			Valid: valid, ValidityReason: reason,
+		}
+	}
+	if selections, err := h.prompts.SelectionsByProfile(ctx, profile.ID); err == nil {
+		versions := make(map[string]profilePromptVersionRef, len(selections))
+		for promptType, selection := range selections {
+			version, err := h.prompts.Get(ctx, selection.VersionID)
+			if err != nil {
+				versions[string(promptType)] = profilePromptVersionRef{ID: selection.VersionID}
+				continue
+			}
+			versions[string(promptType)] = profilePromptVersionRef{ID: version.ID, Version: version.Version, Label: version.Label}
+		}
+		if len(versions) > 0 {
+			response.PromptVersions = versions
+		}
+	}
+	return response
+}
+
+// parseExploreBinding validates the optional explore_binding input the same
+// way stage bindings are validated (live registry, catalog rules) and returns
+// the stored-shaped binding, or nil when the client omitted the field. The
+// transport stage id stays translation for provider compatibility.
+func (h *PipelineAnalysisHandler) parseExploreBinding(ctx context.Context, profileID string, raw *pipeline.BindingSnapshot) (*pipeline.BindingSnapshot, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	if strings.TrimSpace(raw.ProviderID) == "" || strings.TrimSpace(raw.ModelID) == "" {
+		return nil, &bindingValidationError{Message: "explore_binding needs a provider and a model"}
+	}
+	input := []pipeline.BindingSnapshot{{
+		StageID: pipeline.StageTranslation, ProviderID: raw.ProviderID,
+		ModelID: raw.ModelID, Options: raw.Options,
+	}}
+	var existing []pipeline.BindingSnapshot
+	if stored, err := h.profiles.ExploreBinding(ctx, profileID); err == nil && stored != nil {
+		stored.StageID = pipeline.StageTranslation
+		existing = append(existing, *stored)
+	}
+	canonical, err := h.canonicalizeUsableBindings(ctx, existing, input)
+	if err != nil {
+		return nil, err
+	}
+	result := canonical[0]
+	result.StageID = pipeline.StageTranslation
+	return &result, nil
+}
+
+// parsePromptSelections converts the optional prompt_versions map into a
+// selections map. Absent (nil) preserves the stored selections; a present map
+// must name exactly the five fixed types, and every version id must resolve
+// to a saved version of its own type.
+func (h *PipelineAnalysisHandler) parsePromptSelections(ctx context.Context, raw map[string]string) (map[prompts.PromptType]string, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	if len(raw) != len(prompts.Types) {
+		return nil, &bindingValidationError{Message: "prompt_versions must name exactly all five prompt types"}
+	}
+	selections := make(map[prompts.PromptType]string, len(raw))
+	for key, versionID := range raw {
+		promptType := prompts.PromptType(key)
+		if !promptType.Valid() {
+			return nil, &bindingValidationError{Message: fmt.Sprintf("prompt_versions contains unknown prompt type %q", key)}
+		}
+		if _, err := h.prompts.Resolve(ctx, promptType, versionID); err != nil {
+			return nil, &bindingValidationError{Message: fmt.Sprintf("prompt_versions.%s does not reference a saved %s version", key, key)}
+		}
+		selections[promptType] = versionID
+	}
+	return selections, nil
+}
+
+// profilePromptVersionRef is the resolved selection entry: the exact pinned
+// version id with its human version number and label.
+type profilePromptVersionRef struct {
+	ID      string `json:"id"`
+	Version int    `json:"version"`
+	Label   string `json:"label"`
 }
 
 type profileResponse struct {
-	ID       string                   `json:"id"`
-	Name     string                   `json:"name"`
-	Bindings []profileBindingResponse `json:"bindings"`
-	IsActive bool                     `json:"is_active"`
+	ID              string                             `json:"id"`
+	Name            string                             `json:"name"`
+	Bindings        []profileBindingResponse           `json:"bindings"`
+	ExploreBinding  *profileBindingResponse            `json:"explore_binding,omitempty"`
+	PromptVersions  map[string]profilePromptVersionRef `json:"prompt_versions,omitempty"`
+	IsActive        bool                               `json:"is_active"`
 }
 
 type pipelineSettingsResponse struct {
@@ -533,7 +632,17 @@ func (h *PipelineAnalysisHandler) ServeProfiles(w http.ResponseWriter, r *http.R
 			writeBindingValidationError(w, err)
 			return
 		}
-		profile, err := h.profiles.Create(r.Context(), input.Name, canonical)
+		exploreBinding, err := h.parseExploreBinding(r.Context(), "", input.ExploreBinding)
+		if err != nil {
+			writeBindingValidationError(w, err)
+			return
+		}
+		selections, err := h.parsePromptSelections(r.Context(), input.PromptVersions)
+		if err != nil {
+			writeBindingValidationError(w, err)
+			return
+		}
+		profile, err := h.profiles.CreateWithChoices(r.Context(), input.Name, canonical, exploreBinding, selections)
 		if err != nil {
 			writeProfileError(w, err)
 			return
@@ -584,7 +693,17 @@ func (h *PipelineAnalysisHandler) ServeProfile(w http.ResponseWriter, r *http.Re
 			writeBindingValidationError(w, err)
 			return
 		}
-		profile, err := h.profiles.Replace(r.Context(), profileID, input.Name, canonical)
+		exploreBinding, err := h.parseExploreBinding(r.Context(), profileID, input.ExploreBinding)
+		if err != nil {
+			writeBindingValidationError(w, err)
+			return
+		}
+		selections, err := h.parsePromptSelections(r.Context(), input.PromptVersions)
+		if err != nil {
+			writeBindingValidationError(w, err)
+			return
+		}
+		profile, err := h.profiles.ReplaceWithChoices(r.Context(), profileID, input.Name, canonical, exploreBinding, selections)
 		if err != nil {
 			writeProfileError(w, err)
 			return

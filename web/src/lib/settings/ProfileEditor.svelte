@@ -1,6 +1,8 @@
 <script lang="ts">
 	import type { AnalysisProvider } from '$lib/api/client';
 	import {
+		PROMPT_LABELS,
+		PROMPT_TYPES,
 		STAGES,
 		STAGE_LABELS,
 		modelChoices,
@@ -29,8 +31,13 @@
 		confirmMessage: string;
 		enabledProviders: AnalysisProvider[];
 		providersByID: Map<string, AnalysisProvider>;
+		promptLibraries: Record<string, import('$lib/api/client').AnalysisPromptVersion[]>;
+		promptLibrariesError: string;
 		onassignprovider: (stage: StageID, providerId: string) => void;
 		onchoosemodel: (stage: StageID, modelId: string) => void;
+		onstageoptionschange: (stage: StageID) => void;
+		onassignexploreprovider: (providerId: string) => void;
+		onchooseexploremodel: (modelId: string) => void;
 		onsave: () => void;
 		oncancel: () => void;
 		ondiscardswitch: () => void;
@@ -50,8 +57,13 @@
 		confirmMessage,
 		enabledProviders,
 		providersByID,
+		promptLibraries,
+		promptLibrariesError,
 		onassignprovider,
 		onchoosemodel,
+		onstageoptionschange,
+		onassignexploreprovider,
+		onchooseexploremodel,
 		onsave,
 		oncancel,
 		ondiscardswitch,
@@ -124,18 +136,18 @@
 				<div class="binding-fields">
 					<label class="field">
 						<span>Temperature (milli)</span>
-						<input type="number" min="0" max="2000" bind:value={stageDraft.options.temperature_milli} />
+						<input type="number" min="0" max="2000" bind:value={stageDraft.options.temperature_milli} onchange={() => onstageoptionschange(stage)} />
 					</label>
 					<label class="field">
 						<span>Max output tokens</span>
-						<input type="number" min="1024" max="65536" bind:value={stageDraft.options.max_output_tokens} />
+						<input type="number" min="1024" max="65536" bind:value={stageDraft.options.max_output_tokens} onchange={() => onstageoptionschange(stage)} />
 					</label>
 				</div>
 			{:else}
 				<label class="field">
 					<span>Reasoning effort</span>
 					{#if stageEfforts.length > 0}
-						<select value={String(stageDraft.options.reasoning_effort ?? stageEfforts[0])} onchange={(event) => (stageDraft.options.reasoning_effort = event.currentTarget.value)}>
+						<select value={String(stageDraft.options.reasoning_effort ?? stageEfforts[0])} onchange={(event) => { stageDraft.options.reasoning_effort = event.currentTarget.value; onstageoptionschange(stage); }}>
 							{#each stageEfforts as effort (effort)}
 								<option value={effort}>{effort}</option>
 							{/each}
@@ -148,6 +160,91 @@
 			{/if}
 		</fieldset>
 	{/each}
+
+	<fieldset class="binding-editor">
+		<legend>Explore (on-demand)</legend>
+		<div class="binding-fields">
+			<label class="field">
+				<span>Provider</span>
+				<select value={draft.explore.provider_id} onchange={(event) => onassignexploreprovider(event.currentTarget.value)}>
+					<option value="">Select a provider</option>
+					{#each enabledProviders as provider (provider.id)}
+						<option value={provider.id}>{provider.label ?? provider.id}</option>
+					{/each}
+				</select>
+			</label>
+			<label class="field">
+				<span>Model</span>
+				{#if providersByID.get(draft.explore.provider_id) && modelChoices(providersByID.get(draft.explore.provider_id)).length > 0}
+					<select value={draft.explore.model_id} onchange={(event) => onchooseexploremodel(event.currentTarget.value)}>
+						{#each modelChoices(providersByID.get(draft.explore.provider_id)) as modelId (modelId)}
+							<option value={modelId}>{modelId}</option>
+						{/each}
+					</select>
+				{:else}
+					<input
+						type="text"
+						bind:value={draft.explore.model_id}
+						onchange={(event) => onchooseexploremodel(event.currentTarget.value)}
+						placeholder={draft.explore.provider_id ? 'Type a model id…' : 'Select a provider first'}
+						disabled={!draft.explore.provider_id}
+					/>
+				{/if}
+			</label>
+		</div>
+		{#if usesNumericStageOptions(draft.explore.provider_type)}
+			<div class="binding-fields">
+				<label class="field">
+					<span>Temperature (milli)</span>
+					<input type="number" min="0" max="2000" bind:value={draft.explore.options.temperature_milli} onchange={() => (draft.exploreTouched = true)} />
+				</label>
+				<label class="field">
+					<span>Max output tokens</span>
+					<input type="number" min="1024" max="65536" bind:value={draft.explore.options.max_output_tokens} onchange={() => (draft.exploreTouched = true)} />
+				</label>
+			</div>
+		{:else}
+			<label class="field">
+				<span>Reasoning effort</span>
+				{#if supportedEfforts(providersByID.get(draft.explore.provider_id), draft.explore.model_id).length > 0}
+					<select value={String(draft.explore.options.reasoning_effort ?? '')} onchange={(event) => { draft.explore.options.reasoning_effort = event.currentTarget.value; draft.exploreTouched = true; }}>
+						{#each supportedEfforts(providersByID.get(draft.explore.provider_id), draft.explore.model_id) as effort (effort)}
+							<option value={effort}>{effort}</option>
+						{/each}
+					</select>
+				{:else}
+					<input type="text" value={String(draft.explore.options.reasoning_effort ?? '')} disabled />
+					<small class="muted">The catalog for this model lists no reasoning efforts; choose a model that advertises supported efforts.</small>
+				{/if}
+			</label>
+		{/if}
+	</fieldset>
+
+	<fieldset class="binding-editor prompt-editor">
+		<legend>Prompt versions</legend>
+		<p class="muted prompt-note">Pin one saved version per prompt type. Saving a new version in the Prompts section never changes these pins by itself.</p>
+		{#if promptLibrariesError}
+			<p class="error-text" role="alert">{promptLibrariesError}</p>
+		{/if}
+		<div class="prompt-fields">
+			{#each PROMPT_TYPES as promptType (promptType)}
+				<label class="field">
+					<span>{PROMPT_LABELS[promptType]}</span>
+					<select
+						value={draft.promptVersions[promptType] ?? ''}
+						onchange={(event) => (draft.promptVersions[promptType] = event.currentTarget.value)}
+					>
+						{#if (draft.promptVersions[promptType] ?? '') === ''}
+							<option value="">Pin a saved version…</option>
+						{/if}
+						{#each promptLibraries[promptType] ?? [] as version (version.id)}
+							<option value={version.id}>v{version.version}{version.label ? ` · ${version.label}` : ''}</option>
+						{/each}
+					</select>
+				</label>
+			{/each}
+		</div>
+	</fieldset>
 
 	<div class="editor-actions">
 		<button type="button" class="primary" disabled={!canSave} onclick={onsave}>
@@ -267,6 +364,21 @@
 		cursor: not-allowed;
 	}
 
+	.prompt-editor {
+		gap: 0.55rem;
+	}
+
+	.prompt-note {
+		margin: 0;
+		font-size: 0.85rem;
+	}
+
+	.prompt-fields {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 0.7rem;
+	}
+
 	.editor-actions {
 		display: flex;
 		align-items: center;
@@ -275,6 +387,10 @@
 
 	@media (max-width: 600px) {
 		.binding-fields {
+			grid-template-columns: 1fr;
+		}
+
+		.prompt-fields {
 			grid-template-columns: 1fr;
 		}
 

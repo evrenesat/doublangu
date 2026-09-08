@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { AnalysisProfile, AnalysisProvider } from '$lib/api/client';
+import type { AnalysisProfile, AnalysisProfileInput, AnalysisProvider } from '$lib/api/client';
 import {
 	STAGES,
 	bindingEffortError,
@@ -15,6 +15,9 @@ import {
 	profileNameError,
 	profileRequestFromDraft,
 	profileUsable,
+	initializeExploreFromTranslation,
+	profileDraftFromProfile,
+	PROMPT_TYPES,
 	providerTestRequest,
 	retestModelChoice,
 	stageConformance,
@@ -157,7 +160,18 @@ describe('options defaults and canonicalization', () => {
 });
 
 describe('profile draft completeness and payload', () => {
-	it('requires name and both resolved stages', () => {
+	/** Completes the independent Explore binding and the five prompt pins. */
+	function completeExploreAndPins(draft: ReturnType<typeof blankProfileDraft>): void {
+		draft.explore.provider_id = 'codex-app-server';
+		draft.explore.provider_type = 'codex_app_server';
+		draft.explore.model_id = 'model-b';
+		draft.explore.options = { reasoning_effort: 'low' };
+		for (const promptType of PROMPT_TYPES) {
+			draft.promptVersions[promptType] = `prompt-v1-${promptType}`;
+		}
+	}
+
+	it('requires name, both stages, Explore, and all five prompt pins', () => {
 		const draft = blankProfileDraft();
 		expect(profileDraftComplete(draft)).toBe(false);
 		expect(profileNameError('')).toBe('Name is required.');
@@ -175,6 +189,16 @@ describe('profile draft completeness and payload', () => {
 		expect(profileDraftComplete(draft)).toBe(false);
 		draft.stages.translation.provider_id = 'omlx';
 		draft.stages.translation.model_id = 'model-b';
+		// Both stage bindings alone are not enough anymore.
+		expect(profileDraftComplete(draft)).toBe(false);
+		draft.explore.provider_id = 'codex-app-server';
+		draft.explore.model_id = 'model-b';
+		expect(profileDraftComplete(draft)).toBe(false);
+		for (const promptType of PROMPT_TYPES.slice(0, 4)) {
+			draft.promptVersions[promptType] = `prompt-v1-${promptType}`;
+		}
+		expect(profileDraftComplete(draft)).toBe(false);
+		draft.promptVersions.correction = 'prompt-v1-correction';
 		expect(profileDraftComplete(draft)).toBe(true);
 	});
 	it('sends only the four write fields per binding on a GET-to-PUT round trip', () => {
@@ -192,10 +216,15 @@ describe('profile draft completeness and payload', () => {
 		draft.stages.translation.provider_type = 'openai_compatible';
 		draft.stages.translation.model_id = 'model-b';
 		draft.stages.translation.options = { temperature_milli: 0, max_output_tokens: 32768 };
+		completeExploreAndPins(draft);
 		const request = profileRequestFromDraft(draft);
 		for (const binding of request.bindings) {
 			expect(Object.keys(binding).sort()).toEqual(['model_id', 'options', 'provider_id', 'stage_id']);
 		}
+		// The explore binding carries exactly the three write fields, and the
+		// selections carry every fixed prompt type.
+		expect(Object.keys(request.explore_binding ?? {}).sort()).toEqual(['model_id', 'options', 'provider_id']);
+		expect(Object.keys(request.prompt_versions ?? {})).toHaveLength(5);
 	});
 	it('builds bindings in registered order for the wire', () => {
 		const draft = blankProfileDraft();
@@ -207,7 +236,8 @@ describe('profile draft completeness and payload', () => {
 		draft.stages.translation.provider_type = 'openai_compatible';
 		draft.stages.translation.model_id = 'model-b';
 		draft.stages.translation.options = { temperature_milli: 0, max_output_tokens: 32768 };
-		const request = profileRequestFromDraft(draft);
+		completeExploreAndPins(draft);
+		const request: AnalysisProfileInput = profileRequestFromDraft(draft);
 		expect(request.name).toBe('Mixed');
 		expect(request.bindings.map((binding) => binding.stage_id)).toEqual(STAGES);
 		expect(request.bindings[0]!.provider_id).toBe('codex-app-server');
@@ -316,5 +346,93 @@ describe('conformance test tuples', () => {
 		expect(stageConformance(provider, 'translation').map((summary) => summary.model_id)).toEqual(['model-b']);
 		expect(conformanceTupleLabel(provider.conformance![0]!)).toBe('model-a {"reasoning_effort":"minimal"}');
 		expect(conformanceTupleLabel(provider.conformance![1]!)).toBe('model-b');
+	});
+});
+
+describe('explore initialization from translation', () => {
+	function translationComplete(draft: ReturnType<typeof blankProfileDraft>, model: string): void {
+		draft.stages.translation.provider_id = 'codex-app-server';
+		draft.stages.translation.provider_type = 'codex_app_server';
+		draft.stages.translation.model_id = model;
+		draft.stages.translation.options = { reasoning_effort: 'low' };
+	}
+
+	it('copies a completed translation binding exactly once with a separate options object', () => {
+		const draft = blankProfileDraft();
+		translationComplete(draft, 'model-a');
+		expect(initializeExploreFromTranslation(draft)).toBe(true);
+		expect(draft.explore.provider_id).toBe('codex-app-server');
+		expect(draft.explore.provider_type).toBe('codex_app_server');
+		expect(draft.explore.model_id).toBe('model-a');
+		expect(draft.explore.options).toEqual({ reasoning_effort: 'low' });
+		expect(draft.exploreInitialized).toBe(true);
+		// A second run never recopies.
+		expect(initializeExploreFromTranslation(draft)).toBe(false);
+		// The options objects are separate: editing one never aliases the other.
+		draft.explore.options.reasoning_effort = 'high';
+		expect(draft.stages.translation.options.reasoning_effort).toBe('low');
+	});
+
+	it('covers the typed model path: a manually typed completion initializes too', () => {
+		const draft = blankProfileDraft();
+		draft.stages.translation.provider_id = 'codex-app-server';
+		draft.stages.translation.provider_type = 'codex_app_server';
+		// Model typed by hand afterwards (no catalog selection involved).
+		draft.stages.translation.model_id = 'typed-model';
+		draft.stages.translation.options = { reasoning_effort: 'medium' };
+		expect(initializeExploreFromTranslation(draft)).toBe(true);
+		expect(draft.explore.model_id).toBe('typed-model');
+		expect(draft.explore.options).toEqual({ reasoning_effort: 'medium' });
+	});
+
+	it('keeps later translation changes independent of the initialized explore binding', () => {
+		const draft = blankProfileDraft();
+		translationComplete(draft, 'model-a');
+		initializeExploreFromTranslation(draft);
+		draft.stages.translation.provider_id = 'omlx';
+		draft.stages.translation.model_id = 'qwen';
+		draft.stages.translation.options = { temperature_milli: 500, max_output_tokens: 8192 };
+		expect(initializeExploreFromTranslation(draft)).toBe(false);
+		expect(draft.explore.provider_id).toBe('codex-app-server');
+		expect(draft.explore.model_id).toBe('model-a');
+		expect(draft.explore.options).toEqual({ reasoning_effort: 'low' });
+	});
+
+	it('skips the copy when Explore was explicitly edited before translation completed', () => {
+		const draft = blankProfileDraft();
+		draft.explore.provider_id = 'omlx';
+		draft.explore.model_id = 'qwen';
+		draft.explore.options = { temperature_milli: 0, max_output_tokens: 8192 };
+		draft.exploreTouched = true;
+		translationComplete(draft, 'model-a');
+		expect(initializeExploreFromTranslation(draft)).toBe(false);
+		expect(draft.explore.model_id).toBe('qwen');
+	});
+
+	it('never recouples an existing profile draft', () => {
+		const providersByID = new Map([[ 'codex-app-server', codexProvider ]]);
+		// AnalysisProfileBinding.options is generated as Record<string, never>
+		// from the bare type: object schema; existing code casts around it.
+		const profile = {
+			id: 'profile-1',
+			name: 'Existing',
+			bindings: [
+				{ stage_id: 'linguistic_analysis', provider_id: 'codex-app-server', model_id: 'model-a', options: { reasoning_effort: 'low' } },
+				{ stage_id: 'translation', provider_id: 'codex-app-server', model_id: 'model-a', options: { reasoning_effort: 'low' } }
+			],
+			explore_binding: {
+				stage_id: 'translation',
+				provider_id: 'omlx',
+				model_id: 'qwen',
+				options: { temperature_milli: 0, max_output_tokens: 8192 }
+			},
+			prompt_versions: Object.fromEntries(PROMPT_TYPES.map((promptType) => [promptType, { id: `v1-${promptType}`, version: 1, label: '' }]))
+		} as unknown as AnalysisProfile;
+		const draft = profileDraftFromProfile(profile, providersByID);
+		expect(draft.exploreInitialized).toBe(true);
+		expect(draft.exploreTouched).toBe(true);
+		// Even a differing translation binding is never copied over it.
+		expect(initializeExploreFromTranslation(draft)).toBe(false);
+		expect(draft.explore.provider_id).toBe('omlx');
 	});
 });

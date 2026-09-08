@@ -256,7 +256,13 @@ type profilePayload struct {
 	ID       string                     `json:"id"`
 	Name     string                     `json:"name"`
 	Bindings []pipeline.BindingSnapshot `json:"bindings"`
-	IsActive bool                       `json:"is_active"`
+	ExploreBinding *pipeline.BindingSnapshot `json:"explore_binding,omitempty"`
+	PromptVersions map[string]struct {
+		ID      string `json:"id"`
+		Version int    `json:"version"`
+		Label   string `json:"label"`
+	} `json:"prompt_versions,omitempty"`
+	IsActive bool `json:"is_active"`
 }
 
 func decodeJSONBody(t *testing.T, body string, target any) {

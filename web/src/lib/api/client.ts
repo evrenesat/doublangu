@@ -41,6 +41,12 @@ export type AnalysisProfileBindingInput = components['schemas']['AnalysisProfile
 export type AnalysisProfileInput = components['schemas']['AnalysisProfileInput'];
 export type AnalysisProfileListResponse = components['schemas']['AnalysisProfileListResponse'];
 export type AnalysisPipelineSettings = components['schemas']['AnalysisPipelineSettings'];
+export type AnalysisPromptType = components['schemas']['AnalysisPromptType'];
+export type AnalysisPromptVersion = components['schemas']['AnalysisPromptVersion'];
+export type AnalysisPromptVersionInput = components['schemas']['AnalysisPromptVersionInput'];
+export type AnalysisPromptVersionListResponse = components['schemas']['AnalysisPromptVersionListResponse'];
+export type AnalysisPromptVersionSaveResponse = components['schemas']['AnalysisPromptVersionSaveResponse'];
+export type AnalysisPromptVersionRef = components['schemas']['AnalysisPromptVersionRef'];
 export type AnalysisPipelineSettingsInput = components['schemas']['AnalysisPipelineSettingsInput'];
 export type ArticleAnalysisPipeline = components['schemas']['ArticleAnalysisPipeline'];
 export type AnalysisStageAttempt = components['schemas']['AnalysisStageAttempt'];
@@ -325,6 +331,14 @@ export async function getPipelineAnalysisSettings(): Promise<AnalysisPipelineSet
 
 export async function savePipelineAnalysisSettings(data: AnalysisPipelineSettingsInput): Promise<AnalysisPipelineSettings> {
 	return apiFetch('/api/v1/analysis/settings', { method: 'PUT', body: JSON.stringify(data), csrf: true });
+}
+
+export async function listPromptVersions(promptType: AnalysisPromptType): Promise<AnalysisPromptVersionListResponse> {
+	return apiFetch(`/api/v1/analysis/prompts/${id(promptType)}/versions`);
+}
+
+export async function savePromptVersion(promptType: AnalysisPromptType, data: AnalysisPromptVersionInput): Promise<AnalysisPromptVersionSaveResponse> {
+	return apiFetch(`/api/v1/analysis/prompts/${id(promptType)}/versions`, { method: 'POST', body: JSON.stringify(data), csrf: true });
 }
 
 export async function getReaderSettings(): Promise<ReaderSettings> {

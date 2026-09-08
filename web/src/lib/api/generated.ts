@@ -779,6 +779,78 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/analysis/prompts/{prompt_type}/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List saved versions of one prompt type */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    prompt_type: components["schemas"]["AnalysisPromptType"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Saved immutable versions, newest first. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AnalysisPromptVersionListResponse"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                404: components["responses"]["NotFound"];
+                405: components["responses"]["MethodNotAllowed"];
+            };
+        };
+        put?: never;
+        /** Save a new immutable prompt version */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    prompt_type: components["schemas"]["AnalysisPromptType"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["AnalysisPromptVersionInput"];
+                };
+            };
+            responses: {
+                /** @description The saved immutable version. Saving never activates it. */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AnalysisPromptVersionSaveResponse"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                405: components["responses"]["MethodNotAllowed"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/analysis/settings": {
         parameters: {
             query?: never;
@@ -3273,6 +3345,59 @@ export interface components {
         AnalysisProfileInput: {
             name: string;
             bindings: components["schemas"]["AnalysisProfileBindingInput"][];
+            /** @description Optional. Omitted on replacement preserves the stored Explore binding; omitted on creation copies the Translation binding. */
+            explore_binding?: components["schemas"]["AnalysisExploreBindingInput"];
+            /** @description Optional. Omitted on replacement preserves the stored selections; omitted on creation seeds the builtin defaults. A present map must name exactly all five prompt types. */
+            prompt_versions?: components["schemas"]["AnalysisPromptVersionSelections"];
+        };
+        AnalysisExploreBindingInput: {
+            provider_id: string;
+            model_id: string;
+            options: Record<string, never>;
+        };
+        /** @description Exact saved version ids per prompt type; every type is required. */
+        AnalysisPromptVersionSelections: {
+            linguistic_analysis: string;
+            article_translation: string;
+            explore: string;
+            sentence_translation: string;
+            correction: string;
+        };
+        /** @description Resolved pinned versions with human version number and label. */
+        AnalysisPromptVersionRefs: {
+            linguistic_analysis: components["schemas"]["AnalysisPromptVersionRef"];
+            article_translation: components["schemas"]["AnalysisPromptVersionRef"];
+            explore: components["schemas"]["AnalysisPromptVersionRef"];
+            sentence_translation: components["schemas"]["AnalysisPromptVersionRef"];
+            correction: components["schemas"]["AnalysisPromptVersionRef"];
+        };
+        AnalysisPromptVersionRef: {
+            id: string;
+            version: number;
+            label: string;
+        };
+        /** @enum {string} */
+        AnalysisPromptType: "linguistic_analysis" | "article_translation" | "explore" | "sentence_translation" | "correction";
+        AnalysisPromptVersionInput: {
+            instruction_text: string;
+            label?: string;
+        };
+        AnalysisPromptVersion: {
+            id: string;
+            prompt_type: components["schemas"]["AnalysisPromptType"];
+            version: number;
+            label: string;
+            instruction_text: string;
+            content_hash: string;
+            created_at: string;
+        };
+        AnalysisPromptVersionListResponse: {
+            prompt_type: components["schemas"]["AnalysisPromptType"];
+            versions: components["schemas"]["AnalysisPromptVersion"][];
+        };
+        AnalysisPromptVersionSaveResponse: {
+            prompt_type: components["schemas"]["AnalysisPromptType"];
+            version: components["schemas"]["AnalysisPromptVersion"];
         };
         AnalysisProfileBindingInput: {
             /** @enum {string} */
@@ -3314,6 +3439,10 @@ export interface components {
             id: string;
             name: string;
             bindings: components["schemas"]["AnalysisProfileBinding"][];
+            /** @description The on-demand Explore binding (transport stage id stays translation). */
+            explore_binding?: components["schemas"]["AnalysisProfileBinding"];
+            /** @description The pinned prompt versions with resolved numbers and labels. */
+            prompt_versions?: components["schemas"]["AnalysisPromptVersionRefs"];
             is_active: boolean;
         };
         AnalysisProfileListResponse: {

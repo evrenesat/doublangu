@@ -1,5 +1,12 @@
 <script lang="ts">
 	import AnalysisPipelinePanel from '$lib/settings/AnalysisPipelinePanel.svelte';
+	import PromptLibraryPanel from '$lib/settings/PromptLibraryPanel.svelte';
+	import type { AnalysisPromptType, AnalysisPromptVersion } from '$lib/api/client';
+
+	// A successful library save flows to the profile panel so the just-saved
+	// version can be pinned without a page reload. Merging only extends the
+	// selector catalog: open drafts and pinned selections are never replaced.
+	let mergePromptVersion: ((promptType: AnalysisPromptType, version: AnalysisPromptVersion) => void) | null = null;
 </script>
 
 <svelte:head>
@@ -14,7 +21,9 @@
 	</p>
 </section>
 
-<AnalysisPipelinePanel />
+<AnalysisPipelinePanel registerPromptVersionMerge={(merge) => (mergePromptVersion = merge)} />
+
+<PromptLibraryPanel onsaved={(promptType, version) => mergePromptVersion?.(promptType, version)} />
 
 <style>
 	h2 {

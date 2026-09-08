@@ -305,7 +305,8 @@ func newHandlerWithMedia(
 	mux.Handle("/api/v1/articles/", articleRoutes)
 	mux.Handle("/api/v1/learning-state", articleRoutes)
 	analysisHandler := httpapi.NewAnalysisHandler(db)
-	analysisProtected := authHandler.RequireAuth(analysisMux(analysisHandler, pipelineAnalysisHandler))
+	promptLibraryHandler := httpapi.NewPromptLibraryHandler(db, authHandler.CSRF)
+	analysisProtected := authHandler.RequireAuth(analysisMux(analysisHandler, pipelineAnalysisHandler, promptLibraryHandler))
 	analysisRoutes := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		analysisProtected.ServeHTTP(w, r)
@@ -631,10 +632,14 @@ func readerSettingsMux(h *httpapi.ReaderSettingsHandler) http.Handler {
 	return mux
 }
 
-func analysisMux(h *httpapi.AnalysisHandler, pipelineHandler *httpapi.PipelineAnalysisHandler) http.Handler {
+func analysisMux(h *httpapi.AnalysisHandler, pipelineHandler *httpapi.PipelineAnalysisHandler, promptHandler *httpapi.PromptLibraryHandler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/analysis/runs", h.ServeRuns)
 	mux.HandleFunc("GET /api/v1/analysis/runs/{id}", h.ServeRun)
+	if promptHandler != nil {
+		mux.HandleFunc("GET /api/v1/analysis/prompts/{prompt_type}/versions", promptHandler.ServePromptVersions)
+		mux.HandleFunc("POST /api/v1/analysis/prompts/{prompt_type}/versions", promptHandler.ServePromptVersions)
+	}
 	if pipelineHandler != nil {
 		mux.HandleFunc("GET /api/v1/analysis/providers", pipelineHandler.ServeProviders)
 		mux.HandleFunc("POST /api/v1/analysis/providers/{id}/test", pipelineHandler.ServeProviderTest)

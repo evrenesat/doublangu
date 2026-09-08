@@ -1,5 +1,196 @@
 # Development Log
 
+## 2026-09-08 — Checkpoint 5 review approval
+
+Reviewed pending cp5 v01 against approved cp4 v01 (`3a4e4c6`) using the
+worktree fallback. No material findings; pending prompt-save fields are
+locked, saved versions reach profile selectors, and pins remain explicit.
+
+Verification in this review:
+- `npm --prefix web run test:unit -- src/lib/settings src/lib/routes`: 63 passed.
+- `npm --prefix web run check`: zero errors/warnings.
+- `PATH=/root/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.5.linux-amd64/bin:$PATH go test ./internal/httpapi ./cmd/doublangu-server -count=1`: httpapi passed; server smoke failed with interrupt exit.
+- `PATH=/root/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.5.linux-amd64/bin:$PATH go test ./cmd/doublangu-server -count=1`: rerun passed.
+- `npm --prefix web run validate:openapi`: fails on unchanged worker schemas;
+  independently reproduced with the schema from HEAD using SwaggerParser.
+- `npm --prefix web run generate:api` twice and `sha256sum web/src/lib/api/generated.ts` before/after: byte-identical.
+- `git diff --check`: clean.
+
+Review used installed Node v22.23.2; project requires Node >=24. Full
+integration, supported-runtime acceptance, E2E and live checks remain for
+checkpoint 14. Corrected the prior entry's overstated regression-test claims.
+
+## 2026-09-08 — Fix plan cp05-v01: no lost edits while a prompt version POST is pending
+
+Implemented the review fix plan
+`plans/in-progress/reader-settings-prompt-experiments-20260908-cp05-v01.md`
+(prevent loss of text/label edits made while an immutable prompt version POST
+is pending) on top of the pending checkpoint 5 work (base HEAD `3a4e4c6`).
+Verified work is left uncommitted for review; no commits were created.
+
+### Implementation
+
+- `web/src/lib/settings/PromptLibraryPanel.svelte`: the instruction textarea
+  and the optional label input now carry `disabled={saving}`, so neither
+  field accepts edits while the version POST is in flight. The existing
+  submitted-type capture, selector/Cancel locks, failure draft retention,
+  successful catalog callback, and one-time Explore initialization are
+  unchanged.
+- `PromptLibraryPanel.test.ts`: the deferred-POST success case now populates
+  both fields, asserts both are disabled while pending, and verifies the
+  exact submitted instruction and label reached the server and are listed.
+  The existing immediate-failure case checks instruction draft retention;
+  it does not assert label retention or re-enabled fields. The deferred
+  success case retains forced selector events as a defensive check.
+- No API contract, prompt immutability, pin semantics, or other components
+  changed.
+
+### Verification
+
+Environment: Node v24.20.0 (`/opt/node-v24.20.0-linux-x64/bin`).
+
+- `npm --prefix web run test:unit -- src/lib/settings src/lib/routes` —
+  10 files, 63 tests, all passed.
+- `npm --prefix web run check` — 0 errors, 0 warnings.
+- Prettier checked on the changed files — clean.
+- `git diff --check` — clean.
+- Confirmed: neither text field accepts edits while saving; a failed save
+  restores editable fields with the original values; successful saves still
+  feed the profile selector catalog without changing any pins.
+
+## 2026-09-08 — Fix plan cp06-v01: Settings prompt/profile flow corrections
+
+Implemented the review fix plan
+`plans/in-progress/reader-settings-prompt-experiments-20260908-cp06-v01.md`
+on top of the pending checkpoint 5 work (base HEAD `3a4e4c6`). Verified work
+is left uncommitted for review; no commits were created.
+
+### Implementation
+
+- Save-to-selector catalog connection: the analysis settings route wires the
+  two panels with a small callback — `PromptLibraryPanel` gains an `onsaved`
+  prop and `AnalysisPipelinePanel` a `registerPromptVersionMerge` prop whose
+  `mergePromptVersion(promptType, version)` merges by prompt_type/id into the
+  selector catalog only. A just-saved version is selectable without a reload;
+  open drafts, their dirty state, and pinned selections are never replaced.
+- Save-race hardening (`PromptLibraryPanel.saveNewVersion`): the submitted
+  type, instruction, and label are captured before the await and used for the
+  version list, viewing selection, success label, and the `onsaved` call.
+  The type/version selectors, Cancel, and the Edit-as-new-version action are
+  disabled while saving, so navigation cannot clear a different draft.
+- Explore one-time initialization (`analysisProfiles.ts`): `ProfileDraft`
+  carries `exploreInitialized`/`exploreTouched` plus
+  `initializeExploreFromTranslation`, which copies a completed translation
+  binding into Explore exactly once using a separate options object. The
+  panel invokes it on translation provider assignment, model choice (both
+  catalog-selected and typed paths), and option changes; explore provider,
+  model, and option edits mark it touched and block any later copy.
+  `profileDraftFromProfile` marks existing profiles initialized and touched,
+  so editing them never recouples Explore to Translation.
+- Tests: new combined-page regression test (`settings-page-combined.test.ts`)
+  covering save-v2 → pin v2 on Alpha → save, with Beta keeping v1, the dirty
+  open draft surviving the catalog update, and no reload; deferred-POST
+  panel test proving a completion files the version under the submitted
+  (Explore) type with correct label, disabled navigation, and untouched
+  Correction catalog; helper and component tests for one-time Explore
+  initialization (catalog-selected and typed model paths, separate options,
+  independence after later translation changes, touched-before-completion
+  skip, existing-profile never recoupled).
+- No API contract, prompt immutability, or stored pin semantics changed.
+
+### Verification
+
+Environment: Node v24.20.0 (`/opt/node-v24.20.0-linux-x64/bin`); Go 1.26.5
+toolchain PATH.
+
+- `npm --prefix web run test:unit -- src/lib/settings src/lib/routes` —
+  10 files, 63 tests, all passed.
+- `npm --prefix web run check` — 0 errors, 0 warnings.
+- `go test ./internal/httpapi ./cmd/doublangu-server -count=1` — all ok.
+- `git diff --check` — clean; Prettier checked on the changed web files.
+- Confirmed: same-page save-then-pin works with unchanged unrelated
+  pins/drafts; pending saves cannot corrupt the viewed type or discard
+  another draft; new Explore initializes once and stays independent.
+
+## 2026-09-08 — Checkpoint 5: prompt/profile settings API and UI
+
+Implemented Checkpoint 5 of
+`plans/in-progress/reader-settings-prompt-experiments-20260908.md` on top of
+the approved Checkpoint 4 commit `3a4e4c6` (plan baseline `7779c6d`).
+Verified work is left uncommitted for review; no checkpoint commits were
+created.
+
+### Implementation
+
+- New `internal/httpapi/prompts.go`: authenticated owner endpoints
+  `GET/POST /api/v1/analysis/prompts/{prompt_type}/versions` (no-store).
+  GET lists a type's immutable versions newest first; POST saves the next
+  immutable version with CSRF, strict JSON, CRLF normalization, and
+  64 KiB/80-scalar bounds. Unknown types 404; validation failures 400 with
+  field-safe detail; there is no PUT/DELETE and no save-and-activate.
+- Profile contract (section 4.6) in `internal/httpapi/pipeline_analysis.go`
+  and `internal/analysis/profiles.go`: create/replace inputs accept optional
+  `explore_binding` and `prompt_versions`; omitted fields preserve stored
+  values on replacement and seed the builtin defaults (translation copied to
+  Explore, default versions) on creation. Present `prompt_versions` maps
+  must name exactly the five fixed types and resolve to same-type saved
+  versions (unknown/wrong-type/partial reject with the existing validation
+  error shape). Explore bindings validate through the same live-registry and
+  catalog rules as stage bindings. `ReplaceWithChoices`/`CreateWithChoices`
+  store name, two stage bindings, Explore binding, and all five selections
+  in one transaction — no partial profile save. Profile responses now include
+  `explore_binding` (with live validity) and `prompt_versions` resolved with
+  version number and label.
+- Routing (`cmd/doublangu-server/main.go`): the prompt handler is constructed
+  with the shared CSRF verifier and mounted behind owner auth in
+  `analysisMux`.
+- OpenAPI (`contracts/openapi.yaml`): extended AnalysisProfileInput/
+  AnalysisProfile, added AnalysisPrompt* schemas and the versions path.
+  Client regenerated with `npm --prefix web run generate:api` twice
+  (byte-identical outputs). Note: `npm --prefix web run validate:openapi`
+  fails on this machine identically at HEAD and with these changes (140
+  parser errors on pre-existing inline speech-workers schemas — verified by
+  diffing the error sets at HEAD vs. with the changes; zero new errors).
+- Web UI (section 6.1): `ProfileEditor.svelte` gained an Explore (on-demand)
+  fieldset reusing the provider/model/option controls and a Prompt versions
+  fieldset with five typed selectors (one per fixed type). The panel loads
+  the saved versions per type, prefills drafts from the profile response via
+  `profileDraftFromProfile`, and saves atomic complete profiles
+  (`profileRequestFromDraft` includes explore_binding and prompt_versions;
+  completeness blocks save until Explore and all five pins are chosen).
+  New `PromptLibraryPanel.svelte`: type selector, version list, read-only
+  saved text, and Edit-as-new-version with label — saving yields a new
+  version plus a success message stating nothing was activated, drafts
+  survive validation/network failures, and selections in an open profile
+  draft remain explicit. Mounted on the analysis settings page.
+- Tests: `internal/httpapi/prompts_test.go` (library CRUD contract, CSRF,
+  404/400/405 paths; profile choices create/preserve/partial/wrong-type);
+  `AnalysisPipelinePanel.test.ts` updated for the full editor contract plus
+  a new case proving two profiles pin different versions with Explore
+  model/effort independent of Translation while edits open in place;
+  `analysisProfiles.test.ts` extended for the completeness and wire shape;
+  new `PromptLibraryPanel.test.ts` proving saving never activates anything
+  and drafts survive failures.
+- Docs: `web/src/lib/settings/AGENTS.md` and `internal/pipeline/AGENTS.md`
+  updated (two article stages remain; Explore/prompt selections are
+  additional on-demand choices).
+
+### Verification
+
+Environment: Node v24.20.0 (`/opt/node-v24.20.0-linux-x64/bin`); Go 1.26.5
+toolchain PATH.
+
+- `go test ./internal/httpapi ./cmd/doublangu-server -count=1` — all ok.
+- `npm --prefix web run test:unit -- src/lib/settings` — 3 files, 34 tests,
+  all passed.
+- `npm --prefix web run check` — 0 errors, 0 warnings.
+- `npm --prefix web run generate:api` twice — byte-identical.
+- Prettier checked on changed web files.
+- Observation "through Settings, two profiles pin different versions; Explore
+  model/effort can differ from Translation; edits open in place" is evidenced
+  by the named component tests (jsdom; no live browser run in this
+  checkpoint).
+
 ## 2026-09-08 — Checkpoint 4 review approval
 
 Reviewed pending cp4 v01 against cp3 v01 (`0b92c0a`) using worktree fallback.

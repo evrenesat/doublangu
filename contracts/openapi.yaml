@@ -415,6 +415,49 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "405": { $ref: "#/components/responses/MethodNotAllowed" }
 
+  /api/v1/analysis/prompts/{prompt_type}/versions:
+    get:
+      summary: List saved versions of one prompt type
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: prompt_type
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/AnalysisPromptType" }
+      responses:
+        "200":
+          description: Saved immutable versions, newest first.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AnalysisPromptVersionListResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "405": { $ref: "#/components/responses/MethodNotAllowed" }
+    post:
+      summary: Save a new immutable prompt version
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      parameters:
+        - name: prompt_type
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/AnalysisPromptType" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AnalysisPromptVersionInput" }
+      responses:
+        "201":
+          description: The saved immutable version. Saving never activates it.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AnalysisPromptVersionSaveResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "405": { $ref: "#/components/responses/MethodNotAllowed" }
+
   /api/v1/analysis/settings:
     get:
       summary: Get the active analysis profile
@@ -2280,6 +2323,90 @@ components:
         bindings:
           type: array
           items: { $ref: "#/components/schemas/AnalysisProfileBindingInput" }
+        explore_binding:
+          allOf:
+            - $ref: "#/components/schemas/AnalysisExploreBindingInput"
+          description: Optional. Omitted on replacement preserves the stored Explore binding; omitted on creation copies the Translation binding.
+        prompt_versions:
+          allOf:
+            - $ref: "#/components/schemas/AnalysisPromptVersionSelections"
+          description: Optional. Omitted on replacement preserves the stored selections; omitted on creation seeds the builtin defaults. A present map must name exactly all five prompt types.
+    AnalysisExploreBindingInput:
+      type: object
+      additionalProperties: false
+      required: [provider_id, model_id, options]
+      properties:
+        provider_id: { type: string }
+        model_id: { type: string }
+        options: { type: object }
+    AnalysisPromptVersionSelections:
+      type: object
+      description: Exact saved version ids per prompt type; every type is required.
+      additionalProperties: false
+      required: [linguistic_analysis, article_translation, explore, sentence_translation, correction]
+      properties:
+        linguistic_analysis: { type: string }
+        article_translation: { type: string }
+        explore: { type: string }
+        sentence_translation: { type: string }
+        correction: { type: string }
+    AnalysisPromptVersionRefs:
+      type: object
+      description: Resolved pinned versions with human version number and label.
+      additionalProperties: false
+      required: [linguistic_analysis, article_translation, explore, sentence_translation, correction]
+      properties:
+        linguistic_analysis: { $ref: "#/components/schemas/AnalysisPromptVersionRef" }
+        article_translation: { $ref: "#/components/schemas/AnalysisPromptVersionRef" }
+        explore: { $ref: "#/components/schemas/AnalysisPromptVersionRef" }
+        sentence_translation: { $ref: "#/components/schemas/AnalysisPromptVersionRef" }
+        correction: { $ref: "#/components/schemas/AnalysisPromptVersionRef" }
+    AnalysisPromptVersionRef:
+      type: object
+      additionalProperties: false
+      required: [id, version, label]
+      properties:
+        id: { type: string }
+        version: { type: integer }
+        label: { type: string }
+    AnalysisPromptType:
+      type: string
+      enum: [linguistic_analysis, article_translation, explore, sentence_translation, correction]
+    AnalysisPromptVersionInput:
+      type: object
+      additionalProperties: false
+      required: [instruction_text]
+      properties:
+        instruction_text: { type: string, minLength: 1, maxLength: 65536 }
+        label: { type: string, maxLength: 80 }
+    AnalysisPromptVersion:
+      type: object
+      additionalProperties: false
+      required: [id, prompt_type, version, label, instruction_text, content_hash, created_at]
+      properties:
+        id: { type: string }
+        prompt_type: { $ref: "#/components/schemas/AnalysisPromptType" }
+        version: { type: integer }
+        label: { type: string }
+        instruction_text: { type: string }
+        content_hash: { type: string }
+        created_at: { type: string }
+    AnalysisPromptVersionListResponse:
+      type: object
+      additionalProperties: false
+      required: [prompt_type, versions]
+      properties:
+        prompt_type: { $ref: "#/components/schemas/AnalysisPromptType" }
+        versions:
+          type: array
+          items: { $ref: "#/components/schemas/AnalysisPromptVersion" }
+    AnalysisPromptVersionSaveResponse:
+      type: object
+      additionalProperties: false
+      required: [prompt_type, version]
+      properties:
+        prompt_type: { $ref: "#/components/schemas/AnalysisPromptType" }
+        version: { $ref: "#/components/schemas/AnalysisPromptVersion" }
     AnalysisProfileBindingInput:
       type: object
       additionalProperties: false
@@ -2349,6 +2476,14 @@ components:
         bindings:
           type: array
           items: { $ref: "#/components/schemas/AnalysisProfileBinding" }
+        explore_binding:
+          allOf:
+            - $ref: "#/components/schemas/AnalysisProfileBinding"
+          description: The on-demand Explore binding (transport stage id stays translation).
+        prompt_versions:
+          allOf:
+            - $ref: "#/components/schemas/AnalysisPromptVersionRefs"
+          description: The pinned prompt versions with resolved numbers and labels.
         is_active: { type: boolean }
     AnalysisProfileListResponse:
       type: object

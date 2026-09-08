@@ -5,7 +5,9 @@ import type {
 	AnalysisProfileBindingInput,
 	AnalysisProfileInput,
 	AnalysisProvider,
-	AnalysisProviderTestRequest
+	AnalysisProviderTestRequest,
+	AnalysisPromptType,
+	AnalysisPromptVersion
 } from '$lib/api/client';
 
 export const STAGE_LINGUISTIC = 'linguistic_analysis';
@@ -24,7 +26,36 @@ export interface StageDraft {
 export interface ProfileDraft {
 	name: string;
 	stages: Record<StageID, StageDraft>;
+	// The independent on-demand Explore binding. Its transport identity stays
+	// translation; the owner chooses provider/model/options exactly like a
+	// stage binding.
+	explore: StageDraft;
+	// The pinned saved version id per prompt type. Empty until chosen.
+	promptVersions: Partial<Record<AnalysisPromptType, string>>;
+	// New-draft initialization state: Explore copies the translation binding
+	// exactly once, when translation first becomes complete and Explore has
+	// not been edited. Existing profiles are always marked initialized and
+	// touched so editing them never recouples the bindings.
+	exploreInitialized: boolean;
+	exploreTouched: boolean;
 }
+
+/** The five fixed prompt types in UI order, with owner-facing labels. */
+export const PROMPT_TYPES: AnalysisPromptType[] = [
+	'linguistic_analysis',
+	'article_translation',
+	'explore',
+	'sentence_translation',
+	'correction'
+];
+
+export const PROMPT_LABELS: Record<AnalysisPromptType, string> = {
+	linguistic_analysis: 'Linguistic analysis',
+	article_translation: 'Translation',
+	explore: 'Explore',
+	sentence_translation: 'Sentence translation',
+	correction: 'Correction'
+};
 
 export const STAGE_LABELS: Record<StageID, string> = {
 	[STAGE_LINGUISTIC]: 'Linguistic analysis',
@@ -84,12 +115,96 @@ export function blankProfileDraft(): ProfileDraft {
 			options: defaultStageOptions('codex_app_server')
 		};
 	}
-	return { name: '', stages };
+	return {
+		name: '',
+		stages,
+		explore: {
+			stage_id: 'translation',
+			provider_id: '',
+			provider_type: 'codex_app_server',
+			model_id: '',
+			options: defaultStageOptions('codex_app_server')
+		},
+		promptVersions: {},
+		exploreInitialized: false,
+		exploreTouched: false
+	};
 }
 
-/** True when a draft is complete enough to save (both stages resolved). */
+/**
+ * Copies the translation binding into Explore exactly once, when translation
+ * first becomes complete (provider and model present) and Explore has not
+ * been edited. The copy uses a separate options object, so later edits to
+ * either binding stay independent. Returns true when the copy happened.
+ */
+export function initializeExploreFromTranslation(draft: ProfileDraft): boolean {
+	if (draft.exploreInitialized || draft.exploreTouched) return false;
+	const translation = draft.stages.translation;
+	if (translation.provider_id === '' || translation.model_id === '') return false;
+	draft.explore.provider_id = translation.provider_id;
+	draft.explore.provider_type = translation.provider_type;
+	draft.explore.model_id = translation.model_id;
+	draft.explore.options = { ...translation.options };
+	draft.exploreInitialized = true;
+	return true;
+}
+
+/**
+ * Builds a draft from a stored profile response: stage bindings, the Explore
+ * binding, and the pinned prompt versions. Missing selections stay empty so
+ * the owner must choose them explicitly before saving.
+ */
+export function profileDraftFromProfile(profile: AnalysisProfile, providersByID: Map<string, AnalysisProvider>): ProfileDraft {
+	const draft = blankProfileDraft();
+	draft.name = profile.name;
+	for (const binding of profile.bindings ?? []) {
+		if (!isStageId(binding.stage_id)) continue;
+		const stage = binding.stage_id;
+		const provider = providersByID.get(binding.provider_id);
+		draft.stages[stage] = {
+			stage_id: stage,
+			provider_id: binding.provider_id,
+			provider_type: provider?.type ?? '',
+			model_id: binding.model_id,
+			options: { ...(binding.options as Record<string, unknown>) }
+		};
+	}
+	if (profile.explore_binding) {
+		const provider = providersByID.get(profile.explore_binding.provider_id);
+		draft.explore = {
+			stage_id: 'translation',
+			provider_id: profile.explore_binding.provider_id,
+			provider_type: provider?.type ?? '',
+			model_id: profile.explore_binding.model_id,
+			options: { ...(profile.explore_binding.options as Record<string, unknown>) }
+		};
+	}
+	// Editing an existing profile never recouples Explore to Translation.
+	draft.exploreInitialized = true;
+	draft.exploreTouched = true;
+	for (const [promptType, ref] of Object.entries(profile.prompt_versions ?? {})) {
+		if (PROMPT_TYPES.includes(promptType as AnalysisPromptType)) {
+			draft.promptVersions[promptType as AnalysisPromptType] = ref.id;
+		}
+	}
+	return draft;
+}
+
+/** True when every fixed prompt type has an explicitly chosen saved version. */
+export function promptSelectionsComplete(draft: ProfileDraft): boolean {
+	return PROMPT_TYPES.every((promptType) => (draft.promptVersions[promptType] ?? '') !== '');
+}
+
+/** True when a draft is complete enough to save: name, both stage bindings,
+ * the independent Explore binding, and all five prompt selections resolved. */
 export function profileDraftComplete(draft: ProfileDraft): boolean {
-	return draft.name.trim().length > 0 && STAGES.every((stage) => draft.stages[stage].provider_id !== '' && draft.stages[stage].model_id !== '');
+	return (
+		draft.name.trim().length > 0 &&
+		STAGES.every((stage) => draft.stages[stage].provider_id !== '' && draft.stages[stage].model_id !== '') &&
+		draft.explore.provider_id !== '' &&
+		draft.explore.model_id !== '' &&
+		promptSelectionsComplete(draft)
+	);
 }
 
 /**
@@ -105,7 +220,8 @@ export function profileNameError(name: string): string {
 	return '';
 }
 
-/** Wire payload from a complete draft, with options canonicalized per type. */
+/** Wire payload from a complete draft, with options canonicalized per type
+ * and the Explore binding plus prompt selections included. */
 export function profileRequestFromDraft(draft: ProfileDraft): AnalysisProfileInput {
 	const bindings: AnalysisProfileBindingInput[] = STAGES.map((stage) => {
 		const entry = draft.stages[stage];
@@ -116,7 +232,28 @@ export function profileRequestFromDraft(draft: ProfileDraft): AnalysisProfileInp
 			options: canonicalWireOptions(entry)
 		};
 	});
-	return { name: draft.name.trim(), bindings };
+	const pinned = {
+		linguistic_analysis: draft.promptVersions.linguistic_analysis ?? '',
+		article_translation: draft.promptVersions.article_translation ?? '',
+		explore: draft.promptVersions.explore ?? '',
+		sentence_translation: draft.promptVersions.sentence_translation ?? '',
+		correction: draft.promptVersions.correction ?? ''
+	};
+	for (const [promptType, versionId] of Object.entries(pinned)) {
+		if (versionId === '') {
+			throw new Error(`prompt type ${promptType} has no pinned version`);
+		}
+	}
+	return {
+		name: draft.name.trim(),
+		bindings,
+		explore_binding: {
+			provider_id: draft.explore.provider_id,
+			model_id: draft.explore.model_id,
+			options: canonicalWireOptions(draft.explore)
+		},
+		prompt_versions: pinned
+	};
 }
 
 export function canonicalWireOptions(entry: StageDraft): Record<string, never> {
