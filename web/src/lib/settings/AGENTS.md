@@ -8,7 +8,13 @@ Owner-facing analysis pipeline configuration UI.
   stage metadata, default options per provider type, option canonicalization
   for the wire request, and completeness validation.
 - `AnalysisPipelinePanel.svelte` — provider cards (live health + catalog +
-  safe conformance test), profile CRUD, and active-profile selection.
+  safe conformance test), profile CRUD, and active-profile selection. It owns
+  the single profile draft/controller and decides when the editor opens.
+- `ProfileEditor.svelte` — the profile form itself, rendered inline: inside
+  the edited profile's list item (after its card), or below the New profile
+  button for creation. Presentational only; save errors surface inside it,
+  the name field is focused on open, focus returns to the opening trigger on
+  close, and switching away from a dirty draft asks before discarding.
 - There is no legacy model/effort surface: `/api/v1/analysis/settings` is the
   active-profile contract and the panel is the only analysis editor;
   endpoints and secrets are never shown or edited in the browser.

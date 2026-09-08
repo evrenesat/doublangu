@@ -14,6 +14,7 @@
 		type AnalysisProfile,
 		type AnalysisProvider
 	} from '$lib/api/client';
+	import ProfileEditor from '$lib/settings/ProfileEditor.svelte';
 	import {
 		STAGES,
 		STAGE_LABELS,
@@ -53,8 +54,19 @@
 	let editingProfile = $state<AnalysisProfile | null>(null);
 	let draft = $state<ProfileDraft>(blankProfileDraft());
 	let saving = $state(false);
+	// Profile save failures are shown inside the open editor; activation and
+	// deletion failures stay at the panel level.
 	let saveError = $state('');
+	let panelError = $state('');
 	let activationBusy = $state('');
+
+	// The editor renders inline: once opened, the panel remembers which trigger
+	// opened it so closing restores focus, and which draft it started from so a
+	// switch away from unsaved edits can ask before discarding.
+	type EditorTarget = { kind: 'existing'; profile: AnalysisProfile } | { kind: 'new' };
+	let editorTrigger: HTMLElement | null = null;
+	let baselineDraft: ProfileDraft = blankProfileDraft();
+	let pendingSwitch = $state<{ target: EditorTarget; trigger: HTMLElement | null } | null>(null);
 	// Conformance test state is keyed by provider::stage tuple so every
 	// stage/model/options result is tracked independently.
 	let testForms = $state<Record<string, TestForm>>({});
@@ -85,6 +97,9 @@
 	);
 	const nameBlocked = $derived(profileNameError(draft.name));
 	const canSave = $derived(profileDraftComplete(draft) && !saving && !draftBlocked && !optionsBlocked && !nameBlocked);
+	// Single explanation for a draft that cannot be saved yet, in the same
+	// precedence the inline editor status always used.
+	const draftBlockedText = $derived(nameBlocked || draftBlocked || optionsBlocked || 'Both stages need a provider and a model before saving.');
 
 	function errorMessage(cause: unknown, fallback: string): string {
 		if (cause instanceof DoublanguAPIError) return cause.message;
@@ -118,47 +133,87 @@
 
 	async function chooseActive(profileId: string): Promise<void> {
 		activationBusy = profileId;
-		saveError = '';
+		panelError = '';
 		try {
 			const result = await savePipelineAnalysisSettings({ active_profile_id: profileId });
 			activeProfileID = result.active_profile_id;
 		} catch (cause) {
-			saveError = errorMessage(cause, 'Could not activate the profile.');
+			panelError = errorMessage(cause, 'Could not activate the profile.');
 		} finally {
 			activationBusy = '';
 		}
 	}
 
-	function openNewProfile(): void {
-		editingProfile = null;
-		draft = blankProfileDraft();
+	/** True when the editor is already showing exactly this target. */
+	function editorShows(target: EditorTarget): boolean {
+		if (!editorOpen) return false;
+		if (target.kind === 'new') return editingProfile === null;
+		return editingProfile?.id === target.profile.id;
+	}
+
+	/** True when the open draft differs from the state it was opened with. */
+	function draftIsDirty(): boolean {
+		return JSON.stringify(draft) !== JSON.stringify(baselineDraft);
+	}
+
+	function startEditing(target: EditorTarget, trigger: HTMLElement | null): void {
+		if (target.kind === 'existing') {
+			const profile = target.profile;
+			draft = blankProfileDraft();
+			draft.name = profile.name;
+			for (const binding of profile.bindings) {
+				if (!STAGES.includes(binding.stage_id as StageID)) continue;
+				const stage = binding.stage_id as StageID;
+				const provider = providersByID.get(binding.provider_id);
+				draft.stages[stage] = {
+					stage_id: stage,
+					provider_id: binding.provider_id,
+					provider_type: provider?.type ?? '',
+					model_id: binding.model_id,
+					options: { ...binding.options }
+				};
+			}
+		} else {
+			draft = blankProfileDraft();
+		}
+		baselineDraft = JSON.parse(JSON.stringify(draft)) as ProfileDraft;
+		pendingSwitch = null;
+		editorTrigger = trigger;
+		editingProfile = target.kind === 'existing' ? target.profile : null;
 		editorOpen = true;
 		saveError = '';
 	}
 
-	function openProfileEditor(profile: AnalysisProfile): void {
-		editingProfile = profile;
-		draft = blankProfileDraft();
-		draft.name = profile.name;
-		for (const binding of profile.bindings) {
-			if (!STAGES.includes(binding.stage_id as StageID)) continue;
-			const stage = binding.stage_id as StageID;
-			const provider = providersByID.get(binding.provider_id);
-			draft.stages[stage] = {
-				stage_id: stage,
-				provider_id: binding.provider_id,
-				provider_type: provider?.type ?? '',
-				model_id: binding.model_id,
-				options: { ...binding.options }
-			};
+	/**
+	 * Open the inline editor for a target. Only one editor exists; switching
+	 * away from a dirty draft first offers an explicit discard/cancel choice.
+	 */
+	function requestEditor(target: EditorTarget, trigger: HTMLElement | null): void {
+		if (editorShows(target)) return;
+		if (editorOpen && draftIsDirty()) {
+			pendingSwitch = { target, trigger };
+			return;
 		}
-		editorOpen = true;
-		saveError = '';
+		startEditing(target, trigger);
+	}
+
+	function discardPendingSwitch(): void {
+		const pending = pendingSwitch;
+		if (!pending) return;
+		startEditing(pending.target, pending.trigger);
+	}
+
+	function keepEditingDraft(): void {
+		pendingSwitch = null;
 	}
 
 	function closeEditor(): void {
 		editorOpen = false;
 		editingProfile = null;
+		pendingSwitch = null;
+		const trigger = editorTrigger;
+		editorTrigger = null;
+		trigger?.focus();
 	}
 
 	function assignProvider(stage: StageID, providerId: string): void {
@@ -286,8 +341,8 @@
 				await createAnalysisProfile(payload);
 			}
 			profiles = (await listAnalysisProfiles()).profiles;
-			editorOpen = false;
-			editingProfile = null;
+			// Only a successful save closes the editor; failures stay in place.
+			closeEditor();
 			void loadAll();
 		} catch (cause) {
 			saveError = errorMessage(cause, 'Could not save the profile.');
@@ -298,17 +353,13 @@
 
 	async function removeProfile(profile: AnalysisProfile): Promise<void> {
 		if (profile.is_active || profile.id === activeProfileID || activationBusy) return;
-		saveError = '';
+		panelError = '';
 		try {
 			await deleteAnalysisProfile(profile.id);
 			profiles = (await listAnalysisProfiles()).profiles;
 		} catch (cause) {
-			saveError = errorMessage(cause, 'Could not delete the profile.');
+			panelError = errorMessage(cause, 'Could not delete the profile.');
 		}
-	}
-
-	function nameIssue(): string {
-		return profileNameError(draft.name);
 	}
 </script>
 
@@ -324,7 +375,7 @@
 				<div class="profile-card active-card">
 					<div class="active-profile-top">
 						<strong>{activeProfile.name}</strong>
-						<button type="button" class="secondary" onclick={() => openProfileEditor(activeProfile)}>Edit</button>
+						<button type="button" class="secondary" onclick={(event) => requestEditor({ kind: 'existing', profile: activeProfile }, event.currentTarget)}>Edit</button>
 					</div>
 					{#each activeProfile.bindings as binding (binding.stage_id)}
 						<div class="binding-row">
@@ -343,50 +394,97 @@
 			{/if}
 		</section>
 
-		{#if saveError}<p class="error-text" role="alert">{saveError}</p>{/if}
+		{#if panelError}<p class="error-text" role="alert">{panelError}</p>{/if}
 
 		<section class="profiles-section" aria-labelledby="profiles-heading">
 			<div class="profiles-heading">
 				<h2 id="profiles-heading">Profiles</h2>
-				<button type="button" class="secondary" onclick={openNewProfile}>New profile</button>
+				<button type="button" class="secondary" onclick={(event) => requestEditor({ kind: 'new' }, event.currentTarget)}>New profile</button>
 			</div>
+			{#if editorOpen && editingProfile === null}
+				<ProfileEditor
+					{draft}
+					heading="New profile"
+					ariaLabel="New profile"
+					saveLabel="Create profile"
+					{saving}
+					{canSave}
+					{saveError}
+					blockedText={draftBlockedText}
+					nameIssue={nameBlocked}
+					confirmMessage={pendingSwitch ? 'You have unsaved changes. Discard them and switch?' : ''}
+					enabledProviders={enabledProviders}
+					{providersByID}
+					onassignprovider={assignProvider}
+					onchoosemodel={chooseBindingModel}
+					onsave={() => void saveProfile()}
+					oncancel={closeEditor}
+					ondiscardswitch={discardPendingSwitch}
+					onkeepediting={keepEditingDraft}
+				/>
+			{/if}
 			{#if profiles.length === 0}
 				<p class="muted">No profiles yet. Create one to start analyzing through the pipeline.</p>
 			{:else}
 				<ul class="profile-list" role="list">
 					{#each profiles as profile (profile.id)}
 						{@const unusable = invalidBindings(profile)}
-						<li class="profile-row" class:active={profile.is_active || profile.id === activeProfileID}>
-							<label class="profile-activate">
-								<input
-									type="radio"
-									name="active-profile"
-									checked={profile.is_active || profile.id === activeProfileID}
-									disabled={activationBusy !== '' || !profileUsable(profile)}
-									onchange={() => void chooseActive(profile.id)}
-								/>
-								<span class="profile-copy">
-									<strong>{profile.name}</strong>
-									<small class="muted">{bindingSummary(profile)}</small>
-									{#each unusable as binding (binding.stage_id)}
-										<small class="error-text" role="status">{stageLabel(binding.stage_id)}: {binding.validity_reason ?? 'not usable'}</small>
-									{/each}
-								</span>
-							</label>
-							<div class="profile-actions">
-								{#if activationBusy === profile.id}
-									<span class="muted" role="status">Activating…</span>
-								{/if}
-								<button type="button" class="secondary" onclick={() => openProfileEditor(profile)}>Edit</button>
-								<button
-									type="button"
-									class="secondary danger"
-									disabled={profile.is_active || profile.id === activeProfileID}
-									onclick={() => void removeProfile(profile)}
-								>
-									Delete
-								</button>
+						{@const editingThis = editorOpen && editingProfile?.id === profile.id}
+						<li class="profile-row" class:active={profile.is_active || profile.id === activeProfileID} class:editing={editingThis}>
+							<div class="profile-card-line">
+								<label class="profile-activate">
+									<input
+										type="radio"
+										name="active-profile"
+										checked={profile.is_active || profile.id === activeProfileID}
+										disabled={activationBusy !== '' || !profileUsable(profile)}
+										onchange={() => void chooseActive(profile.id)}
+									/>
+									<span class="profile-copy">
+										<strong>{profile.name}</strong>
+										<small class="muted">{bindingSummary(profile)}</small>
+										{#each unusable as binding (binding.stage_id)}
+											<small class="error-text" role="status">{stageLabel(binding.stage_id)}: {binding.validity_reason ?? 'not usable'}</small>
+										{/each}
+									</span>
+								</label>
+								<div class="profile-actions">
+									{#if activationBusy === profile.id}
+										<span class="muted" role="status">Activating…</span>
+									{/if}
+									<button type="button" class="secondary" onclick={(event) => requestEditor({ kind: 'existing', profile }, event.currentTarget)}>Edit</button>
+									<button
+										type="button"
+										class="secondary danger"
+										disabled={profile.is_active || profile.id === activeProfileID}
+										onclick={() => void removeProfile(profile)}
+									>
+										Delete
+									</button>
+								</div>
 							</div>
+							{#if editingThis}
+								<ProfileEditor
+									{draft}
+									heading={`Edit ${profile.name}`}
+									ariaLabel="Edit profile"
+									saveLabel="Save changes"
+									{saving}
+									{canSave}
+									{saveError}
+									blockedText={draftBlockedText}
+									nameIssue={nameBlocked}
+									confirmMessage={pendingSwitch ? 'You have unsaved changes. Discard them and switch?' : ''}
+									enabledProviders={enabledProviders}
+									{providersByID}
+									onassignprovider={assignProvider}
+									onchoosemodel={chooseBindingModel}
+									onsave={() => void saveProfile()}
+									oncancel={closeEditor}
+									ondiscardswitch={discardPendingSwitch}
+									onkeepediting={keepEditingDraft}
+								/>
+							{/if}
 						</li>
 					{/each}
 				</ul>
@@ -518,93 +616,6 @@
 				</ul>
 			</section>
 		{/if}
-
-		{#if editorOpen}
-			<div class="profile-editor" role="group" aria-label={editingProfile ? 'Edit profile' : 'New profile'}>
-				<div class="editor-heading">
-					<h3>{editingProfile ? `Edit ${editingProfile.name}` : 'New profile'}</h3>
-					<button type="button" class="secondary" onclick={closeEditor}>Cancel</button>
-				</div>
-				<label class="field">
-					<span>Profile name</span>
-					<input type="text" maxlength="80" bind:value={draft.name} placeholder="e.g. Mixed codex + omlx" />
-					{#if draft.name && nameIssue()}<small class="error-text">{nameIssue()}</small>{/if}
-				</label>
-
-				{#each STAGES as stage (stage)}
-					{@const stageDraft = draft.stages[stage]}
-					{@const selectedProvider = providersByID.get(stageDraft.provider_id)}
-					{@const stageEfforts = supportedEfforts(selectedProvider, stageDraft.model_id)}
-					<fieldset class="binding-editor">
-						<legend>{STAGE_LABELS[stage]}</legend>
-						<div class="binding-fields">
-							<label class="field">
-								<span>Provider</span>
-								<select value={stageDraft.provider_id} onchange={(event) => assignProvider(stage, event.currentTarget.value)}>
-									<option value="">Select a provider</option>
-									{#each enabledProviders as provider (provider.id)}
-										<option value={provider.id}>{provider.label ?? provider.id}</option>
-									{/each}
-								</select>
-							</label>
-							<label class="field">
-								<span>Model</span>
-								{#if selectedProvider && modelChoices(selectedProvider).length > 0}
-									<select value={stageDraft.model_id} onchange={(event) => chooseBindingModel(stage, event.currentTarget.value)}>
-										{#each modelChoices(selectedProvider) as modelId (modelId)}
-											<option value={modelId}>{modelId}</option>
-										{/each}
-									</select>
-								{:else}
-									<input
-										type="text"
-										bind:value={stageDraft.model_id}
-										onchange={(event) => chooseBindingModel(stage, event.currentTarget.value)}
-										placeholder={selectedProvider ? 'Type a model id…' : 'Select a provider first'}
-										disabled={!stageDraft.provider_id}
-									/>
-								{/if}
-							</label>
-						</div>
-						{#if usesNumericStageOptions(stageDraft.provider_type)}
-							<div class="binding-fields">
-								<label class="field">
-									<span>Temperature (milli)</span>
-									<input type="number" min="0" max="2000" bind:value={stageDraft.options.temperature_milli} />
-								</label>
-								<label class="field">
-									<span>Max output tokens</span>
-									<input type="number" min="1024" max="65536" bind:value={stageDraft.options.max_output_tokens} />
-								</label>
-							</div>
-						{:else}
-							<label class="field">
-								<span>Reasoning effort</span>
-								{#if stageEfforts.length > 0}
-									<select value={String(stageDraft.options.reasoning_effort ?? stageEfforts[0])} onchange={(event) => (stageDraft.options.reasoning_effort = event.currentTarget.value)}>
-										{#each stageEfforts as effort (effort)}
-											<option value={effort}>{effort}</option>
-										{/each}
-									</select>
-								{:else}
-									<input type="text" value={String(stageDraft.options.reasoning_effort ?? '')} disabled />
-									<small class="muted">The catalog for this model lists no reasoning efforts; choose a model that advertises supported efforts.</small>
-								{/if}
-							</label>
-						{/if}
-					</fieldset>
-				{/each}
-
-				<div class="editor-actions">
-					<button type="button" class="primary" disabled={!canSave} onclick={() => void saveProfile()}>
-						{saving ? 'Saving…' : editingProfile ? 'Save changes' : 'Create profile'}
-					</button>
-					{#if !canSave && draft.name}
-						<span class="muted" role="status">{nameBlocked || draftBlocked || optionsBlocked || 'Both stages need a provider and a model before saving.'}</span>
-					{/if}
-				</div>
-			</div>
-		{/if}
 	{/if}
 </section>
 
@@ -632,8 +643,7 @@
 	}
 
 	.active-profile-top,
-	.profiles-heading,
-	.editor-heading {
+	.profiles-heading {
 		display: flex;
 		align-items: start;
 		justify-content: space-between;
@@ -694,6 +704,19 @@
 		padding: 0.7rem 0.85rem;
 		border: 1px solid var(--color-border);
 		border-radius: 0.55rem;
+	}
+
+	/* While its editor is open the row stacks: card line, then the form. */
+	.profile-row.editing {
+		flex-direction: column;
+		align-items: stretch;
+	}
+
+	.profile-card-line {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.9rem;
 	}
 
 	.profile-row.active {
@@ -822,23 +845,12 @@
 		font-size: 0.88rem;
 	}
 
-	.primary,
 	.secondary {
 		border: 1px solid var(--color-border);
 		border-radius: 0.5rem;
 		padding: 0.45rem 0.7rem;
 		cursor: pointer;
 		font: inherit;
-	}
-
-	.primary {
-		background: var(--color-accent);
-		color: #171325;
-		border-color: transparent;
-		font-weight: 700;
-	}
-
-	.secondary {
 		background: var(--color-surface-raised);
 		color: var(--color-text);
 	}
@@ -854,30 +866,6 @@
 
 	.test-button {
 		white-space: nowrap;
-	}
-
-	.profile-editor {
-		padding: 1rem;
-		border: 1px solid var(--color-border);
-		border-radius: 0.6rem;
-		background: var(--color-surface-raised);
-		display: grid;
-		gap: 0.9rem;
-	}
-
-	.binding-editor {
-		border: 1px solid var(--color-border);
-		border-radius: 0.5rem;
-		padding: 0.7rem 0.8rem 0.85rem;
-		display: grid;
-		gap: 0.7rem;
-		margin: 0;
-	}
-
-	.binding-fields {
-		display: grid;
-		grid-template-columns: 1fr 1fr;
-		gap: 0.7rem;
 	}
 
 	.field {
@@ -897,16 +885,14 @@
 		font: inherit;
 	}
 
-	.editor-actions {
-		display: flex;
-		align-items: center;
-		gap: 0.8rem;
-	}
-
 	@media (max-width: 600px) {
-		.profile-row {
+		.profile-card-line {
 			align-items: start;
 			flex-direction: column;
+		}
+
+		.profile-row.editing {
+			align-items: stretch;
 		}
 
 		.binding-row {
@@ -914,17 +900,8 @@
 			gap: 0.1rem;
 		}
 
-		.binding-fields {
-			grid-template-columns: 1fr;
-		}
-
 		.tuple-fields {
 			grid-template-columns: 1fr;
-		}
-
-		.editor-actions {
-			align-items: start;
-			flex-direction: column;
 		}
 	}
 </style>

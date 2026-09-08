@@ -1,5 +1,73 @@
 # Development Log
 
+## 2026-09-08 — Checkpoint 1 review approval
+
+Reviewer approved `cp1 v01` using the worktree fallback against `7779c6d`; no material findings. Re-ran with `PATH=/opt/node-v24.20.0-linux-x64/bin:$PATH`: `npm --prefix web run test:unit -- src/lib/settings` (31 passed) and `npm --prefix web run check` (0 errors/warnings). `git diff --check` passed. No browser, backend or live-provider verification in this scoped review. Reviewer creates the checkpoint commit; ignored plan/review artifacts remain local.
+
+## 2026-09-08 — Checkpoint 1: profile editor opens inline below the selected card
+
+Implemented Checkpoint 1 of
+`plans/in-progress/reader-settings-prompt-experiments-20260908.md` on
+`aflow-reader-settings-prompt-experiments-20260908-20260908-200245`
+(baseline `7779c6d`). Verified work is left uncommitted for review; no
+checkpoint commits were created.
+
+### Implementation
+
+- New `web/src/lib/settings/ProfileEditor.svelte`: the profile form
+  extracted from `AnalysisPipelinePanel.svelte`, presentational only. The
+  panel keeps the single draft/controller; the editor receives the draft,
+  save state, blocked/issue text, and callbacks, and mutates nothing beyond
+  the draft fields it binds.
+- Inline placement: editing a profile renders the form inside that profile's
+  list item directly after its card line (first, middle, or last — the form
+  follows the card instead of appearing at the page bottom). Creation renders
+  directly below the New profile button. Only one draft and one editor exist;
+  the active-profile card's Edit opens the same inline editor in the list.
+- In-place save errors: profile save failures now render inside the editor
+  (`role="alert"`) and only a successful save closes it. Activation and
+  deletion failures keep using the panel-level alert (new `panelError`
+  state; `saveError` is the editor's).
+- Focus: the name field is focused when the editor mounts; closing (cancel
+  or successful save) restores focus to the trigger that opened it.
+- Dirty-draft guard: opening a different profile — or New profile — while
+  the open draft has unsaved edits asks first (inline alert with
+  "Discard changes" / "Keep editing"). Discard switches and rebuilds the
+  draft from the target; Keep editing preserves the unsaved draft. An
+  untouched editor still switches immediately, and clicking the trigger of
+  the already-open editor is a no-op.
+- Binding semantics unchanged: `assignProvider`/`chooseBindingModel`,
+  option canonicalization, numeric vs. effort controls, validation
+  (`profileDraftComplete`/`bindingEffortError`/`stageOptionsError`), and
+  the save payloads are exactly as before. No backend, provider-call,
+  prompt, or navigation changes.
+- Tests (`AnalysisPipelinePanel.test.ts`): added coverage for inline
+  placement at first/middle/last card with name-field focus and single
+  editor, the dirty-draft discard/keep guard for profile and creation
+  switches, and in-place save failure with focus restoration on cancel.
+  Existing cases (conformance tuples, mac_relay numeric editor fields,
+  create-without-activate, manual activation) pass unchanged.
+- Docs: `web/src/lib/settings/AGENTS.md` scope updated for
+  `ProfileEditor.svelte` and the inline/focus/discard behavior.
+
+### Verification
+
+Environment: Node v24.20.0 (`/opt/node-v24.20.0-linux-x64/bin`) because the
+default node v22 does not satisfy `web`'s `engines: node >= 24`;
+dependencies installed with `npm --prefix web ci`.
+
+- `npm --prefix web run test:unit -- src/lib/settings` — 2 files, 31 tests,
+  all passed (3 new inline-editor cases included).
+- `npm --prefix web run check` — 0 errors, 0 warnings.
+- Prettier check on the three changed web files — clean.
+- `git status --short` / `git diff --name-only` / `git diff --stat` — dirty
+  set limited to `web/src/lib/settings/{AGENTS.md,AnalysisPipelinePanel.svelte,AnalysisPipelinePanel.test.ts}`
+  plus new `web/src/lib/settings/ProfileEditor.svelte`.
+- Observation "editing the first, middle or last card opens there;
+  saving/canceling behaves correctly without losing an unsaved draft" is
+  evidenced by the new component cases above (jsdom component tests; no
+  browser/E2E run in this checkpoint).
+
 ## 2026-09-07 — Reader brackets removed and on-demand dictionary explore implemented
 
 Implemented `plans/reader-explore-dictionary-handoff.md` (baseline

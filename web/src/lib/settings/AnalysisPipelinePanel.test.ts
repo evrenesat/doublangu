@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, expect, it, vi } from 'vitest';
 import AnalysisPipelinePanel from './AnalysisPipelinePanel.svelte';
 
@@ -257,4 +257,146 @@ it('creating a profile does not activate it, and manual activation saves explici
 		([url, init]) => url === '/api/v1/analysis/settings' && (init?.method ?? 'GET') === 'PUT'
 	);
 	expect(save?.[1]?.body).toBe(JSON.stringify({ active_profile_id: 'profile-1' }));
+});
+
+function codexBindings(): Array<{ stage_id: string; provider_id: string; model_id: string; options: Record<string, string> }> {
+	return [
+		{ stage_id: 'linguistic_analysis', provider_id: 'codex-app-server', model_id: 'model-a', options: { reasoning_effort: 'low' } },
+		{ stage_id: 'translation', provider_id: 'codex-app-server', model_id: 'model-a', options: { reasoning_effort: 'low' } }
+	];
+}
+
+function rowEditors(): NodeListOf<Element> {
+	return document.querySelectorAll('ul.profile-list > li .profile-editor');
+}
+
+/** The profile list row at a position, re-queried so it is never stale. */
+function listRow(index: number): HTMLElement {
+	return document.querySelectorAll('ul.profile-list > li')[index] as HTMLElement;
+}
+
+it('opens the profile editor directly below the edited card, wherever that card sits', async () => {
+	document.cookie = 'csrf_token=test-csrf-token; Path=/';
+	const profiles = ['Alpha', 'Beta', 'Gamma'].map((name, index) => ({
+		id: `profile-${index + 1}`,
+		name,
+		is_active: index === 0,
+		bindings: codexBindings()
+	}));
+	stubStandardFetch({ providers: [provider], profiles, activeProfileID: 'profile-1' });
+
+	render(AnalysisPipelinePanel);
+	await waitFor(() => expect(screen.getByRole('heading', { name: 'Profiles' })).toBeTruthy());
+
+	const rows = document.querySelectorAll('ul.profile-list > li');
+	expect(rows).toHaveLength(3);
+	for (const [index, row] of [...rows].entries()) {
+		await fireEvent.click(within(row as HTMLElement).getByRole('button', { name: 'Edit' }));
+
+		// Exactly one editor exists, inside this profile's row, right after its card.
+		expect(row.querySelector('.profile-editor')).toBeTruthy();
+		expect(rowEditors()).toHaveLength(1);
+		expect(row.querySelector('.profile-card-line + .profile-editor')).toBeTruthy();
+
+		// The form is pre-filled with the profile and the name field is focused.
+		const nameInput = row.querySelector<HTMLInputElement>('input[placeholder="e.g. Mixed codex + omlx"]');
+		expect(nameInput?.value).toBe(['Alpha', 'Beta', 'Gamma'][index]);
+		expect(document.activeElement).toBe(nameInput);
+
+		await fireEvent.click(within(row.querySelector('.profile-editor') as HTMLElement).getByRole('button', { name: 'Cancel' }));
+		expect(row.querySelector('.profile-editor')).toBeNull();
+	}
+});
+
+it('asks before discarding a dirty draft when switching profiles or to creation', async () => {
+	document.cookie = 'csrf_token=test-csrf-token; Path=/';
+	const profiles = ['Alpha', 'Beta'].map((name, index) => ({
+		id: `profile-${index + 1}`,
+		name,
+		is_active: index === 0,
+		bindings: codexBindings()
+	}));
+	stubStandardFetch({ providers: [provider], profiles, activeProfileID: 'profile-1' });
+
+	render(AnalysisPipelinePanel);
+	await waitFor(() => expect(screen.getByRole('heading', { name: 'Profiles' })).toBeTruthy());
+	expect(document.querySelectorAll('ul.profile-list > li')).toHaveLength(2);
+
+	await fireEvent.click(within(listRow(0)).getByRole('button', { name: 'Edit' }));
+	const alphaEditor = listRow(0).querySelector('.profile-editor') as HTMLElement;
+	await fireEvent.input(alphaEditor.querySelector('input[type="text"]') as HTMLInputElement, { target: { value: 'Alpha rewritten' } });
+
+	// Clicking Edit on another profile keeps the draft and asks first.
+	await fireEvent.click(within(listRow(1)).getByRole('button', { name: 'Edit' }));
+	expect(listRow(1).querySelector('.profile-editor')).toBeNull();
+	expect(within(alphaEditor).getByRole('alert').textContent).toContain('unsaved changes');
+
+	// Keep editing preserves the unsaved draft in place.
+	await fireEvent.click(within(alphaEditor).getByRole('button', { name: 'Keep editing' }));
+	expect(within(alphaEditor).queryByRole('button', { name: 'Discard changes' })).toBeNull();
+	expect((alphaEditor.querySelector('input[type="text"]') as HTMLInputElement).value).toBe('Alpha rewritten');
+
+	// Creation also goes through the same explicit discard choice.
+	await fireEvent.click(screen.getByRole('button', { name: 'New profile' }));
+	expect(within(alphaEditor).getByRole('alert').textContent).toContain('unsaved changes');
+	await fireEvent.click(within(alphaEditor).getByRole('button', { name: 'Discard changes' }));
+
+	// The discarded switch opens the creation editor below the New profile button.
+	const section = document.querySelector('.profiles-section') as HTMLElement;
+	const creationEditor = section.querySelector(':scope > .profile-editor') as HTMLElement;
+	expect(creationEditor).toBeTruthy();
+	expect(creationEditor.querySelector('h3')?.textContent).toBe('New profile');
+	expect(rowEditors()).toHaveLength(0);
+
+	// An untouched editor still switches immediately without asking.
+	await fireEvent.click(within(listRow(0)).getByRole('button', { name: 'Edit' }));
+	const reopened = listRow(0).querySelector('.profile-editor') as HTMLElement;
+	expect(within(reopened).queryByRole('alert')).toBeNull();
+	expect((reopened.querySelector('input[type="text"]') as HTMLInputElement).value).toBe('Alpha');
+});
+
+it('shows profile save failures in place, keeps the editor open, and restores focus on cancel', async () => {
+	document.cookie = 'csrf_token=test-csrf-token; Path=/';
+	const fetchMock = vi.fn(async (input: string, init: RequestInit = {}): Promise<Response> => {
+		const method = init.method ?? 'GET';
+		if (input === '/api/v1/analysis/providers' && method === 'GET') return json(200, { providers: [provider] });
+		if (input === '/api/v1/analysis/profiles' && method === 'GET') return json(200, { profiles: [] });
+		if (input === '/api/v1/analysis/settings' && method === 'GET') return json(200, { active_profile_id: '' });
+		if (input === '/api/v1/analysis/profiles' && method === 'POST') {
+			return json(500, { error: 'Profile name already exists', code: 'v1.conflict' });
+		}
+		throw new Error(`unexpected request ${method} ${input}`);
+	});
+	vi.stubGlobal('fetch', fetchMock);
+
+	render(AnalysisPipelinePanel);
+	await waitFor(() => expect(screen.getByRole('button', { name: 'New profile' })).toBeTruthy());
+	const newButton = screen.getByRole('button', { name: 'New profile' });
+	await fireEvent.click(newButton);
+
+	// Creation renders below the New profile button, not at the page bottom.
+	const section = document.querySelector('.profiles-section') as HTMLElement;
+	const editor = section.querySelector(':scope > .profile-editor') as HTMLElement;
+	expect(editor).toBeTruthy();
+	expect(editor.previousElementSibling?.classList.contains('profiles-heading')).toBe(true);
+
+	await fireEvent.input(editor.querySelector('input[type="text"]') as HTMLInputElement, { target: { value: 'Mixed' } });
+	const providerSelects = screen
+		.getAllByRole('combobox')
+		.filter((select) => select.querySelector('option')?.textContent === 'Select a provider');
+	for (const select of providerSelects) {
+		await fireEvent.change(select, { target: { value: 'codex-app-server' } });
+	}
+	await waitFor(() => expect(screen.getByRole('button', { name: 'Create profile' }).hasAttribute('disabled')).toBe(false));
+
+	await fireEvent.click(screen.getByRole('button', { name: 'Create profile' }));
+	// The server failure appears inside the editor and the draft survives.
+	await waitFor(() => expect(within(editor).getByRole('alert').textContent).toBe('Profile name already exists'));
+	expect(section.querySelector(':scope > .profile-editor')).toBe(editor);
+	expect((editor.querySelector('input[type="text"]') as HTMLInputElement).value).toBe('Mixed');
+
+	// Cancel closes the editor and returns focus to the trigger that opened it.
+	await fireEvent.click(within(editor).getByRole('button', { name: 'Cancel' }));
+	expect(section.querySelector(':scope > .profile-editor')).toBeNull();
+	expect(document.activeElement).toBe(newButton);
 });
