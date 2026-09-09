@@ -365,3 +365,32 @@ func PublishTx(ctx context.Context, tx *sql.Tx, entryID library.ULID, jobID stri
 	}
 	return nil
 }
+
+// SetLastRunTx points the entry's preflight and generation evidence at one
+// analysis run. Callers invoke it right after creating the run so concurrent
+// requests observe the in-flight attempt even before last_job_id exists.
+func SetLastRunTx(ctx context.Context, tx *sql.Tx, entryID library.ULID, runID string) error {
+	_, err := tx.ExecContext(ctx, `UPDATE dictionary_entry SET last_run_id = ? WHERE id = ?`, runID, entryID.String())
+	return err
+}
+
+// SetLastRun is the standalone form of SetLastRunTx.
+func (s *Store) SetLastRun(ctx context.Context, entryID library.ULID, runID string) error {
+	_, err := s.db.Exec(ctx, `UPDATE dictionary_entry SET last_run_id = ? WHERE id = ?`, runID, entryID.String())
+	return err
+}
+
+// LastRunID returns the entry's retained run pointer, or empty.
+func (s *Store) LastRunID(ctx context.Context, entryID library.ULID) (string, error) {
+	var runID sql.NullString
+	if err := s.db.QueryRow(ctx, `SELECT last_run_id FROM dictionary_entry WHERE id = ?`, entryID.String()).Scan(&runID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil
+		}
+		return "", err
+	}
+	if !runID.Valid {
+		return "", nil
+	}
+	return runID.String, nil
+}

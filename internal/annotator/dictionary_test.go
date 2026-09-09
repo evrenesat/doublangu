@@ -157,7 +157,7 @@ func TestDictionaryOutputSchema_ClosedAndBounded(t *testing.T) {
 func TestGenerateDictionary_Success(t *testing.T) {
 	input := dictionaryWordInput()
 	provider := &scriptedSessionProvider{descriptor: ProviderDescriptor{ID: "codex-app-server", Type: ProviderTypeCodexAppServer, Enabled: true}, turns: []string{dictionaryValidResponse(input)}}
-	result, err := GenerateDictionary(context.Background(), provider, dictionaryBinding(t), input)
+	result, err := GenerateDictionary(context.Background(), provider, dictionaryBinding(t), input, DefaultExploreStagePrompts())
 	if err != nil {
 		t.Fatalf("generate: %v", err)
 	}
@@ -179,7 +179,7 @@ func TestGenerateDictionary_CorrectiveTurnRepairs(t *testing.T) {
 		descriptor: ProviderDescriptor{ID: "codex-app-server", Type: ProviderTypeCodexAppServer, Enabled: true},
 		turns:      []string{broken, dictionaryValidResponse(input)},
 	}
-	result, err := GenerateDictionary(context.Background(), provider, dictionaryBinding(t), input)
+	result, err := GenerateDictionary(context.Background(), provider, dictionaryBinding(t), input, DefaultExploreStagePrompts())
 	if err != nil {
 		t.Fatalf("generate with correction: %v", err)
 	}
@@ -204,7 +204,7 @@ func TestGenerateDictionary_CorrectionExhaustionFails(t *testing.T) {
 		descriptor: ProviderDescriptor{ID: "codex-app-server", Type: ProviderTypeCodexAppServer, Enabled: true},
 		turns:      []string{broken, broken, broken},
 	}
-	result, err := GenerateDictionary(context.Background(), provider, dictionaryBinding(t), input)
+	result, err := GenerateDictionary(context.Background(), provider, dictionaryBinding(t), input, DefaultExploreStagePrompts())
 	if err == nil {
 		t.Fatal("exhausted corrections must fail")
 	}
@@ -229,7 +229,7 @@ func TestGenerateDictionary_WrongIdentityRejected(t *testing.T) {
 	input := dictionaryWordInput()
 	wrong := strings.Replace(dictionaryValidResponse(input), `"lookup_form":"bank"`, `"lookup_form":"banktje"`, 1)
 	provider := &scriptedSessionProvider{descriptor: ProviderDescriptor{ID: "codex-app-server", Type: ProviderTypeCodexAppServer, Enabled: true}, turns: []string{wrong}}
-	if _, err := GenerateDictionary(context.Background(), provider, dictionaryBinding(t), input); err == nil {
+	if _, err := GenerateDictionary(context.Background(), provider, dictionaryBinding(t), input, DefaultExploreStagePrompts()); err == nil {
 		t.Fatal("changed lookup identity must fail validation")
 	}
 }
@@ -245,7 +245,7 @@ func TestGenerateDictionary_TransportFamiliesShareValidationBoundary(t *testing.
 				descriptor: ProviderDescriptor{ID: "family-" + family, Type: family, Enabled: true},
 				turns:      []string{dictionaryValidResponse(input)},
 			}
-			result, err := GenerateDictionary(context.Background(), provider, dictionaryBinding(t), input)
+			result, err := GenerateDictionary(context.Background(), provider, dictionaryBinding(t), input, DefaultExploreStagePrompts())
 			if err != nil {
 				t.Fatalf("generate via %s: %v", family, err)
 			}
@@ -296,7 +296,7 @@ func TestLiveDictionary(t *testing.T) {
 			LookupKind: semantics.DictionaryLookupExpression, SourceLanguage: "nl", TargetLanguage: "en",
 		},
 	} {
-		result, err := GenerateDictionary(context.Background(), provider, binding, input)
+		result, err := GenerateDictionary(context.Background(), provider, binding, input, DefaultExploreStagePrompts())
 		if err != nil {
 			t.Fatalf("live dictionary %q: %v", input.LookupForm, err)
 		}

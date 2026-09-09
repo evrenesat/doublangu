@@ -31,7 +31,7 @@ func TestRunnerPublicationAndFencing(t *testing.T) {
 	articleID := library.ULID("01J00000000000000000000ART1")
 	ref := Reference{OccurrenceID: library.ULID("01J00000000000000000000WRD1")}
 
-	envelope, _, started, err := service.Start(ctx, articleID, ref, false)
+	envelope, _, started, err := service.Start(ctx, articleID, ref, false, false)
 	if err != nil || !started {
 		t.Fatalf("start: err=%v started=%t", err, started)
 	}
@@ -74,7 +74,7 @@ func TestRunnerPublicationAndFencing(t *testing.T) {
 		fixtureArticle(t, db, "01J00000000000000000000ART2", "Fixture 2")
 		fixtureBlock(t, db, "01J00000000000000000000BLK2", "01J00000000000000000000ART2", "Het plan.")
 		fixtureWordOccurrence(t, db, "01J00000000000000000000WRD2", "01J00000000000000000000BLK2", "plan", "")
-		envelope, _, started, err := service.Start(ctx, library.ULID("01J00000000000000000000ART2"), Reference{OccurrenceID: library.ULID("01J00000000000000000000WRD2")}, false)
+		envelope, _, started, err := service.Start(ctx, library.ULID("01J00000000000000000000ART2"), Reference{OccurrenceID: library.ULID("01J00000000000000000000WRD2")}, false, false)
 		if err != nil || !started {
 			t.Fatalf("start: err=%v started=%t", err, started)
 		}
@@ -109,7 +109,7 @@ func TestRunnerPublicationAndFencing(t *testing.T) {
 		fixtureArticle(t, db, "01J00000000000000000000ART3", "Fixture 3")
 		fixtureBlock(t, db, "01J00000000000000000000BLK3", "01J00000000000000000000ART3", "Het hok.")
 		fixtureWordOccurrence(t, db, "01J00000000000000000000WRD3", "01J00000000000000000000BLK3", "hok", "")
-		if _, _, started, err := service.Start(ctx, library.ULID("01J00000000000000000000ART3"), Reference{OccurrenceID: library.ULID("01J00000000000000000000WRD3")}, false); err != nil || !started {
+		if _, _, started, err := service.Start(ctx, library.ULID("01J00000000000000000000ART3"), Reference{OccurrenceID: library.ULID("01J00000000000000000000WRD3")}, false, false); err != nil || !started {
 			t.Fatalf("start: err=%v started=%t", err, started)
 		}
 		if err := runner.RunOnce(ctx); err != nil {
@@ -164,7 +164,7 @@ func TestRoutingRunnersDoNotSteal(t *testing.T) {
 	fixtureBlock(t, db, "01J00000000000000000000BLK1", "01J00000000000000000000ART1", "De bank.")
 	fixtureWordOccurrence(t, db, "01J00000000000000000000WRD1", "01J00000000000000000000BLK1", "bank", "")
 	dictionaryService := resolvingService(t, db, "fp-1")
-	if _, _, _, err := dictionaryService.Start(ctx, library.ULID("01J00000000000000000000ART1"), Reference{OccurrenceID: library.ULID("01J00000000000000000000WRD1")}, false); err != nil {
+	if _, _, _, err := dictionaryService.Start(ctx, library.ULID("01J00000000000000000000ART1"), Reference{OccurrenceID: library.ULID("01J00000000000000000000WRD1")}, false, false); err != nil {
 		t.Fatal(err)
 	}
 	mustExec(t, db, `DELETE FROM job WHERE job_type = ? AND idempotency_key = 'analysis-only-1'`, jobs.AnalysisJobType)
@@ -203,7 +203,7 @@ func TestRunnerProviderChangeFailsExplicitly(t *testing.T) {
 	emptyRunner := NewRunner(db, &fakeRegistry{})
 	emptyRunner.heartbeatInterval = 0
 	service := resolvingService(t, db, "fp-1")
-	if _, _, _, err := service.Start(ctx, library.ULID("01J00000000000000000000ART1"), Reference{OccurrenceID: library.ULID("01J00000000000000000000WRD1")}, false); err != nil {
+	if _, _, _, err := service.Start(ctx, library.ULID("01J00000000000000000000ART1"), Reference{OccurrenceID: library.ULID("01J00000000000000000000WRD1")}, false, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := emptyRunner.RunOnce(ctx); err != nil {
@@ -218,7 +218,7 @@ func TestRunnerProviderChangeFailsExplicitly(t *testing.T) {
 	}
 
 	// A changed config fingerprint fails as provider_changed on retry.
-	if _, _, started, err := service.Start(ctx, library.ULID("01J00000000000000000000ART1"), Reference{OccurrenceID: library.ULID("01J00000000000000000000WRD1")}, true); err != nil || !started {
+	if _, _, started, err := service.Start(ctx, library.ULID("01J00000000000000000000ART1"), Reference{OccurrenceID: library.ULID("01J00000000000000000000WRD1")}, true, false); err != nil || !started {
 		t.Fatalf("retry: err=%v started=%t", err, started)
 	}
 	changed := newFakeProvider("")
@@ -252,7 +252,7 @@ func TestRunnerExpiredLeaseNeverPublishes(t *testing.T) {
 	runner.heartbeatInterval = 0
 	service := resolvingService(t, db, "fp-1")
 
-	envelope, _, started, err := service.Start(ctx, library.ULID("01J00000000000000000000ART1"), Reference{OccurrenceID: library.ULID("01J00000000000000000000WRD1")}, false)
+	envelope, _, started, err := service.Start(ctx, library.ULID("01J00000000000000000000ART1"), Reference{OccurrenceID: library.ULID("01J00000000000000000000WRD1")}, false, false)
 	if err != nil || !started {
 		t.Fatalf("start: err=%v started=%t", err, started)
 	}
@@ -274,7 +274,7 @@ func TestRunnerExpiredLeaseNeverPublishes(t *testing.T) {
 		t.Fatalf("status = %q, want failed", result.Status)
 	}
 	// Explicit retry regenerates successfully with the same configuration.
-	if _, _, started, err := service.Start(ctx, library.ULID("01J00000000000000000000ART1"), Reference{OccurrenceID: library.ULID("01J00000000000000000000WRD1")}, true); err != nil || !started {
+	if _, _, started, err := service.Start(ctx, library.ULID("01J00000000000000000000ART1"), Reference{OccurrenceID: library.ULID("01J00000000000000000000WRD1")}, true, false); err != nil || !started {
 		t.Fatalf("retry: err=%v started=%t", err, started)
 	}
 	if err := runner.RunOnce(ctx); err != nil {

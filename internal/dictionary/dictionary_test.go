@@ -13,6 +13,7 @@ import (
 	"doublangu/internal/jobs"
 	"doublangu/internal/library"
 	"doublangu/internal/pipeline"
+	"doublangu/internal/prompts"
 	"doublangu/internal/semantics"
 	"doublangu/internal/store"
 )
@@ -218,9 +219,27 @@ func newFakeProvider(turns ...string) *scriptedProvider {
 func resolvingService(t *testing.T, db *store.DB, fingerprint string) *Service {
 	t.Helper()
 	binding := testBinding(t, fingerprint)
-	return NewService(db, func(context.Context) (pipeline.BindingSnapshot, error) {
-		return binding, nil
+	return NewService(db, func(context.Context) (ResolvedExploreGeneration, error) {
+		return ResolvedExploreGeneration{
+			Binding: binding,
+			PromptSnapshots: []pipeline.PromptSnapshot{
+				testPromptSnapshot(t, "explore", "Explore generation instruction."),
+				testPromptSnapshot(t, "correction", "Explore correction instruction."),
+			},
+			ProfileID:   "profile-explore",
+			ProfileName: "Explore profile",
+		}, nil
 	})
+}
+
+// testPromptSnapshot builds an internally consistent captured snapshot.
+func testPromptSnapshot(t *testing.T, promptType, instruction string) pipeline.PromptSnapshot {
+	t.Helper()
+	return pipeline.PromptSnapshot{
+		Type: promptType, ID: "snap-" + promptType, Version: 1,
+		ContentHash: prompts.ContentHashOf(instruction), InstructionText: instruction,
+		EnvelopeVersion: pipeline.PromptCapturedEnvelopeVersion,
+	}
 }
 
 // --- subject resolution -------------------------------------------------------
@@ -339,14 +358,14 @@ func TestServiceStartAndReuse(t *testing.T) {
 
 	t.Run("start queues one job and concurrent start joins it", func(t *testing.T) {
 		service := resolvingService(t, db, "fp-1")
-		envelope, _, started, err := service.Start(ctx, articleID, ref, false)
+		envelope, _, started, err := service.Start(ctx, articleID, ref, false, false)
 		if err != nil || !started {
 			t.Fatalf("start: err=%v started=%t", err, started)
 		}
 		if envelope.Status != StatusQueued || envelope.JobID == "" {
 			t.Fatalf("envelope = %+v", envelope)
 		}
-		again, _, startedAgain, err := service.Start(ctx, articleID, ref, false)
+		again, _, startedAgain, err := service.Start(ctx, articleID, ref, false, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -377,10 +396,10 @@ func TestServiceStartAndReuse(t *testing.T) {
 
 	t.Run("provider unavailable mutates nothing", func(t *testing.T) {
 		second := fixtureFreshArticleRef(t, db, "01J00000000000000000000ART3", "01J00000000000000000000BLK3", "01J00000000000000000000WRD3", "hok")
-		service := NewService(db, func(context.Context) (pipeline.BindingSnapshot, error) {
-			return pipeline.BindingSnapshot{}, errors.New("no usable profile")
+		service := NewService(db, func(context.Context) (ResolvedExploreGeneration, error) {
+			return ResolvedExploreGeneration{}, errors.New("no usable profile")
 		})
-		if _, _, _, err := service.Start(ctx, second.articleID, second.ref, false); !errors.Is(err, ErrProviderUnavailable) {
+		if _, _, _, err := service.Start(ctx, second.articleID, second.ref, false, false); !errors.Is(err, ErrProviderUnavailable) {
 			t.Fatalf("err = %v", err)
 		}
 		var count int
@@ -425,7 +444,7 @@ func TestServiceStartAndReuse(t *testing.T) {
 			}
 		}
 		drain(`{"broken`, `{"broken`, `{"broken`) // any leftover queued jobs fail terminally
-		if _, _, started, err := service.Start(ctx, library.ULID(article), Reference{OccurrenceID: library.ULID(word)}, false); err != nil || !started {
+		if _, _, started, err := service.Start(ctx, library.ULID(article), Reference{OccurrenceID: library.ULID(word)}, false, false); err != nil || !started {
 			t.Fatalf("start: err=%v started=%t", err, started)
 		}
 		drain(`{"broken`, `{"broken`, `{"broken`)
@@ -437,11 +456,11 @@ func TestServiceStartAndReuse(t *testing.T) {
 			t.Fatalf("envelope = %+v", envelope)
 		}
 		// Lookup without retry does not requeue.
-		if _, _, started, err := service.Start(ctx, library.ULID(article), Reference{OccurrenceID: library.ULID(word)}, false); err != nil || started {
+		if _, _, started, err := service.Start(ctx, library.ULID(article), Reference{OccurrenceID: library.ULID(word)}, false, false); err != nil || started {
 			t.Fatalf("non-retry start: err=%v started=%t", err, started)
 		}
 		// Explicit retry queues a new job.
-		envelope, _, started, err := service.Start(ctx, library.ULID(article), Reference{OccurrenceID: library.ULID(word)}, true)
+		envelope, _, started, err := service.Start(ctx, library.ULID(article), Reference{OccurrenceID: library.ULID(word)}, true, false)
 		if err != nil || !started {
 			t.Fatalf("retry: err=%v started=%t", err, started)
 		}
@@ -472,7 +491,7 @@ func TestServiceStartAndReuse(t *testing.T) {
 		if envelope.Status != StatusReady || envelope.Document == nil || len(envelope.Document.Senses) != 1 {
 			t.Fatalf("envelope = %+v", envelope)
 		}
-		if _, _, started, err := service.Start(ctx, library.ULID("01J00000000000000000000ART4"), Reference{OccurrenceID: library.ULID("01J00000000000000000000WRD4")}, true); err != nil || started {
+		if _, _, started, err := service.Start(ctx, library.ULID("01J00000000000000000000ART4"), Reference{OccurrenceID: library.ULID("01J00000000000000000000WRD4")}, true, false); err != nil || started {
 			t.Fatalf("retry on ready: err=%v started=%t", err, started)
 		}
 	})
@@ -496,8 +515,11 @@ func TestServiceReadyReuseAcrossArticlesAndRestart(t *testing.T) {
 	registry := &fakeRegistry{provider: provider}
 	runner := NewRunner(db, registry)
 	runner.heartbeatInterval = 0
-	service := NewService(db, func(context.Context) (pipeline.BindingSnapshot, error) {
-		return testBinding(t, "fp-1"), nil
+	service := NewService(db, func(context.Context) (ResolvedExploreGeneration, error) {
+		return ResolvedExploreGeneration{Binding: testBinding(t, "fp-1"), PromptSnapshots: []pipeline.PromptSnapshot{
+			testPromptSnapshot(t, "explore", "Explore generation instruction."),
+			testPromptSnapshot(t, "correction", "Explore correction instruction."),
+		}}, nil
 	})
 
 	first := library.ULID("01J00000000000000000000ART1")
@@ -506,11 +528,11 @@ func TestServiceReadyReuseAcrossArticlesAndRestart(t *testing.T) {
 	ref2 := Reference{OccurrenceID: library.ULID("01J00000000000000000000WRD2")}
 
 	// Both articles resolve to one key; the second start joins the first job.
-	envelope1, _, started1, err := service.Start(ctx, first, ref1, false)
+	envelope1, _, started1, err := service.Start(ctx, first, ref1, false, false)
 	if err != nil || !started1 {
 		t.Fatalf("start 1: err=%v started=%t", err, started1)
 	}
-	envelope2, _, started2, err := service.Start(ctx, second, ref2, false)
+	envelope2, _, started2, err := service.Start(ctx, second, ref2, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -544,9 +566,12 @@ func TestServiceReadyReuseAcrossArticlesAndRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = reopened.Close() })
-	restarted := NewService(reopened, func(context.Context) (pipeline.BindingSnapshot, error) {
+	restarted := NewService(reopened, func(context.Context) (ResolvedExploreGeneration, error) {
 		t.Error("binding must not be resolved for a ready entry")
-		return testBinding(t, "fp-changed"), nil
+		return ResolvedExploreGeneration{Binding: testBinding(t, "fp-changed"), PromptSnapshots: []pipeline.PromptSnapshot{
+			testPromptSnapshot(t, "explore", "Explore generation instruction."),
+			testPromptSnapshot(t, "correction", "Explore correction instruction."),
+		}}, nil
 	})
 	afterRestart, _, err := restarted.Lookup(ctx, first, ref1)
 	if err != nil {
@@ -566,7 +591,7 @@ func TestServiceReadyReuseAcrossArticlesAndRestart(t *testing.T) {
 		t.Fatalf("shared envelope = %+v", shared)
 	}
 	// An explicit start on a ready entry also resolves without a provider.
-	if _, _, started, err := restarted.Start(ctx, second, ref2, false); err != nil || started {
+	if _, _, started, err := restarted.Start(ctx, second, ref2, false, false); err != nil || started {
 		t.Fatalf("start on ready: err=%v started=%t", err, started)
 	}
 	if provider.sessionCount() != sessionsBefore {

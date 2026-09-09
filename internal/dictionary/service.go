@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"doublangu/internal/jobs"
 	"doublangu/internal/library"
@@ -29,25 +30,47 @@ const (
 
 // Typed service failures the HTTP layer maps to stable dictionary codes.
 var (
-	ErrProviderUnavailable = errors.New("dictionary: translation provider is unavailable")
+	ErrProviderUnavailable = errors.New("dictionary: explore provider is unavailable")
 	ErrNonLexical          = ErrNotFound
+	// ErrAmbiguousRequest rejects retry=true combined with regenerate=true:
+	// retry replays a failed first generation while regenerate always starts
+	// a fresh one, and asking for both is meaningless.
+	ErrAmbiguousRequest = errors.New("dictionary: retry and regenerate are mutually exclusive")
 )
 
-// BindingResolver resolves the active profile's translation binding through
+// ResolvedExploreGeneration is the exact generation configuration for one
+// explore operation: the active profile's independent Explore binding plus
+// that profile's pinned explore generation and correction prompt snapshots.
+type ResolvedExploreGeneration struct {
+	Binding         pipeline.BindingSnapshot
+	PromptSnapshots []pipeline.PromptSnapshot
+	ProfileID       string
+	ProfileName     string
+}
+
+// BindingResolver resolves the active profile's Explore generation through
 // the shared usability checks. It runs outside any write transaction.
-type BindingResolver func(ctx context.Context) (pipeline.BindingSnapshot, error)
+type BindingResolver func(ctx context.Context) (ResolvedExploreGeneration, error)
 
 // JobPayload is the immutable dictionary job snapshot: derived subject,
-// dictionary contract/prompt versions, exact prompt input, input hash, and
-// the resolved translation binding. It contains no article prose, no secret,
-// and no endpoint.
+// dictionary contract/prompt versions, exact prompt input, input hash, the
+// resolved Explore binding, the originating article for run history, and the
+// profile's pinned explore/correction prompt snapshots. It contains no
+// article prose, no secret, and no endpoint.
 type JobPayload struct {
 	ContractVersion string                    `json:"contract_version"`
 	PromptVersion   string                    `json:"prompt_version"`
 	EntryID         string                    `json:"entry_id"`
+	ArticleID       string                    `json:"article_id"`
 	Input           semantics.DictionaryInput `json:"input"`
 	InputHash       string                    `json:"input_hash"`
 	Binding         pipeline.BindingSnapshot  `json:"binding"`
+	// PromptSnapshots are the pinned explore generation and correction
+	// versions captured before enqueue.
+	PromptSnapshots []pipeline.PromptSnapshot `json:"prompt_snapshots"`
+	Regenerate      bool                      `json:"regenerate,omitempty"`
+	ProfileID       string                    `json:"profile_id"`
+	ProfileName     string                    `json:"profile_name"`
 
 	// validatedJSON holds the canonical encoded form for enqueueing; it is
 	// never decoded from provider or browser input.
@@ -83,6 +106,9 @@ func (p JobPayload) Validate() error {
 	if _, err := library.ParseULID(p.EntryID); err != nil {
 		return errors.New("dictionary job payload entry id is invalid")
 	}
+	if strings.TrimSpace(p.ArticleID) == "" {
+		return errors.New("dictionary job payload article id is required")
+	}
 	if err := p.Input.Validate(); err != nil {
 		return fmt.Errorf("dictionary job payload input: %w", err)
 	}
@@ -91,6 +117,28 @@ func (p JobPayload) Validate() error {
 	}
 	if err := p.Binding.Validate(); err != nil {
 		return fmt.Errorf("dictionary job payload binding: %w", err)
+	}
+	if len(p.PromptSnapshots) != 2 {
+		return errors.New("dictionary job payload must capture its explore and correction prompt snapshots")
+	}
+	seen := make(map[string]bool, 2)
+	for index, snapshot := range p.PromptSnapshots {
+		if err := snapshot.Validate(); err != nil {
+			return fmt.Errorf("dictionary job payload prompt_snapshots[%d]: %w", index, err)
+		}
+		if snapshot.Type != "explore" && snapshot.Type != "correction" {
+			return fmt.Errorf("dictionary job payload prompt_snapshots[%d] carries unsupported type %q", index, snapshot.Type)
+		}
+		if seen[snapshot.Type] {
+			return fmt.Errorf("dictionary job payload carries %q prompt snapshot twice", snapshot.Type)
+		}
+		seen[snapshot.Type] = true
+		if snapshot.EnvelopeVersion != pipeline.PromptCapturedEnvelopeVersion {
+			return fmt.Errorf("dictionary job payload prompt_snapshots[%d] has unsupported envelope version %q", index, snapshot.EnvelopeVersion)
+		}
+	}
+	if !seen["explore"] || !seen["correction"] {
+		return errors.New("dictionary job payload is missing its explore or correction prompt snapshot")
 	}
 	return nil
 }
@@ -105,14 +153,19 @@ func InputHash(input semantics.DictionaryInput) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func jobPayload(entryID string, input semantics.DictionaryInput, binding pipeline.BindingSnapshot) (JobPayload, error) {
+func jobPayload(entryID, articleID string, input semantics.DictionaryInput, generation ResolvedExploreGeneration, regenerate bool) (JobPayload, error) {
 	payload := JobPayload{
 		ContractVersion: semantics.DictionaryContractVersion,
 		PromptVersion:   semantics.DictionaryPromptVersion,
 		EntryID:         entryID,
+		ArticleID:       articleID,
 		Input:           input,
 		InputHash:       InputHash(input),
-		Binding:         binding,
+		Binding:         generation.Binding,
+		PromptSnapshots: generation.PromptSnapshots,
+		Regenerate:      regenerate,
+		ProfileID:       generation.ProfileID,
+		ProfileName:     generation.ProfileName,
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
@@ -233,11 +286,17 @@ func (s *Service) Lookup(ctx context.Context, articleID library.ULID, ref Refere
 }
 
 // Start implements the explicit POST flow: resolve, read saved data first,
-// resolve the binding outside the write transaction, then atomically
-// insert-or-find, recheck, enqueue, and point last_job_id. A ready entry is
-// never overwritten, even with retry. Concurrent clicks converge on one
+// resolve the Explore generation outside the write transaction, then
+// atomically insert-or-find, recheck, enqueue, and point last_job_id. A ready
+// entry is never overwritten by ensure or retry; regenerate=true always
+// starts a fresh request (keeping the saved document readable until a
+// validated replacement publishes). Concurrent requests converge on one
 // active job through the database unique key and last_job_id compare-and-set.
-func (s *Service) Start(ctx context.Context, articleID library.ULID, ref Reference, retry bool) (StatusEnvelope, *Subject, bool, error) {
+// retry and regenerate are mutually exclusive.
+func (s *Service) Start(ctx context.Context, articleID library.ULID, ref Reference, retry, regenerate bool) (StatusEnvelope, *Subject, bool, error) {
+	if retry && regenerate {
+		return StatusEnvelope{}, nil, false, ErrAmbiguousRequest
+	}
 	subject, err := s.resolveSubject(ctx, articleID, ref)
 	if err != nil {
 		return StatusEnvelope{}, nil, false, err
@@ -246,22 +305,23 @@ func (s *Service) Start(ctx context.Context, articleID library.ULID, ref Referen
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return StatusEnvelope{}, nil, false, err
 	}
-	if existing.Ready() {
+	if existing.Ready() && !regenerate {
 		return envelopeFor(existing, subject), subject, false, nil
 	}
 	if existing != nil && (existing.LastJobState == jobs.StateQueued || existing.LastJobState == jobs.StateLeased || existing.LastJobState == jobs.StateRunning) {
 		return envelopeFor(existing, subject), subject, false, nil
 	}
-	// An existing failed entry requires an explicit retry.
-	if existing != nil && existing.LastJobState != "" && !retry {
+	// An existing failed entry requires an explicit retry or regenerate.
+	if existing != nil && existing.LastJobState != "" && !retry && !regenerate {
 		return envelopeFor(existing, subject), subject, false, nil
 	}
 
-	// Resolve the usable translation binding outside the write transaction.
+	// Resolve the usable Explore binding and its pinned prompt snapshots
+	// outside the write transaction.
 	if s.resolver == nil {
 		return StatusEnvelope{}, nil, false, ErrProviderUnavailable
 	}
-	binding, err := s.resolver(ctx)
+	generation, err := s.resolver(ctx)
 	if err != nil {
 		return StatusEnvelope{}, nil, false, ErrProviderUnavailable
 	}
@@ -293,7 +353,7 @@ func (s *Service) Start(ctx context.Context, articleID library.ULID, ref Referen
 			return err
 		}
 		attachLastJobTx(ctx, tx, fresh)
-		if fresh.Ready() {
+		if fresh.Ready() && !regenerate {
 			envelope = envelopeFor(fresh, subject)
 			return nil
 		}
@@ -301,7 +361,7 @@ func (s *Service) Start(ctx context.Context, articleID library.ULID, ref Referen
 			envelope = envelopeFor(fresh, subject)
 			return nil
 		}
-		if fresh.LastJobState != "" && fresh.LastJobID != nil && !retry {
+		if fresh.LastJobState != "" && fresh.LastJobID != nil && !retry && !regenerate {
 			previousJobID = *fresh.LastJobID
 			envelope = envelopeFor(fresh, subject)
 			return nil
@@ -309,7 +369,7 @@ func (s *Service) Start(ctx context.Context, articleID library.ULID, ref Referen
 		if fresh.LastJobID != nil {
 			previousJobID = *fresh.LastJobID
 		}
-		payload, err := jobPayload(entry.ID.String(), input, binding)
+		payload, err := jobPayload(entry.ID.String(), articleID.String(), input, generation, regenerate)
 		if err != nil {
 			return err
 		}

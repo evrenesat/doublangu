@@ -1,5 +1,80 @@
 # Development Log
 
+## 2026-09-08 — Checkpoint 7: Explore regeneration domain
+
+Implemented Checkpoint 7 of
+`plans/in-progress/reader-settings-prompt-experiments-20260908.md` (plan baseline `7779c6d`).
+Originally implemented 2026-09-08 against the then-unapproved reconstructed
+Checkpoint 6 worktree; restored 2026-09-09 onto the approved Checkpoint 6
+commit `8164bea` after cp6 approval, preserving the cp6 validation-error
+persistence fix. Verified work is left uncommitted for review; no checkpoint
+commits were created.
+
+### Implementation
+
+- Explore-only resolution (internal/httpapi/dictionary.go +
+  internal/analysis/profiles.go): the dictionary resolver seam now returns a
+  `ResolvedExploreGeneration` — the active profile's independent Explore
+  binding validated through the same live-registry/catalog usability rules
+  as stage bindings (a translation-stage transport copy), plus that
+  profile's pinned explore generation and correction prompt snapshots
+  (`ExplorePromptSnapshots`) and profile identity. The translation binding of
+  the same profile is never consulted for explore generation.
+- Regenerate flow (internal/dictionary/service.go): `Start` takes an explicit
+  `regenerate` flag — regenerate always starts a fresh request, bypassing
+  ready reuse and the failed-needs-retry gate, while retry and regenerate
+  are mutually exclusive (`ErrAmbiguousRequest`). Concurrent requests —
+  ensure or regenerate — still converge on one active job before and inside
+  the enqueue transaction, and `last_job_id` compare-and-set is retained.
+  The job payload now carries the originating article id, the Explore
+  binding, the explore/correction prompt snapshots (hash-verified,
+  envelope-versioned), profile identity, and the regenerate flag; payloads
+  without complete snapshots reject with the contract error. Existing HTTP
+  behavior is unchanged (the handler passes regenerate=false until
+  checkpoint 10 exposes it).
+- Captured explore prompts (internal/annotator/dictionary.go): the explore
+  prompt splits into instruction + deterministic INPUT_DATA envelope
+  (`BuildExploreStagePrompt`; `DictionaryPrompt` stays the byte-identical
+  legacy wrapper), the adapter carries `StagePrompts` (captured rendering
+  inserts the fixed data boundary) and implements the corrective carrier, so
+  generation and corrective turns execute the captured instructions.
+- Section 5 history (internal/dictionary/runner.go + store.go): the runner
+  creates the run before provider resolution (operation_type `explore`,
+  subject = entry/lookup form, phase running), points `last_run_id` at it,
+  records one logical attempt (transport stage translation, effective
+  explore prompt identity from the captured hashes) and every turn through
+  the cp6 recorder, and finalizes the run on every terminal path —
+  preflight, provider change, generation failure, storage failure. The
+  successful publication transaction now replaces the document, completes
+  the job via the live-lease compare-and-set, and completes the history
+  attempt and run atomically; a history storage failure rolls the whole
+  publication back.
+- Tests: `internal/dictionary/regenerate_test.go` — regenerate on a ready
+  entry starts a fresh job while the old document stays readable, concurrent
+  regenerates converge on one active job, retry+regenerate rejects, a failed
+  regeneration keeps the old document and retains every turn (3+) with the
+  run finalized failed/finished, and the success path records explore
+  operation metadata, subject, last_run_id, and a succeeded attempt.
+  Existing service/runner cases updated to the resolver and payload
+  contract; httpapi and annotator suites pass unchanged.
+- Docs: `internal/dictionary/AGENTS.md` updated for regenerate semantics,
+  Explore-only resolution, and transactional history publication.
+
+### Verification
+
+Toolchain: Go 1.26.5 at
+`/root/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.5.linux-amd64/bin`.
+
+- `go test ./internal/dictionary ./internal/annotator ./internal/httpapi -count=1` — all ok.
+- `go test -race ./internal/dictionary ./internal/jobs -count=1` — all ok.
+- `gofmt` clean on changed files (ailocals.go remains a pre-existing
+  formatting outlier, untouched).
+- Observations: service tests show independent Explore settings (payload
+  binding/snapshots come from the Explore resolution), one active generation
+  (concurrent regenerate converges; queued job count 1), preserved old
+  results during queued/failed replacement, and retained failed artifacts
+  (turns + run history).
+
 ## 2026-09-08 — Checkpoint 6: durable LLM failure collection
 
 Implemented Checkpoint 6 of

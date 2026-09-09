@@ -36,31 +36,51 @@ func NewDictionaryHandler(db *store.DB, csrf CSRFVerifier, registry providerRegi
 		db: db, csrf: csrf, registry: registry, catalog: catalog,
 		profiles: analysis.NewProfileStore(db),
 	}
-	handler.service = dictionary.NewService(db, handler.resolveTranslationBinding)
+	handler.service = dictionary.NewService(db, handler.resolveExploreGeneration)
 	return handler
 }
 
-// resolveTranslationBinding resolves the active profile's translation binding
-// outside any write transaction.
-func (h *DictionaryHandler) resolveTranslationBinding(ctx context.Context) (pipeline.BindingSnapshot, error) {
+// resolveExploreGeneration resolves the active profile's independent Explore
+// binding plus its pinned explore generation and correction prompt snapshots
+// outside any write transaction. Only the Explore binding is resolved here:
+// the translation binding of the same profile is never consulted for
+// on-demand explore generation.
+func (h *DictionaryHandler) resolveExploreGeneration(ctx context.Context) (dictionary.ResolvedExploreGeneration, error) {
 	activeID, err := h.profiles.ActiveProfile(ctx)
 	if err != nil || activeID == "" {
-		return pipeline.BindingSnapshot{}, errors.New("no active profile")
+		return dictionary.ResolvedExploreGeneration{}, errors.New("no active profile")
 	}
 	profile, err := h.profiles.Get(ctx, activeID)
 	if err != nil {
-		return pipeline.BindingSnapshot{}, err
+		return dictionary.ResolvedExploreGeneration{}, err
 	}
-	bindings, err := usableProfileBindings(ctx, h.registry, h.catalog, profile.Bindings)
+	stored, err := h.profiles.ExploreBinding(ctx, activeID)
 	if err != nil {
-		return pipeline.BindingSnapshot{}, err
+		return dictionary.ResolvedExploreGeneration{}, err
 	}
-	for _, binding := range bindings {
-		if binding.StageID == pipeline.StageTranslation {
-			return binding, nil
-		}
+	if stored == nil {
+		return dictionary.ResolvedExploreGeneration{}, errors.New("active profile has no explore binding")
 	}
-	return pipeline.BindingSnapshot{}, errors.New("active profile has no translation binding")
+	// The explore binding rides the translation transport identity through
+	// the same usability checks as stage bindings.
+	stored.StageID = pipeline.StageTranslation
+	bindings, err := usableProfileBindings(ctx, h.registry, h.catalog, []pipeline.BindingSnapshot{*stored})
+	if err != nil {
+		return dictionary.ResolvedExploreGeneration{}, err
+	}
+	if len(bindings) == 0 {
+		return dictionary.ResolvedExploreGeneration{}, errors.New("active profile has no usable explore binding")
+	}
+	promptSnapshots, err := h.profiles.ExplorePromptSnapshots(ctx, activeID)
+	if err != nil {
+		return dictionary.ResolvedExploreGeneration{}, err
+	}
+	return dictionary.ResolvedExploreGeneration{
+		Binding:         bindings[0],
+		PromptSnapshots: promptSnapshots,
+		ProfileID:       profile.ID,
+		ProfileName:     profile.Name,
+	}, nil
 }
 
 // ServeExplore handles GET and POST /api/v1/articles/{id}/explore.
@@ -159,7 +179,9 @@ func (h *DictionaryHandler) serveStart(w http.ResponseWriter, r *http.Request, a
 		}
 		ref.AnnotationID = id
 	}
-	envelope, _, started, err := h.service.Start(r.Context(), articleID, ref, *input.Retry)
+	// Regenerate stays a checkpoint 10 concern: the HTTP contract still
+	// exposes only ensure/retry today.
+	envelope, _, started, err := h.service.Start(r.Context(), articleID, ref, *input.Retry, false)
 	if err != nil {
 		h.writeDictionaryError(w, err)
 		return
