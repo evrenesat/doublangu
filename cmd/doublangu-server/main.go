@@ -34,6 +34,7 @@ import (
 	manifest "doublangu/internal/plugins"
 	"doublangu/internal/prompts"
 	"doublangu/internal/reader"
+	"doublangu/internal/sentencetranslation"
 	"doublangu/internal/speech"
 	"doublangu/internal/store"
 	"doublangu/internal/workers"
@@ -188,6 +189,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	go pipelineRunner.Run(analysisContext)
 	dictionaryRunner := dictionary.NewRunner(db, providerRegistry)
 	go dictionaryRunner.Run(analysisContext)
+	sentenceRunner := sentencetranslation.NewRunner(db, providerRegistry)
+	go sentenceRunner.Run(analysisContext)
 	if err := serve(cfg.Listen, registry, schema, db, newHandlerWithMedia(registry, schema, authHandler, healthHandler, cfg, db, mediaStore, providerRegistry, workerService, articleAnnotator), stdout); err != nil {
 		fmt.Fprintf(stderr, "server: %v\n", err)
 		return 1

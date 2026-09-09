@@ -26,6 +26,10 @@ const (
 	ChatterboxJobType = "tts.chatterbox.v3"
 	LLMRelayJobType   = "llm.relay.v1"
 	DictionaryJobType = "reader.dictionary.v1"
+	// SentenceTranslationJobType is the on-demand full-sentence translation
+	// job. It runs on the existing server scheduler with MaxAttempts=1; the
+	// database CHECK admitting it lives in migration 015.
+	SentenceTranslationJobType = "reader.sentence_translation.v1"
 
 	TargetServer = "server"
 	TargetMacOS  = "macos"
@@ -842,7 +846,7 @@ func reconcileDependencyFailuresTx(ctx context.Context, tx *sql.Tx, now string) 
 }
 
 func validateSpec(spec *Spec) error {
-	if spec.JobType != AnalysisJobType && spec.JobType != AVSpeechJobType && spec.JobType != ChatterboxJobType && spec.JobType != LLMRelayJobType && spec.JobType != DictionaryJobType {
+	if spec.JobType != AnalysisJobType && spec.JobType != AVSpeechJobType && spec.JobType != ChatterboxJobType && spec.JobType != LLMRelayJobType && spec.JobType != DictionaryJobType && spec.JobType != SentenceTranslationJobType {
 		return fmt.Errorf("unsupported job type %q", spec.JobType)
 	}
 	if spec.ExecutionTarget != TargetServer && spec.ExecutionTarget != TargetMacOS {

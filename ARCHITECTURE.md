@@ -677,6 +677,29 @@ remapped to another sentence, while the target language must match the
 owning article. Generation workers and HTTP handlers land in later
 checkpoints; this layer performs no provider calls.
 
+### Sentence generation jobs
+
+`internal/sentencetranslation` owns the `reader.sentence_translation.v1`
+service and worker on the existing server scheduler (`MaxAttempts=1`).
+`Service.Ensure` reads saved translations without provider work, joins an
+active generation, and otherwise claims a run before provider preflight:
+the subject row is ensured, a `sentence_translation` run is created, and
+`last_run_id` moves by compare-and-set so concurrent hovers converge on one
+active job; the frozen payload (anchor, context, Translation binding,
+sentence_translation/correction snapshots, profile, run ID) then enqueues
+with `last_job_id` guarded the same way. Preflight failures finish the
+claimed run but keep its pointer, so later hovers observe the retained
+failure instead of retrying; only an explicit regenerate starts replacement
+work, preserving the old text until a validated replacement commits.
+Orphan claims that never received a job are finalized as interrupted after
+a bounded window; runs attached to a job stay owned by the generic
+terminal-job reconciliation. The worker reuses the claimed run, verifies
+only the Translation binding plus snapshot hashes, records every turn, and
+publishes atomically after re-verifying the live anchor: a changed anchor
+or a subject that moved to a newer job aborts, so stale jobs never
+overwrite a new anchor or the last successful text. Failed initial
+generation needs an explicit regenerate.
+
 ## Deployment boundary
 
 Pushes to `main` are verified and packaged on a GitHub-hosted runner. Only the

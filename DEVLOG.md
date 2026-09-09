@@ -1,5 +1,61 @@
 # Development Log
 
+## 2026-09-09 — Checkpoint 9: sentence generation jobs
+
+Implemented Checkpoint 9 of
+`plans/in-progress/reader-settings-prompt-experiments-20260908.md` on top
+of the uncommitted Checkpoint 8 work (storage, contract, migration 015).
+Only `internal/sentencetranslation/service.go` + `runner.go` and their
+tests, the `internal/jobs` job-type validation, and the
+`cmd/doublangu-server` worker wiring changed. No cross-article cache, no
+speech jobs, no generic orchestration changes. Verified work is left
+uncommitted for review; no checkpoint commits were created.
+
+### Implementation
+
+- `internal/sentencetranslation/service.go`: `Service.Ensure`
+  (ensure/regenerate) with read-first semantics — saved translations return
+  without provider resolution, active jobs/runs are joined, terminal
+  failures need an explicit regenerate. Fresh work claims a
+  `sentence_translation` run before provider preflight (subject row
+  ensured, stale-anchor translations cleared, `last_run_id` moved by
+  compare-and-set), resolves only the Translation binding plus pinned
+  sentence_translation/correction snapshots outside the transaction, then
+  enqueues the immutable payload (`reader.sentence_translation.v1`,
+  `MaxAttempts=1`) guarded by the same claim. Preflight failures finish
+  the claimed run but keep its pointer, so repeated hovers converge on the
+  retained failure. `ReconcileOrphanRuns` finalizes claims older than five
+  minutes that never received a job; runs attached to a job stay owned by
+  the generic terminal-job reconciliation.
+- `internal/sentencetranslation/runner.go`: server worker reusing the
+  claimed run (terminal runs fail stale jobs closed), Translation-only
+  binding verification, captured-snapshot hash checks, per-turn history
+  recording, heartbeats with lease-loss abort, and one atomic publish
+  transaction (live-anchor re-verification + `last_job_id` fencing + job
+  completion + history completion). Old text survives every failure path.
+- `internal/jobs/jobs.go`: `SentenceTranslationJobType` admitted to
+  `validateSpec` (the database CHECK already admits it via migration 015).
+- `cmd/doublangu-server/main.go`: sentence runner started alongside the
+  dictionary runner on the existing scheduler.
+- Payload `Validate` pins the Translation transport stage and exactly the
+  sentence_translation/correction snapshots with the captured envelope
+  version; strict decode rejects unknown fields and trailing data.
+
+### Verification
+
+- `go test ./internal/sentencetranslation ./internal/jobs ./cmd/doublangu-server -count=1`: all ok.
+- `go test -race ./internal/sentencetranslation ./internal/jobs -count=1`: all ok.
+- `git diff --check` clean; `gofmt` clean on touched packages.
+- Observed: concurrent ensures share one job and one run (resolver runs
+  once); a fresh runner over the same database completes queued work with
+  turn evidence (restart retains work); recreated anchors abort publication
+  with nothing stored and no successful completion; failed regeneration
+  keeps the old text readable while exposing the failed attempt; preflight
+  failure keeps its run pointer and never re-resolves on hover; explicit
+  regenerate claims a fresh run without mutating the earlier one; the
+  sentence worker ignores dictionary jobs and vice versa by job-type
+  predicate.
+
 ## 2026-09-09 — Checkpoint 8: sentence storage and translation contract
 
 Implemented Checkpoint 8 of
