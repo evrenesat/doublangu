@@ -1101,6 +1101,7 @@ export interface paths {
                         "application/json": components["schemas"]["DictionaryStatusEnvelope"];
                     };
                 };
+                400: components["responses"]["BadRequest"];
                 401: components["responses"]["Unauthorized"];
                 404: components["responses"]["NotFound"];
                 405: components["responses"]["MethodNotAllowed"];
@@ -4066,7 +4067,7 @@ export interface components {
             relay_last_seen_at?: string;
             /** @description Common ailocals.v1 presence snapshot for universal workers; omitted (never null) for legacy workers. */
             ailocals_presence?: {
-                /** @constant */
+                /** @enum {string} */
                 protocol: "ailocals.v1";
                 enrolled_capability_ids: string[];
                 server_time: string;

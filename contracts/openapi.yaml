@@ -597,6 +597,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/DictionaryStatusEnvelope" }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
         "405": { $ref: "#/components/responses/MethodNotAllowed" }
@@ -3306,7 +3307,7 @@ components:
             omitted (never null) for legacy workers.
           required: [protocol, enrolled_capability_ids, server_time, capabilities]
           properties:
-            protocol: { type: string, const: ailocals.v1 }
+            protocol: { type: string, enum: [ailocals.v1] }
             enrolled_capability_ids: { type: array, items: { type: string } }
             server_time: { type: string }
             capabilities:
@@ -3320,7 +3321,7 @@ components:
                   state: { type: string, enum: [ready, busy, paused, setup_required, error] }
                   accepting: { type: boolean }
                   active_jobs: { type: integer, minimum: 0, maximum: 1 }
-                  reason: { type: [string, "null"], enum: [slot_busy, memory_pressure, insufficient_memory, storage_unavailable, local_service_unreachable, setup_missing, user_paused, null] }
+                  reason: { type: string, nullable: true, enum: [slot_busy, memory_pressure, insufficient_memory, storage_unavailable, local_service_unreachable, setup_missing, user_paused, null] }
         software_version: { type: string }
         created_at: { type: string }
         updated_at: { type: string }

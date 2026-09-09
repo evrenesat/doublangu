@@ -19,12 +19,16 @@ function resolveSchema(contract, schema) {
 
 function assertAccepts(contract, schema, value, label) {
   const resolved = resolveSchema(contract, schema);
-  if (resolved.type === "string") assert(typeof value === "string", `${label} is not a string`);
-  if (resolved.type === "integer") assert(Number.isInteger(value), `${label} is not an integer`);
-  if (resolved.minLength !== undefined) assert(value.length >= resolved.minLength, `${label} is too short`);
+  if (value === null) {
+    assert(resolved.nullable === true, `${label} is not nullable`);
+  } else {
+    if (resolved.type === "string") assert(typeof value === "string", `${label} is not a string`);
+    if (resolved.type === "integer") assert(Number.isInteger(value), `${label} is not an integer`);
+    if (resolved.minLength !== undefined) assert(value.length >= resolved.minLength, `${label} is too short`);
+  }
   if (resolved.minimum !== undefined) assert(value >= resolved.minimum, `${label} is below minimum`);
   if (resolved.enum) assert(resolved.enum.includes(value), `${label} is outside enum`);
-  if (resolved.pattern) assert(new RegExp(resolved.pattern).test(value), `${label} violates pattern`);
+  if (resolved.pattern && value !== null) assert(new RegExp(resolved.pattern).test(value), `${label} violates pattern`);
 }
 
 function assertRejects(contract, schema, value, label) {
@@ -35,6 +39,35 @@ function assertRejects(contract, schema, value, label) {
     rejected = true;
   }
   assert(rejected, `${label} unexpectedly satisfies schema`);
+}
+
+function assertAilocalsPresenceReason(contract) {
+  const reason = contract.components.schemas.SpeechWorker.properties.ailocals_presence.properties.capabilities.items.properties.reason;
+  const allowedReasons = [
+    "slot_busy",
+    "memory_pressure",
+    "insufficient_memory",
+    "storage_unavailable",
+    "local_service_unreachable",
+    "setup_missing",
+    "user_paused",
+  ];
+  assert(reason.type === "string", "presence reason must remain a string schema");
+  assert(reason.nullable === true, "presence reason must remain nullable");
+  assert(reason.enum?.includes(null), "presence reason enum must include null");
+  assertAccepts(contract, reason, null, "null presence reason");
+  for (const value of allowedReasons) assertAccepts(contract, reason, value, `allowed presence reason ${value}`);
+  assertRejects(contract, reason, "weather", "unknown presence reason");
+
+  const withoutNull = structuredClone(reason);
+  withoutNull.enum = withoutNull.enum.filter((value) => value !== null);
+  let negativeControlRejected = false;
+  try {
+    assertAccepts(contract, withoutNull, null, "presence reason with null removed");
+  } catch {
+    negativeControlRejected = true;
+  }
+  assert(negativeControlRejected, "presence reason without null passed the nullable-enum regression control");
 }
 
 function assertCP12Matrix(contract) {
@@ -100,6 +133,7 @@ function assertCP12Matrix(contract) {
 }
 
 assertCP12Matrix(api);
+assertAilocalsPresenceReason(api);
 const malformed = structuredClone(api);
 delete malformed.paths["/api/v1/libraries/{id}"].get.responses["400"];
 let negativeControlRejected = false;

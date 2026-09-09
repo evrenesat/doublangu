@@ -47,7 +47,7 @@ jobs:
 
       - name: Run the reader end-to-end suites
         working-directory: web
-        run: npm run test:e2e -- reader.spec.ts reader-design.spec.ts reader-progressive.spec.ts reader-preference.spec.ts reader-explore.spec.ts
+        run: npm run test:e2e -- reader.spec.ts reader-design.spec.ts reader-progressive.spec.ts reader-preference.spec.ts reader-explore.spec.ts settings-experiments.spec.ts reader-condensed.spec.ts sentence-translation.spec.ts navigation-menu.spec.ts
 
       - name: Build the deployment artifact
         env:

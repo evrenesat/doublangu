@@ -1,7 +1,7 @@
-.PHONY: verify test test-manifest test-core-no-feature-plugins test-plugin-loader test-fingerprint-integration test-auth-foundation test-dictionary vet check-no-network
+.PHONY: verify test test-manifest test-core-no-feature-plugins test-plugin-loader test-fingerprint-integration test-auth-foundation test-dictionary test-reader-settings vet check-no-network
 
 # verify runs static checks plus all component tests, including the CP8 login UI.
-verify: vet check-no-network test-manifest test-auth-foundation test-login-ui test-fingerprint-integration test-dictionary
+verify: vet check-no-network test-manifest test-auth-foundation test-login-ui test-fingerprint-integration test-dictionary test-reader-settings
 
 # vet runs go vet on all packages.
 vet:
@@ -22,6 +22,12 @@ test-auth-foundation:
 # scheduler, and server-routing tests, including the migration rehearsal.
 test-dictionary:
 	go test ./internal/semantics ./internal/annotator ./internal/dictionary ./internal/jobs ./internal/store ./internal/httpapi ./cmd/doublangu-server -count=1
+
+# test-reader-settings runs the prompt-library, frozen prompt execution,
+# explore/sentence generation, and reader contract tests owned by the
+# reader-settings prompt-experiments plan (section 8 package list).
+test-reader-settings:
+	go test ./internal/prompts ./internal/pipeline ./internal/analysis ./internal/sentencetranslation ./internal/reader -count=1
 
 # test-login-ui compiles the login route and runs its production-contract tests.
 test-login-ui:
