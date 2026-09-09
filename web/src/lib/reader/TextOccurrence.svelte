@@ -3,6 +3,7 @@
 
 	type Props = {
 		text: string;
+		condensed?: boolean;
 		suffix?: string;
 		occurrence: ArticleOccurrence;
 		popoverOccurrence: ArticleOccurrence;
@@ -18,6 +19,7 @@
 
 	let {
 		text,
+		condensed = false,
 		suffix = '',
 		occurrence,
 		popoverOccurrence,
@@ -55,6 +57,7 @@
 
 <span
 	class="text-occurrence"
+	class:condensed={condensed}
 	class:learned={occurrence.learning_state?.status === 'learned'}
 	class:construction-member={constructionIDs.length > 0}
 	class:construction-active={constructionIDs.some((id) => activeConstructionIDs.includes(id))}
@@ -133,6 +136,19 @@
 	.text-occurrence.construction-active {
 		background: color-mix(in srgb, var(--reader-construction) 13%, transparent);
 	}
+
+	/* Condensed keeps the same word interactions and source punctuation but
+	   renders plain inline text: no interlinear subtitle row, no connector
+	   space, so hover and focus never rewrap the paragraph. */
+	.text-occurrence.condensed {
+		display: inline;
+		margin: 0;
+		padding: 0;
+		border-radius: 0;
+		line-height: inherit;
+		vertical-align: baseline;
+	}
+	.text-occurrence.condensed .translation-subtitle { display: none; }
 
 	@media (prefers-reduced-motion: reduce) {
 		.text-occurrence { transition: none; }

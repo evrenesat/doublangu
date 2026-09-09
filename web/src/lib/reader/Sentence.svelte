@@ -9,6 +9,7 @@
 	type Props = {
 		block: ArticleBlock;
 		sentence: ArticleSentence;
+		condensed?: boolean;
 		occurrences: ArticleOccurrence[];
 		active: boolean;
 		activeConstructionIDs: string[];
@@ -25,6 +26,7 @@
 	let {
 		block,
 		sentence,
+		condensed = false,
 		occurrences,
 		active,
 		activeConstructionIDs,
@@ -37,6 +39,12 @@
 		onFocus,
 		onPlay
 	}: Props = $props();
+
+	// Condensed mode owns translation through the single action row, so a
+	// per-sentence popover left open across the mode switch closes here.
+	$effect(() => {
+		if (condensed && translationOpen) closeTranslation();
+	});
 
 	let dwellTimer: ReturnType<typeof setTimeout> | undefined;
 	let anchor: HTMLElement | null = $state(null);
@@ -177,6 +185,7 @@
 <span
 	class="reader-sentence"
 	class:focused={active}
+	class:condensed={condensed}
 	data-sentence-id={sentence.id}
 	role="group"
 	tabindex="0"
@@ -192,6 +201,7 @@
 		{#if run.kind === 'plain'}<span class="plain-text">{runs[index - 1]?.kind === 'occurrence' ? run.text.slice(punctuationAfter(index - 1).length) : run.text}</span>{:else}
 			<TextOccurrence
 				text={run.text}
+				condensed={condensed}
 				suffix={punctuationAfter(index)}
 				occurrence={run.occurrence}
 				popoverOccurrence={run.popoverOccurrence}
@@ -206,9 +216,9 @@
 			/>
 		{/if}
 	{/each}
-	<ConstructionOverlay {constructions} activeIDs={activeConstructionIDs} root={words} />
+	{#if !condensed}<ConstructionOverlay {constructions} activeIDs={activeConstructionIDs} root={words} />{/if}
 	</span>
-	<span class="sentence-footer" class:without-expressions={constructions.length === 0} class:without-audio={!sentence.audio?.ready}>
+	{#if !condensed}<span class="sentence-footer" class:without-expressions={constructions.length === 0} class:without-audio={!sentence.audio?.ready}>
 		<span class="focus-label">{active ? 'Focused sentence' : `Sentence ${sentence.sentence_index + 1}`}</span>
 		<button type="button" class="play-sentence" disabled={!sentence.audio?.ready} onclick={(event) => { event.stopPropagation(); onPlay?.(sentence); }}>
 			<span aria-hidden="true">▶</span> {sentence.audio?.ready ? 'Play sentence' : 'Audio not ready'}
@@ -239,7 +249,8 @@
 			{/each}
 		</span>
 	</span>
-	{#if translationOpen && translationAnchor}
+	{/if}
+	{#if translationOpen && translationAnchor && !condensed}
 		<SentenceTranslationPopover
 			articleId={block.article_id}
 			sentenceId={sentence.id}
@@ -311,4 +322,26 @@
 	@media (prefers-reduced-motion: reduce) {
 		.reader-sentence, .sentence-words { transition: none; }
 	}
+
+	/* Condensed: the sentence wrapper flows inline within its paragraph and
+	   keeps source whitespace between sentences. No card geometry, no
+	   connector space, no focus scaling: focusing must not move the text.
+	   Subtitles, overlays and footers are not rendered in this mode. */
+	.reader-sentence.condensed {
+		display: inline;
+		padding: 0;
+		margin: 0;
+		border: 0;
+		border-radius: 0;
+	}
+	.reader-sentence.condensed:hover,
+	.reader-sentence.condensed.focused { background: transparent; border-color: transparent; }
+	.reader-sentence.condensed .sentence-words {
+		display: inline;
+		position: static;
+		font: inherit;
+		line-height: inherit;
+		transform: none;
+	}
+	.reader-sentence.condensed.focused .sentence-words { transform: none; }
 </style>

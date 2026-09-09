@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { readerThemes, type ReaderTheme } from './theme';
+	import type { ReadingMode } from './readingMode';
 
 	let {
 		hoverEnabled,
@@ -8,7 +9,9 @@
 		onToggleHover,
 		onTheme,
 		enlargeFocus = true,
-		onFocusMode = (_value: boolean) => {}
+		onFocusMode = (_value: boolean) => {},
+		readingMode = 'learning',
+		onReadingMode = (_value: ReadingMode) => {}
 	}: {
 		hoverEnabled: boolean;
 		hoverSaving: boolean;
@@ -17,11 +20,16 @@
 		onTheme: (theme: ReaderTheme) => void;
 		enlargeFocus?: boolean;
 		onFocusMode?: (value: boolean) => void;
+		readingMode?: ReadingMode;
+		onReadingMode?: (value: ReadingMode) => void;
 	} = $props();
 	let appearanceOpen = $state(false);
 </script>
 
 <div class="reader-toolbar" class:appearance-open={appearanceOpen} aria-label="Reader controls">
+	<div class="mode-picker" role="group" aria-label="Reading mode">
+		<button type="button" aria-pressed={readingMode === 'learning'} onclick={() => onReadingMode('learning')}>Learning</button><button type="button" aria-pressed={readingMode === 'condensed'} onclick={() => onReadingMode('condensed')}>Condensed</button>
+	</div>
 	<label class="focus-picker"><span>Focus</span>
 		<select aria-label="Sentence focus style" value={enlargeFocus ? 'enlarge' : 'highlight'} onchange={(event) => onFocusMode(event.currentTarget.value === 'enlarge')}>
 			<option value="enlarge">Enlarge without reflow</option><option value="highlight">Highlight only</option>
@@ -49,10 +57,10 @@
 		font-size: 0.85rem;
 	}
 
-	.hover-toggle, .theme-picker, .focus-picker { display: inline-flex; align-items: center; gap: 0.45rem; }
-	select, .theme-picker button { padding: 0.5rem 0.65rem; border: 1px solid var(--reader-border); border-radius: 0.6rem; background: transparent; color: var(--reader-muted); }
-	.theme-picker button { cursor: pointer; }
-	.theme-picker button[aria-pressed='true'] { border-color: var(--reader-accent); color: var(--reader-accent); background: color-mix(in srgb, var(--reader-accent) 9%, transparent); }
+	.hover-toggle, .theme-picker, .focus-picker, .mode-picker { display: inline-flex; align-items: center; gap: 0.45rem; }
+	select, .theme-picker button, .mode-picker button { padding: 0.5rem 0.65rem; border: 1px solid var(--reader-border); border-radius: 0.6rem; background: transparent; color: var(--reader-muted); }
+	.theme-picker button, .mode-picker button { cursor: pointer; }
+	.theme-picker button[aria-pressed='true'], .mode-picker button[aria-pressed='true'] { border-color: var(--reader-accent); color: var(--reader-accent); background: color-mix(in srgb, var(--reader-accent) 9%, transparent); }
 	.mobile-appearance { display: none; }
 	@media (max-width: 850px) { .reader-toolbar { flex-wrap: wrap; justify-content: flex-start; padding-inline: 0.7rem; } }
 	@media (max-width: 600px) {

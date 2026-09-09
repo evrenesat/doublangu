@@ -6,6 +6,7 @@
 
 	type Props = {
 		block: ArticleBlock;
+		condensed?: boolean;
 		activeSentenceID: string | null;
 		activeConstructionIDs: string[];
 		onOpen: (occurrence: ArticleOccurrence, anchor: HTMLElement, pin: boolean) => void;
@@ -20,6 +21,7 @@
 
 	let {
 		block,
+		condensed = false,
 		activeSentenceID,
 		activeConstructionIDs,
 		onOpen,
@@ -66,12 +68,13 @@
 			{#if showSkeleton}<span class="subtitle-skeleton" aria-hidden="true"></span>{/if}
 		</div>
 	{/if}
-	<p class="reader-paragraph">
+	<p class="reader-paragraph" class:condensed={condensed}>
 		{#if sentences.length === 0}
 			{#each fallbackRuns as run, index (index)}
 				{#if run.kind === 'plain'}{run.text}{:else}
 					<TextOccurrence
 						text={run.text}
+						condensed={condensed}
 						occurrence={run.occurrence}
 						popoverOccurrence={run.popoverOccurrence}
 						constructionIDs={run.constructionIDs}
@@ -97,6 +100,7 @@
 				<Sentence
 					{block}
 					{sentence}
+					condensed={condensed}
 					occurrences={sentenceOccurrences(sentence)}
 					active={activeSentenceID === sentence.id}
 					activeConstructionIDs={activeConstructionIDs}
@@ -127,6 +131,10 @@
 		word-break: normal;
 		transition: opacity 120ms ease;
 	}
+
+	/* Condensed keeps the responsive article size but drops the interlinear
+	   rhythm: sentences flow inline as one plain paragraph. */
+	.reader-paragraph.condensed { line-height: 1.65; }
 
 	.paragraph-note {
 		display: flex;

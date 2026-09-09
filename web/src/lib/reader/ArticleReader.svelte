@@ -23,6 +23,12 @@
 	import { appPath } from '$lib/paths';
 	import { HoverAudioController } from './audioController';
 	import { applyReaderTheme, readReaderTheme, saveReaderTheme, type ReaderTheme } from './theme';
+	import {
+		readReadingMode,
+		saveReadingMode,
+		type ReadingMode
+	} from './readingMode';
+	import SentenceTranslationPopover from './SentenceTranslationPopover.svelte';
 	import NarrationPlayer from './NarrationPlayer.svelte';
 	import Paragraph from './Paragraph.svelte';
 	import ReaderToolbar from './ReaderToolbar.svelte';
@@ -69,6 +75,20 @@
 	let feedbackIsError = $state(false);
 	let closeTimer: ReturnType<typeof setTimeout> | undefined;
 	let enlargeFocus = $state(true);
+	// Learning is the initial default; a stored Condensed choice is restored
+	// on mount and remembered per browser. This is presentation-only and
+	// never touches the server-owned pronounce-on-hover preference.
+	let readingMode = $state<ReadingMode>('learning');
+	const condensed = $derived(readingMode === 'condensed');
+	// Condensed mode replaces the per-sentence footers with one stable action
+	// row under the toolbar. Only its Translate control may start generation:
+	// 350ms dwell for hover/focus, immediate for touch/click.
+	let condensedTranslationOpen = $state(false);
+	let condensedTranslationAuto = $state(false);
+	let condensedTranslationAnchor: HTMLElement | null = $state(null);
+	let condensedTranslateTrigger: HTMLElement | null = $state(null);
+	let condensedTranslationTimer: ReturnType<typeof setTimeout> | undefined;
+	let suppressCondensedFocus = false;
 	let narration = $state<Narration | null>(null);
 	let narrationLoadedFor = $state('');
 	let narrationLoading = $state(false);
@@ -237,6 +257,7 @@
 		const id = current.id;
 		if (freshResetFor === id) return;
 		freshResetFor = id;
+		closeCondensedTranslation();
 		showFreshOptions = false;
 		pipelineProfiles = [];
 		pipelineSelectedProfileID = '';
@@ -294,6 +315,7 @@
 		document.documentElement.setAttribute('data-reader-page', 'true');
 		theme = readReaderTheme();
 		applyReaderTheme(theme);
+		readingMode = readReadingMode();
 		hoverAudio.setEnabled(hoverEnabled);
 		const handleKeydown = (event: KeyboardEvent) => {
 			if (event.key !== 'Escape') return;
@@ -340,8 +362,75 @@
 
 	onDestroy(() => {
 		if (closeTimer) clearTimeout(closeTimer);
+		clearCondensedTranslationTimer();
 		hoverAudio.destroy();
 	});
+
+	function setReadingMode(next: ReadingMode): void {
+		if (readingMode === next) return;
+		closeCondensedTranslation();
+		readingMode = next;
+		saveReadingMode(next);
+	}
+
+	function clearCondensedTranslationTimer(): void {
+		if (condensedTranslationTimer) clearTimeout(condensedTranslationTimer);
+		condensedTranslationTimer = undefined;
+	}
+
+	function openCondensedTranslation(element: HTMLElement, immediate: boolean): void {
+		if (!activeSentence) return;
+		clearCondensedTranslationTimer();
+		condensedTranslationAnchor = element;
+		condensedTranslationOpen = true;
+		condensedTranslationAuto = immediate;
+		if (!immediate) {
+			condensedTranslationTimer = setTimeout(() => {
+				condensedTranslationTimer = undefined;
+				condensedTranslationAuto = true;
+			}, 350);
+		}
+	}
+
+	function closeCondensedTranslation(refocus = false): void {
+		clearCondensedTranslationTimer();
+		const wasOpen = condensedTranslationOpen;
+		condensedTranslationOpen = false;
+		condensedTranslationAuto = false;
+		condensedTranslationAnchor = null;
+		if (refocus && wasOpen) {
+			suppressCondensedFocus = true;
+			condensedTranslateTrigger?.focus();
+			queueMicrotask(() => {
+				suppressCondensedFocus = false;
+			});
+		}
+	}
+
+	function handleCondensedTranslateEnter(event: PointerEvent | FocusEvent): void {
+		if (!activeSentence) return;
+		if (event instanceof PointerEvent && event.pointerType === 'touch') return;
+		if (!(event instanceof PointerEvent) && suppressCondensedFocus) return;
+		openCondensedTranslation(event.currentTarget as HTMLElement, false);
+	}
+
+	function handleCondensedTranslateLeave(): void {
+		// Leaving before the dwell dispatched cancels generation; an open
+		// popover stays open until its explicit close.
+		if (!condensedTranslationTimer) return;
+		closeCondensedTranslation();
+	}
+
+	function handleCondensedTranslateClick(event: MouseEvent): void {
+		event.stopPropagation();
+		openCondensedTranslation(event.currentTarget as HTMLElement, true);
+	}
+
+	async function playActiveSentence(): Promise<void> {
+		const sentence = activeSentence;
+		if (!sentence?.audio?.ready) return;
+		await hoverAudio.playNow(sentence.audio, `sentence:${sentence.id}`);
+	}
 
 	function emit(next: Article): void {
 		currentState = next;
@@ -526,7 +615,12 @@
 		}
 	}
 
+	const activeSentence = $derived(sentences.find((sentence) => sentence.id === activeSentenceID) ?? null);
+
 	function focusSentence(sentenceID: string, element: HTMLElement): void {
+		// Deliberately switch subjects: never show a prior sentence's
+		// translation response under the new sentence's label.
+		if (condensedTranslationOpen && sentenceID !== activeSentenceID) closeCondensedTranslation();
 		activeSentenceID = sentenceID;
 		if (followFocus) setNarrationIndex(sentenceID);
 	}
@@ -691,7 +785,7 @@
 	}
 </script>
 
-<section class="reader-shell" aria-label="Audible article reader" style:--reader-rest-scale={enlargeFocus ? '0.94' : '1'}>
+<section class="reader-shell" class:reader-condensed={condensed} data-reading-mode={readingMode} aria-label="Audible article reader" style:--reader-rest-scale={enlargeFocus && !condensed ? '0.94' : '1'}>
 	<div class="reader-heading">
 		<a class="reader-back" href={appPath('/reader')}>← Articles</a>
 		<h1>{current.title}</h1>
@@ -772,9 +866,41 @@
 		onTheme={setTheme}
 		{enlargeFocus}
 		onFocusMode={(value) => (enlargeFocus = value)}
+		{readingMode}
+		onReadingMode={setReadingMode}
 	/>
 	{#if hoverActivationHint}
 		<p class="reader-error hover-hint" role="status">Click once to enable sound</p>
+	{/if}
+	{#if condensed}
+		<div class="condensed-action-row" data-condensed-action-row>
+			<span class="condensed-action-label">
+				{#if activeSentence}Sentence {activeSentence.sentence_index + 1}{:else}No active sentence{/if}
+			</span>
+			<button
+				type="button"
+				class="condensed-play"
+				disabled={!activeSentence?.audio?.ready}
+				onclick={() => void playActiveSentence()}
+			>
+				<span aria-hidden="true">▶</span> {activeSentence?.audio?.ready ? 'Play sentence' : 'Audio not ready'}
+			</button>
+			<button
+				type="button"
+				class="condensed-translate"
+				bind:this={condensedTranslateTrigger}
+				disabled={!activeSentence}
+				aria-expanded={condensedTranslationOpen}
+				aria-label={activeSentence ? `Translate sentence ${activeSentence.sentence_index + 1}` : 'Translate sentence'}
+				onpointerenter={handleCondensedTranslateEnter}
+				onpointerleave={handleCondensedTranslateLeave}
+				onfocus={handleCondensedTranslateEnter}
+				onblur={handleCondensedTranslateLeave}
+				onclick={handleCondensedTranslateClick}
+			>
+				<span aria-hidden="true">⇄</span> Translate
+			</button>
+		</div>
 	{/if}
 
 	<div class="reader-body" class:has-focus={activeSentenceID !== null}>
@@ -782,6 +908,7 @@
 		{#each blocks as block (block.id)}
 			<Paragraph
 				{block}
+				condensed={condensed}
 				activeSentenceID={activeSentenceID}
 				activeConstructionIDs={activeConstructionIDs}
 				onOpen={openPinned}
@@ -795,6 +922,19 @@
 			/>
 		{/each}
 	</div>
+
+	{#if condensed && condensedTranslationOpen && condensedTranslationAnchor && activeSentence}
+		<SentenceTranslationPopover
+			articleId={current.id}
+			sentenceId={activeSentence.id}
+			sentenceLabel={activeSentence.source_text}
+			anchor={condensedTranslationAnchor}
+			autoEnsure={condensedTranslationAuto}
+			onEnter={() => {}}
+			onLeave={() => {}}
+			onClose={() => closeCondensedTranslation(true)}
+		/>
+	{/if}
 
 	{#if selectedOccurrence && anchor}
 		<SemanticPopover
@@ -912,6 +1052,23 @@
 
 
 	.reader-error { margin: 0.65rem 0 0; color: var(--reader-danger); font-size: 0.85rem; }
+
+	/* Condensed mode owns one fixed-height action row under the toolbar.
+	   It is always rendered at the same height so focusing a sentence, or
+	   enabling its Play/Translate buttons, never adds gaps to the text. */
+	.condensed-action-row {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem 1.2rem;
+		min-height: 2.75rem;
+		padding: 0.35rem 1.5rem;
+		border-block: 1px solid var(--reader-border);
+		color: var(--reader-muted);
+		font: 400 0.79rem/1.5 ui-sans-serif, system-ui, sans-serif;
+	}
+	.condensed-action-label { width: 8.2rem; flex-shrink: 0; }
+	.condensed-action-row button { border: 0; padding: 0; background: transparent; cursor: pointer; color: var(--reader-accent); font: inherit; text-align: left; }
+	.condensed-action-row button:disabled { cursor: default; color: var(--reader-muted); }
 
 	@media (max-width: 600px) {
 		.reader-status-row { grid-template-columns: 1fr; }
