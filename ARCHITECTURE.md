@@ -650,6 +650,33 @@ job and `jobs.CompleteTx` requires the live lease, so a stale or canceled
 worker publishes nothing. Failures are terminal; only an explicit user retry
 creates a new job.
 
+### Sentence translation storage and contract
+
+Migration 015 adds `sentence_translation`: one saved translation per source
+sentence in the article's target language, keyed to the exact source anchor
+(`sentence_id` references `article_sentence` with cascading delete).
+`translation_text` is null until the first success; result metadata uses
+empty defaults and the job/run pointers stay nullable (`last_run_id`
+references `analysis_run` with null-on-delete). The same migration rebuilds
+`job` solely to admit `reader.sentence_translation.v1`, preserving both
+referencing child tables, every runtime row, all indexes, the 012
+`ailocals_result_sha256` column, and the `dictionary_entry` pending-job
+pointers (backed up around the rebuild, since dropping `job` would otherwise
+fire their null-on-delete action). Existing articles start with no saved
+translations.
+
+The output contract is `sentence.translation.v1` (owned by
+`internal/annotator`): a closed object with exact const identity fields
+(`version`, `sentence_id`, `source_hash`) and nonblank plain-text
+`translation_en` up to 8,000 Unicode scalars — no HTML, no extra fields.
+Unknown, missing, and duplicate keys all fail. Storage
+(`internal/sentencetranslation`) verifies every write against the live
+anchor: deleted
+or recreated sentences fail with a stale-anchor error and a result is never
+remapped to another sentence, while the target language must match the
+owning article. Generation workers and HTTP handlers land in later
+checkpoints; this layer performs no provider calls.
+
 ## Deployment boundary
 
 Pushes to `main` are verified and packaged on a GitHub-hosted runner. Only the

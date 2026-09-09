@@ -1,5 +1,53 @@
 # Development Log
 
+## 2026-09-09 — Checkpoint 8: sentence storage and translation contract
+
+Implemented Checkpoint 8 of
+`plans/in-progress/reader-settings-prompt-experiments-20260908.md` against
+approved Checkpoint 7 (`c51b429`). No HTTP/UI, no workers, no job wiring:
+storage, output contract, and migration only. Verified work is left
+uncommitted for review; no checkpoint commits were created.
+
+### Implementation
+
+- Migration `015_sentence_translation.sql`: new `sentence_translation`
+  table (one row per source sentence, `sentence_id` FK
+  `article_sentence` ON DELETE CASCADE, nullable `translation_text`,
+  empty-default metadata, nullable `last_job_id` / `last_run_id` FKs with
+  null-on-delete) plus a `job` rebuild admitting only the additional
+  `reader.sentence_translation.v1` type. The rebuild repeats the 013
+  child-table preservation pattern and additionally backs up and restores
+  `dictionary_entry.last_job_id`: dropping `job` fires its null-on-delete
+  action, which the rehearsal test caught (pointer nulled post-rebuild)
+  before the fix. Existing articles start with no saved translations.
+- `internal/sentencetranslation` (`types.go`, `store.go`, `AGENTS.md`):
+  anchor-verified `Save` (sentence must exist with the captured
+  source hash, target language must match the owning article; otherwise
+  `ErrStaleAnchor` and nothing stored) and `Get` (`ErrNotFound` when
+  missing). No result is ever remapped to a changed/recreated anchor.
+- `internal/annotator/sentence_translation.go`: `sentence.translation.v1`
+  input/prompt/schema/validation plus the bounded executor entrypoint
+  `GenerateSentenceTranslation` (initial turn plus at most two corrective
+  turns, result-plus-error). The strict decoder rejects unknown, missing,
+  and duplicate keys plus trailing data; identity fields are exact const
+  matches and `translation_en` is nonblank plain text up to 8,000 Unicode
+  scalars with no HTML or control characters.
+- `internal/store` version pins bumped 14 → 15 (`db_test.go`,
+  `migrationNamesUpTo`); Go-side `jobs` job-type validation stays
+  Checkpoint 9 scope and was deliberately left untouched.
+
+### Verification
+
+- `go test ./internal/store ./internal/sentencetranslation ./internal/annotator -count=1`: all ok.
+- `go test ./internal/reader ./internal/jobs -count=1`: all ok.
+- `git diff --check` clean; `gofmt` clean on touched packages.
+- Observed: valid sentence outputs generate on exact identity and persist
+  through the store; wrong sentence/hash/version, blank/oversized/HTML
+  translations, extra/missing/duplicate keys, and trailing data all reject;
+  stale/deleted anchors and foreign target languages store nothing;
+  preexisting job/dependency/relay/dictionary/sentence rows survive the
+  migration byte-for-field with clean `foreign_key_check`/`integrity_check`.
+
 ## 2026-09-08 — Checkpoint 7: Explore regeneration domain
 
 Implemented Checkpoint 7 of

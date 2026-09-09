@@ -28,6 +28,7 @@ func migrationNamesUpTo(version string) []string {
 		"008_analysis_provider_pipeline.sql", "009_stage_cache_provider_identity.sql",
 		"010_attempt_truncation_flags.sql", "011_llm_relay.sql", "012_ailocals_presence.sql",
 		"013_dictionary_explore.sql", "014_prompt_profiles_and_run_operations.sql",
+		"015_sentence_translation.sql",
 	}
 	for index, name := range all {
 		if name == version {
