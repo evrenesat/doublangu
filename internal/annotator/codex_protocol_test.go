@@ -9,6 +9,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestProtocolRequestsMatchGeneratedAppServerShapes(t *testing.T) {
@@ -79,6 +80,31 @@ func TestReadProtocolLineBoundsAndEOF(t *testing.T) {
 	_, err = readProtocolLine(bufio.NewReader(strings.NewReader("")), 8)
 	if !errors.Is(err, io.EOF) {
 		t.Fatalf("empty EOF error = %v", err)
+	}
+}
+
+func TestProtocolNextHonorsContextCancellation(t *testing.T) {
+	reader, writer := io.Pipe()
+	client := newProtocolClient(io.Discard, reader)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	defer reader.Close()
+	defer writer.Close()
+
+	result := make(chan error, 1)
+	go func() {
+		_, err := client.next(ctx)
+		result <- err
+	}()
+	cancel()
+
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("next error = %v, want context cancellation", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("next did not honor context cancellation")
 	}
 }
 

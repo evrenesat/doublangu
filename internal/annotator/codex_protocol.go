@@ -193,13 +193,18 @@ func (p *appServerProcess) close() {
 }
 
 type protocolClient struct {
-	stdin io.Writer
-	lines *bufio.Reader
-	total int
+	stdin       io.Writer
+	lines       *bufio.Reader
+	closeReader io.Closer
+	total       int
 }
 
 func newProtocolClient(stdin io.Writer, stdout io.Reader) *protocolClient {
-	return &protocolClient{stdin: stdin, lines: bufio.NewReaderSize(stdout, 32<<10)}
+	client := &protocolClient{stdin: stdin, lines: bufio.NewReaderSize(stdout, 32<<10)}
+	if closer, ok := stdout.(io.Closer); ok {
+		client.closeReader = closer
+	}
+	return client
 }
 
 func (p *protocolClient) send(id int64, method string, params any) error {
@@ -215,7 +220,33 @@ func (p *protocolClient) send(id int64, method string, params any) error {
 }
 
 func (p *protocolClient) next(ctx context.Context) (jsonRPCMessage, error) {
-	line, err := readProtocolLine(p.lines, maxProtocolLineBytes)
+	if err := ctx.Err(); err != nil {
+		return jsonRPCMessage{}, err
+	}
+	result := make(chan struct {
+		line []byte
+		err  error
+	}, 1)
+	go func() {
+		line, err := readProtocolLine(p.lines, maxProtocolLineBytes)
+		result <- struct {
+			line []byte
+			err  error
+		}{line: line, err: err}
+	}()
+	var readResult struct {
+		line []byte
+		err  error
+	}
+	select {
+	case <-ctx.Done():
+		if p.closeReader != nil {
+			_ = p.closeReader.Close()
+		}
+		return jsonRPCMessage{}, ctx.Err()
+	case readResult = <-result:
+	}
+	line, err := readResult.line, readResult.err
 	if err != nil {
 		return jsonRPCMessage{}, err
 	}

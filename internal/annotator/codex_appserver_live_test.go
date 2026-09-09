@@ -54,6 +54,17 @@ func TestLiveCodexChunk(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	for index, sourceText := range []string{
+		"Ik denk: wat gebeurt hier?",
+		"Het dorp is meestal rustig.",
+		"In één keer sta je in de belangstelling.",
+	} {
+		span, err := semantics.ResolveSpan(prepared.Blocks[0], sourceText, 0)
+		if err != nil {
+			t.Fatalf("sentence %d anchor: %v", index, err)
+		}
+		prepared.Sentences = append(prepared.Sentences, semantics.ResolvedSentence{Index: index, Span: span})
+	}
 	chunk, err := semantics.PrepareChunk(prepared, 0, nil)
 	if err != nil {
 		t.Fatal(err)

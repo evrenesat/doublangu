@@ -1,5 +1,232 @@
 # Development Log
 
+## 2026-09-09 — Companion CP2 v02 reviewer approval
+
+Reviewed the four-file CP2 worktree against approved companion CP1 `ae44814`
+(one companion commit since `9f3ea83`, no CP2 commit before review). No material
+findings. Approval label: `cp2 v02 aflow-reader-settings-prompt-experiments-20260908-20260909-063845: Approve live acceptance and rollback proof`.
+Prior source CP1–13 and companion CP1 remain approved.
+
+Independent reviewer checks passed with
+`PATH=/root/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.5.linux-amd64/bin:$PATH`:
+
+~~~sh
+go test ./internal/annotator ./internal/semantics -count=1
+go test -race ./internal/annotator -count=1
+go test ./internal/store -run 'TestMigration014_PromptProfilesRehearsal|TestMigration015_SentenceTranslationRehearsal|TestMigration015_RollbackOnFailure' -count=1 -v
+go test -race -overlay /tmp/doublangu-cp2-review-beqf2xtt/overlay.json ./internal/annotator -run '^TestReviewBlockedProtocolCancellation$' -count=1 -v
+gofmt -l internal/annotator/codex_protocol.go internal/annotator/codex_protocol_test.go internal/annotator/codex_appserver_live_test.go
+git diff --check
+~~~
+
+The disposable overlay probe waited for the pipe read to begin before cancelling;
+it returned `context.Canceled` promptly under the race detector. No probe source
+was added to the repository. Read-only SQLite inspection independently confirmed
+backup/upgraded/restored schema maxima 13/15/13, article counts 1/2/1, and integrity
+`ok` in all three retained databases. Restored article/job snapshots match the
+pre-upgrade snapshot; the retained sentinel response is `v1.not_found`. Git history
+confirms the previous artifact revision `00dad455` ends at migration 013.
+
+Accepted the worker's recorded executed live passes (chunk 290.12s and AppServer
+7.18s) and existing real Chromium owner journey; the reviewer did not repeat those
+provider calls or the unchanged CP1 suites. Companion CP2 and original CP14 local
+acceptance are approved. Ignored review/plan bookkeeping remains local; this is
+ready for the coordinator's local merge, with no public push or deployment.
+
+## 2026-09-09 — CP2 v02 follow-up: live acceptance and backup restoration
+
+Completed the focused non-checkpoint recovery plan
+`plans/in-progress/doublangu-finish-reader-settings-20260909-cp02-v02.md`.
+The preceding CP2 v01 entry remains below as historical evidence; its
+migration result was limited to in-memory unit tests and is superseded for
+readiness by the operational rehearsal recorded here. No approved CP1–13
+source checkpoint was replayed, no historical CP6/CP7 recovery patch was
+applied, and no commit, public push, or deployment was made. Reviewer approval
+is still pending.
+
+### Scoped corrections
+
+- `internal/annotator/protocolClient.next` now observes the request context
+  while waiting for a protocol line and closes an owned app-server stdout
+  reader on cancellation. `TestProtocolNextHonorsContextCancellation` proves
+  a blocked pipe read returns promptly instead of masking the adapter deadline
+  behind the Go test alarm.
+- `TestLiveCodexChunk` now supplies the three exact server-owned sentence
+  anchors used by its production-shaped prepared input. The validator and
+  fixture size were unchanged; the earlier `b0:t0` rejection was caused by
+  the test supplying no sentence anchors at all.
+
+### Authenticated live verification
+
+The first bounded diagnostic, before the fixture correction, exposed the
+context-ignorant protocol read: `go test -timeout 12m` reached the test alarm
+while blocked in `bufio.Reader.ReadLine`. After the transport correction, the
+next bounded diagnostic returned the adapter's real evidence: two responses
+failed because `b0:t0` was outside the empty sentence-anchor set, followed by a
+provider timeout on the second correction. This was fixed in the live fixture,
+not by weakening validation.
+
+The exact required chunk command then executed without a skip and passed:
+
+~~~sh
+export PATH=/root/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.5.linux-amd64/bin:$PATH
+DOUBLANGU_TEST_CODEX_LIVE=1 DOUBLANGU_TEST_CODEX_MODEL=gpt-5.6-luna DOUBLANGU_TEST_CODEX_EFFORT=max go test ./internal/annotator -run '^TestLiveCodexChunk$' -count=1 -v
+~~~
+
+It passed in 290.12s. The preceding bounded diagnostic form with
+`-timeout 12m` also passed in 339.56s, confirming that the adapter's existing
+10-minute provider deadline remains intact. Because the shared protocol path
+changed, the AppServer smoke was rerun with the same Luna/max environment and
+passed in 7.18s:
+
+~~~sh
+DOUBLANGU_TEST_CODEX_LIVE=1 DOUBLANGU_TEST_CODEX_MODEL=gpt-5.6-luna DOUBLANGU_TEST_CODEX_EFFORT=max go test ./internal/annotator -run '^TestLiveCodexAppServer$' -count=1 -v
+~~~
+
+The focused deterministic and concurrency checks also passed:
+
+~~~sh
+go test ./internal/annotator ./internal/semantics -count=1
+go test -race ./internal/annotator -count=1
+go test ./internal/store -run 'TestMigration014_PromptProfilesRehearsal|TestMigration015_SentenceTranslationRehearsal|TestMigration015_RollbackOnFailure' -count=1 -v
+~~~
+
+### Populated pre-014 backup restoration rehearsal
+
+Migration history showed migration 014 was added by
+`0b92c0a1f801c8012f0a7c18e0d4bf07b3726637` and migration 015 by
+`d91815587e1fede44f243857a1b7dbd06050526a`. The selected previous artifact
+was the exact parent `00dad455f87c5ea1fde39e23f7e620925c704e30`; its checked-in
+migration directory ends at `013_dictionary_explore.sql` and contains neither
+014 nor 015. It was built from a detached temporary worktree at that SHA:
+
+~~~sh
+git worktree add --detach /tmp/doublangu-cp2-v02.qFC3sC/previous-source 00dad455f87c5ea1fde39e23f7e620925c704e30
+cd /tmp/doublangu-cp2-v02.qFC3sC/previous-source
+PATH=/root/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.5.linux-amd64/bin:$PATH /root/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.5.linux-amd64/bin/go build -buildvcs=false -o /tmp/doublangu-cp2-v02-rehearsal.wafMKf/previous-server ./cmd/doublangu-server
+~~~
+
+In private temporary directory
+`/tmp/doublangu-cp2-v02-rehearsal.wafMKf/`, the pre-014 binary created the
+owner database and listened only on loopback at `127.0.0.1:18181` with
+`DOUBLANGU_ANNOTATOR=disabled`. A cookie-jar curl sequence performed `GET
+/api/v1/auth/csrf`, CSRF-protected owner login, `POST /api/v1/articles`, and
+authenticated `GET /api/v1/articles/01M245PF6X3AR6TTQD07RRW6C0`. Login and
+article retrieval passed; the article contained both source paragraphs. Before
+upgrade, `schema_version` was 13, the article was `draft`/`failed`, two
+normal `tts.chatterbox.v3` jobs were `queued`, the 014/015 tables were
+absent, and `PRAGMA integrity_check` returned `ok`.
+
+The stopped database was backed up with the SQLite backup command:
+
+~~~sh
+sqlite3 /tmp/doublangu-cp2-v02-rehearsal.wafMKf/pre14.sqlite ".backup '/tmp/doublangu-cp2-v02-rehearsal.wafMKf/pre14-consistent-backup.sqlite'"
+~~~
+
+The backup independently reported schema 13, one article, two queued jobs,
+and integrity `ok`. WAL/SHM sidecars were checked after quiescing the server;
+none remained at the consistent snapshot. The current artifact built at
+`ae44814d1ba735d589ab212490bd7fd5a106573f` was then started against the same
+disposable database on `127.0.0.1:18182`. Current owner login and the original
+article GET passed; migrations advanced the database to schema 15, created
+the 014/015 tables, preserved the article and two queued jobs, and returned
+integrity `ok`.
+
+While the upgraded service was running, the authenticated API created the
+post-backup sentinel article `POST-BACKUP SENTINEL` with ID
+`01M245S0QZ30P66AHS067WMF56`; its immediate authenticated GET returned 200.
+The upgraded database consequently contained two articles and three queued
+jobs. After stopping that service, the exact pre-upgrade files were restored:
+
+~~~sh
+mv /tmp/doublangu-cp2-v02-rehearsal.wafMKf/pre14.sqlite /tmp/doublangu-cp2-v02-rehearsal.wafMKf/post-upgrade.sqlite
+for suffix in -wal -shm; do
+  if [ -e "/tmp/doublangu-cp2-v02-rehearsal.wafMKf/pre14.sqlite${suffix}" ]; then mv "/tmp/doublangu-cp2-v02-rehearsal.wafMKf/pre14.sqlite${suffix}" "/tmp/doublangu-cp2-v02-rehearsal.wafMKf/post-upgrade.sqlite${suffix}"; fi
+done
+cp --preserve=mode,timestamps /tmp/doublangu-cp2-v02-rehearsal.wafMKf/pre14-consistent-backup.sqlite /tmp/doublangu-cp2-v02-rehearsal.wafMKf/pre14.sqlite
+cmp -s /tmp/doublangu-cp2-v02-rehearsal.wafMKf/pre14-consistent-backup.sqlite /tmp/doublangu-cp2-v02-rehearsal.wafMKf/pre14.sqlite
+~~~
+
+The previous artifact was restarted on `127.0.0.1:18181` against that restored
+file. Owner login and authenticated article reading passed, the preserved job
+query matched the pre-backup query byte-for-byte, schema returned to 13,
+integrity returned `ok`, and the 014/015 tables were absent. The sentinel GET
+returned 404, proving the post-backup write was lost by exact restoration.
+All temporary services were stopped; the unrelated `/tmp/cp14-rollback`
+service was not touched.
+
+### Delivery state
+
+The focused CP2 execution requirements now pass: both authenticated live
+smokes, the retained real owner journey above, and the populated operational
+backup restoration proof are recorded. The original plan's CP2 checkpoint
+remains a reviewer target rather than an approval claim; the verified source
+and DEVLOG changes are intentionally uncommitted for review. No credentials,
+runtime databases, or generated runtime data were added to tracked changes.
+
+## 2026-09-09 — CP2 recovery: owner-path evidence and live-provider blocker
+
+Executed Checkpoint 2 of
+`plans/in-progress/doublangu-finish-reader-settings-20260909.md` only. The
+authenticated owner path and populated migration rehearsal passed, but CP2
+remains unchecked because the required authenticated chunk smoke timed out on
+two unchanged attempts. No source checkpoint was replayed, no historical CP6/
+CP7 recovery patch was applied, and no public push or deployment occurred.
+
+### Nonproduction method and evidence
+
+- `codex login status` reported `Logged in using ChatGPT` (`codex-cli 0.153.4`).
+  The temporary compatibility-mode server exposed a healthy
+  `codex-app-server` catalog. The selected configured Luna binding was
+  `gpt-5.6-luna` with supported reasoning effort `max`; no credential or
+  secret value was copied into this log.
+- A disposable local server listened on `127.0.0.1:18080` with a temporary
+  SQLite database/media directory under `/tmp/doublangu-cp2.QPx2R1/`; the
+  Vite dev app listened on `127.0.0.1:5177`. Browser login used the normal
+  same-origin CSRF and owner-session flow with the generated password kept in
+  its private temporary file.
+- Real Chromium created Explore prompt version 2, created and activated the
+  `CP2 owner browser` profile, pinned that Explore version plus the other four
+  prompt versions, and created an article through `/reader/new`. The article
+  reached `ready` under the selected profile/binding.
+- The retained job payloads for the browser journey recorded profile
+  `CP2 owner browser`, provider `codex-app-server`, model `gpt-5.6-luna`, and
+  `reasoning_effort: max`. Explore captured prompt v2 (content hash
+  `085b0bc0df7c04c6205f640f06b5e520b706ddcdf62b2d76dea15afe79cd1373`) plus
+  correction v1; sentence translation captured sentence v1 plus correction
+  v1. The generated prompt turn contained the selected Explore marker.
+- Real Chromium generated and regenerated Explore and sentence translation.
+  Correlated successful runs were Explore
+  `01M244DZZ1BQW92B97JP6ZM691` and sentence translation
+  `01M244HDWMV5011MBDN21CBXTT`. Each had a provider cache miss, one completed
+  provider turn, and stage evidence for `codex-app-server` /
+  `gpt-5.6-luna`; the run-detail pages displayed the stage/model/prompt
+  identity. Learning and Condensed were switched in the browser and Learning
+  was restored; Condensed rendered one sentence, its action row, and no
+  sentence footer. The browser reported no page errors.
+
+### Verification
+
+- `DOUBLANGU_TEST_CODEX_LIVE=1 DOUBLANGU_TEST_CODEX_MODEL=gpt-5.6-luna DOUBLANGU_TEST_CODEX_EFFORT=max PATH=/root/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.5.linux-amd64/bin:$PATH /root/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.5.linux-amd64/bin/go test ./internal/annotator -run '^TestLiveCodexAppServer$' -count=1 -v`: passed in 9.75s.
+- The exact required `TestLiveCodexChunk` command with the same Luna/max
+  environment was executed twice. Both executions ran the test (no skip) and
+  both ended with `panic: test timed out after 10m0s` while reading the Codex
+  protocol stream. This is the current CP2 blocker; it is not recorded as a
+  pass or silently replaced with the shorter browser journey.
+- `PATH=/root/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.5.linux-amd64/bin:$PATH /root/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.5.linux-amd64/bin/go test ./internal/store -run 'TestMigration014_PromptProfilesRehearsal|TestMigration015_SentenceTranslationRehearsal|TestMigration015_RollbackOnFailure' -count=1 -v`: all three passed. The rehearsal fixtures populate the pre-014 schema, the 014-to-015 path uses populated pre-upgrade data, and the injected 015 failure restores version 14 and its pre-upgrade rows/constraints. The disposable database visibly used WAL/SHM sidecars; no production backup or post-backup write was involved.
+- Earlier deterministic Checkpoint 1 evidence remains represented by the
+  reviewer approval commit `ae44814`; those unchanged suites were not rerun
+  for this blocked CP2 attempt.
+
+### Delivery state
+
+- CP2 and every CP2 step remain unchecked in the active plan because the live
+  chunk requirement did not pass. Reviewer approval is not claimed.
+- The owner-authorized recovery remains local and uncommitted for review. No
+  public push, deployment, production database, or production provider
+  configuration was used. The coordinator may resume CP2 after the current
+  Luna/max chunk-provider timeout is resolved.
+
 ## 2026-09-09 — CP1 follow-up: preserve nullable presence reasons
 
 Addressed the reviewer finding from companion CP1 v01: the OpenAPI 3.0
