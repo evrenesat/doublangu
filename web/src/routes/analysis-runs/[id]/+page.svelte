@@ -33,10 +33,37 @@
 		}
 	}
 
-	function statusLabel(status: string): string {
+	function statusLabel(status: string, phase?: string): string {
 		if (status === 'succeeded') return 'Succeeded';
 		if (status === 'failed') return 'Failed';
+		if (phase === 'queued') return 'Queued';
 		return 'Running';
+	}
+
+	/** Owner-facing operation name; rows stored before operations existed read as article analysis. */
+	function operationLabel(operationType?: string): string {
+		if (operationType === 'explore') return 'Explore';
+		if (operationType === 'sentence_translation') return 'Sentence translation';
+		return 'Article analysis';
+	}
+
+	/** Compact exact prompt identity: type plus human version, id, and content hash. */
+	function promptSnapshotLabel(snapshot: { type: string; version: number; id: string; content_hash: string }): string {
+		return `${snapshot.type} v${snapshot.version} · ${snapshot.id} · ${snapshot.content_hash}`;
+	}
+
+	/**
+	 * Accurate zero-turn copy: exact-cache reuse only on a cache hit.
+	 * Otherwise the captured failure is shown, or a plain no-response note.
+	 */
+	function zeroTurnCopy(attempt: { cache_disposition?: string; error_code?: string; error_detail?: string }): { kind: 'cache' | 'failed' | 'empty'; text: string } {
+		if (attempt.cache_disposition === 'hit') {
+			return { kind: 'cache', text: 'No provider turns were needed; the accepted artifact came from the exact cache.' };
+		}
+		if (attempt.error_code || attempt.error_detail) {
+			return { kind: 'failed', text: `No provider turns completed; the attempt failed${attempt.error_code ? ` (${attempt.error_code})` : ''}.` };
+		}
+		return { kind: 'empty', text: 'No provider response was received.' };
 	}
 
 	function statusClass(status: string): string {
@@ -62,16 +89,21 @@
 	{:else if run}
 		<header class="page-heading">
 			<div>
-				<p class="eyebrow">Analysis run</p>
+				<p class="eyebrow">{operationLabel(run.operation_type)}</p>
 				<h1>{run.article_title}</h1>
 				<p class="muted"><a href={appPath(`/reader/${encodeURIComponent(run.article_id)}`)}>Open article</a></p>
 			</div>
-			<span class={`status-badge ${statusClass(run.status)}`}>{statusLabel(run.status)}</span>
+			<span class={`status-badge ${statusClass(run.status)}`}>{statusLabel(run.status, run.phase)}</span>
 		</header>
 
 		<section class="panel" aria-labelledby="summary-heading">
 			<h2 id="summary-heading">Run summary</h2>
 			<dl class="summary-grid">
+				<div><dt>Operation</dt><dd>{operationLabel(run.operation_type)}</dd></div>
+				{#if run.subject_label || run.subject_id}
+					<div><dt>Subject</dt><dd>{run.subject_label || run.subject_id}</dd></div>
+				{/if}
+				{#if run.phase}<div><dt>Phase</dt><dd>{run.phase}</dd></div>{/if}
 				<div><dt>Requested model</dt><dd>{run.requested_model || 'No model selected'}</dd></div>
 				<div><dt>Reasoning effort</dt><dd>{run.requested_effort}</dd></div>
 				<div><dt>Reported model</dt><dd>{run.reported_model || '—'}</dd></div>
@@ -90,6 +122,9 @@
 						{#each run.profile_snapshot.bindings ?? [] as binding (binding.stage_id)}
 							<div><dt>{binding.stage_id}</dt><dd>{binding.provider_id} · {binding.model_id}</dd></div>
 						{/each}
+						{#each run.profile_snapshot.prompt_snapshots ?? [] as snapshot (snapshot.id)}
+							<div><dt>Prompt · {snapshot.type}</dt><dd>{promptSnapshotLabel(snapshot)}</dd></div>
+						{/each}
 					{/if}
 					{#if run.failed_stage_id}
 						<div><dt>Failed binding</dt><dd>{run.failed_stage_id} · {run.failed_provider_id || '—'}</dd></div>
@@ -101,6 +136,9 @@
 					<strong>{run.error_code}</strong>
 					{#if run.error_detail}<pre>{run.error_detail}</pre>{/if}
 				</div>
+			{/if}
+			{#if run.status === 'failed' && (!run.stage_attempts || run.stage_attempts.length === 0) && run.turns.length === 0 && !run.error_detail}
+				<p class="muted">No provider response was received.</p>
 			{/if}
 		</section>
 
@@ -129,11 +167,13 @@
 									{#if attempt.timing_json}<div><dt>Timing</dt><dd>{attempt.timing_json}{#if attempt.timing_truncated} <span class="muted">(truncated)</span>{/if}</dd></div>{/if}
 									{#if attempt.metadata_json}<div><dt>Metadata</dt><dd>{attempt.metadata_json}{#if attempt.metadata_truncated} <span class="muted">(truncated)</span>{/if}</dd></div>{/if}
 									<div><dt>Started</dt><dd>{attempt.started_at}{attempt.completed_at ? ` → ${attempt.completed_at}` : ''}</dd></div>
+								{#if attempt.error_phase}<div><dt>Failure phase</dt><dd>{attempt.error_phase}</dd></div>{/if}
 								</dl>
 								{#if attempt.error_detail}<p class="failed">Error: {attempt.error_detail}{#if attempt.error_detail_truncated} <span class="muted">(truncated)</span>{/if}</p>{/if}
 								{#if attempt.provider_stderr_excerpt}<h3>Provider stderr excerpt{#if attempt.stderr_truncated} <span class="muted">(truncated)</span>{/if}</h3><pre>{attempt.provider_stderr_excerpt}</pre>{/if}
 								{#if attempt.turns.length === 0}
-									<p class="muted">No provider turns were needed; the accepted artifact came from the exact cache.</p>
+									{@const zeroCopy = zeroTurnCopy(attempt)}
+									<p class={zeroCopy.kind === 'failed' ? 'failed' : 'muted'}>{zeroCopy.text}</p>
 								{:else}
 									<div class="turn-list">
 										{#each attempt.turns as turn (turn.id)}

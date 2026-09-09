@@ -26,6 +26,10 @@ type Run struct {
 	ID                  library.ULID `json:"id"`
 	ArticleID           library.ULID `json:"article_id"`
 	ArticleTitle        string       `json:"article_title"`
+	OperationType       string       `json:"operation_type"`
+	SubjectID           string       `json:"subject_id"`
+	SubjectLabel        string       `json:"subject_label"`
+	Phase               string       `json:"phase"`
 	JobID               library.ULID `json:"job_id"`
 	AttemptCount        int          `json:"attempt_count"`
 	ContentHash         string       `json:"content_hash"`
@@ -66,6 +70,10 @@ type RunSummary struct {
 	ID                  library.ULID        `json:"id"`
 	ArticleID           library.ULID        `json:"article_id"`
 	ArticleTitle        string              `json:"article_title"`
+	OperationType       string              `json:"operation_type"`
+	SubjectID           string              `json:"subject_id"`
+	SubjectLabel        string              `json:"subject_label"`
+	Phase               string              `json:"phase"`
 	AttemptCount        int                 `json:"attempt_count"`
 	RequestedModel      string              `json:"requested_model"`
 	RequestedEffort     string              `json:"requested_effort"`
@@ -196,6 +204,7 @@ type StageAttemptSummary struct {
 	MetadataJSON              string             `json:"metadata_json"`
 	ProviderStderrExcerpt     string             `json:"provider_stderr_excerpt,omitempty"`
 	ErrorCode                 string             `json:"error_code"`
+	ErrorPhase                string             `json:"error_phase"`
 	ErrorDetail               string             `json:"error_detail,omitempty"`
 	UsageTruncated            bool               `json:"usage_truncated"`
 	TimingTruncated           bool               `json:"timing_truncated"`
@@ -390,9 +399,26 @@ func (s *HistoryStore) FinishRunTx(ctx context.Context, tx *sql.Tx, runID librar
 	return err
 }
 
+// validRunOperations mirrors the analysis_run operation_type CHECK
+// constraint. An empty operation selects every operation.
+var validRunOperations = map[string]bool{
+	"":                     true,
+	"article_analysis":     true,
+	"explore":              true,
+	"sentence_translation": true,
+}
+
 func (s *HistoryStore) ListRuns(ctx context.Context, articleID string, limit int, cursor string) (RunsPage, error) {
+	return s.ListRunsFiltered(ctx, articleID, "", limit, cursor)
+}
+
+func (s *HistoryStore) ListRunsFiltered(ctx context.Context, articleID, operation string, limit int, cursor string) (RunsPage, error) {
 	if s == nil || s.db == nil {
 		return RunsPage{}, errors.New("analysis history: nil database")
+	}
+	operation = strings.TrimSpace(operation)
+	if !validRunOperations[operation] {
+		return RunsPage{}, fmt.Errorf("%w: unknown run operation %q", ErrInvalidRunQuery, operation)
 	}
 	if limit <= 0 {
 		limit = 20
@@ -401,10 +427,14 @@ func (s *HistoryStore) ListRuns(ctx context.Context, articleID string, limit int
 		return RunsPage{}, fmt.Errorf("%w: limit must be at most 50", ErrInvalidRunQuery)
 	}
 	where := []string{"1 = 1"}
-	args := make([]any, 0, 7)
+	args := make([]any, 0, 8)
 	if strings.TrimSpace(articleID) != "" {
 		where = append(where, "r.article_id = ?")
 		args = append(args, articleID)
+	}
+	if operation != "" {
+		where = append(where, "r.operation_type = ?")
+		args = append(args, operation)
 	}
 	if cursor != "" {
 		startedAt, id, err := decodeRunCursor(cursor)
@@ -416,7 +446,8 @@ func (s *HistoryStore) ListRuns(ctx context.Context, articleID string, limit int
 	}
 	args = append(args, limit+1)
 	rows, err := s.db.Query(ctx, `
-		SELECT r.id, r.article_id, a.title, r.attempt_count, r.requested_model,
+		SELECT r.id, r.article_id, a.title, r.operation_type, r.subject_id,
+		       r.subject_label, r.phase, r.attempt_count, r.requested_model,
 		       r.requested_effort, r.status, r.total_paragraphs,
 		       r.completed_paragraphs, r.failed_block_index, r.duration_ms,
 		       r.started_at, r.completed_at, r.error_code,
@@ -434,7 +465,7 @@ func (s *HistoryStore) ListRuns(ctx context.Context, articleID string, limit int
 	for rows.Next() {
 		var summary RunSummary
 		var rawID, rawArticleID, snapshotJSON string
-		if err := rows.Scan(&rawID, &rawArticleID, &summary.ArticleTitle, &summary.AttemptCount, &summary.RequestedModel, &summary.RequestedEffort, &summary.Status, &summary.TotalParagraphs, &summary.CompletedParagraphs, &summary.FailedBlockIndex, &summary.DurationMS, &summary.StartedAt, &summary.CompletedAt, &summary.ErrorCode, &summary.ProfileID, &summary.ProfileName, &summary.ProfileSnapshotHash, &snapshotJSON); err != nil {
+		if err := rows.Scan(&rawID, &rawArticleID, &summary.ArticleTitle, &summary.OperationType, &summary.SubjectID, &summary.SubjectLabel, &summary.Phase, &summary.AttemptCount, &summary.RequestedModel, &summary.RequestedEffort, &summary.Status, &summary.TotalParagraphs, &summary.CompletedParagraphs, &summary.FailedBlockIndex, &summary.DurationMS, &summary.StartedAt, &summary.CompletedAt, &summary.ErrorCode, &summary.ProfileID, &summary.ProfileName, &summary.ProfileSnapshotHash, &snapshotJSON); err != nil {
 			return RunsPage{}, err
 		}
 		summary.ID = library.ULID(rawID)
@@ -461,7 +492,8 @@ func (s *HistoryStore) GetRun(ctx context.Context, id library.ULID) (Run, error)
 	var rawID, rawArticleID, rawJobID string
 	var snapshotJSON, failedStageID, failedProviderID string
 	err := s.db.QueryRow(ctx, `
-		SELECT r.id, r.article_id, a.title, r.job_id, r.attempt_count,
+		SELECT r.id, r.article_id, a.title, r.operation_type, r.subject_id,
+		       r.subject_label, r.phase, r.job_id, r.attempt_count,
 		       r.content_hash, r.contract_version, r.prompt_version,
 		       r.requested_model, r.requested_effort, r.provider_id,
 		       r.codex_cli_version, r.reported_model, r.started_at,
@@ -471,7 +503,7 @@ func (s *HistoryStore) GetRun(ctx context.Context, id library.ULID) (Run, error)
 		       r.profile_id, r.profile_name, r.profile_snapshot_hash,
 		       r.profile_snapshot_json, r.failed_stage_id, r.failed_provider_id
 		FROM analysis_run r JOIN article a ON a.id = r.article_id WHERE r.id = ?
-	`, id.String()).Scan(&rawID, &rawArticleID, &run.ArticleTitle, &rawJobID, &run.AttemptCount, &run.ContentHash, &run.ContractVersion, &run.PromptVersion, &run.RequestedModel, &run.RequestedEffort, &run.ProviderID, &run.CodexCLIVersion, &run.ReportedModel, &run.StartedAt, &run.CompletedAt, &run.DurationMS, &run.Status, &run.TotalParagraphs, &run.CompletedParagraphs, &run.FailedBlockIndex, &run.ErrorCode, &run.ErrorDetail, &run.StderrExcerpt, &run.ProfileID, &run.ProfileName, &run.ProfileSnapshotHash, &snapshotJSON, &failedStageID, &failedProviderID)
+	`, id.String()).Scan(&rawID, &rawArticleID, &run.ArticleTitle, &run.OperationType, &run.SubjectID, &run.SubjectLabel, &run.Phase, &rawJobID, &run.AttemptCount, &run.ContentHash, &run.ContractVersion, &run.PromptVersion, &run.RequestedModel, &run.RequestedEffort, &run.ProviderID, &run.CodexCLIVersion, &run.ReportedModel, &run.StartedAt, &run.CompletedAt, &run.DurationMS, &run.Status, &run.TotalParagraphs, &run.CompletedParagraphs, &run.FailedBlockIndex, &run.ErrorCode, &run.ErrorDetail, &run.StderrExcerpt, &run.ProfileID, &run.ProfileName, &run.ProfileSnapshotHash, &snapshotJSON, &failedStageID, &failedProviderID)
 	if err != nil {
 		return Run{}, err
 	}
@@ -495,7 +527,7 @@ func (s *HistoryStore) GetRun(ctx context.Context, id library.ULID) (Run, error)
 		       cache_disposition, source_cache_id, requested_model,
 		       reported_model, request_id, finish_reason, usage_json,
 		       timing_json, metadata_json, provider_stderr_excerpt,
-		       error_code, error_detail, usage_truncated, timing_truncated,
+		       error_code, error_phase, error_detail, usage_truncated, timing_truncated,
 		       metadata_truncated, stderr_truncated, error_detail_truncated,
 		       started_at, completed_at, duration_ms
 		FROM analysis_stage_attempt WHERE run_id = ?
@@ -510,7 +542,7 @@ func (s *HistoryStore) GetRun(ctx context.Context, id library.ULID) (Run, error)
 		var attempt StageAttemptSummary
 		var optionsText string
 		var usageTruncated, timingTruncated, metadataTruncated, stderrTruncated, detailTruncated int
-		if err := attemptRows.Scan(&attempt.ID, &attempt.StageID, &attempt.BlockIndex, &attempt.Status, &attempt.ProviderID, &attempt.ProviderType, &attempt.ProviderConfigFingerprint, &attempt.ModelID, &optionsText, &attempt.ContractVersion, &attempt.PromptVersion, &attempt.InputHash, &attempt.UpstreamArtifactHash, &attempt.OptionsHash, &attempt.CacheDisposition, &attempt.SourceCacheID, &attempt.RequestedModel, &attempt.ReportedModel, &attempt.RequestID, &attempt.FinishReason, &attempt.UsageJSON, &attempt.TimingJSON, &attempt.MetadataJSON, &attempt.ProviderStderrExcerpt, &attempt.ErrorCode, &attempt.ErrorDetail, &usageTruncated, &timingTruncated, &metadataTruncated, &stderrTruncated, &detailTruncated, &attempt.StartedAt, &attempt.CompletedAt, &attempt.DurationMS); err != nil {
+		if err := attemptRows.Scan(&attempt.ID, &attempt.StageID, &attempt.BlockIndex, &attempt.Status, &attempt.ProviderID, &attempt.ProviderType, &attempt.ProviderConfigFingerprint, &attempt.ModelID, &optionsText, &attempt.ContractVersion, &attempt.PromptVersion, &attempt.InputHash, &attempt.UpstreamArtifactHash, &attempt.OptionsHash, &attempt.CacheDisposition, &attempt.SourceCacheID, &attempt.RequestedModel, &attempt.ReportedModel, &attempt.RequestID, &attempt.FinishReason, &attempt.UsageJSON, &attempt.TimingJSON, &attempt.MetadataJSON, &attempt.ProviderStderrExcerpt, &attempt.ErrorCode, &attempt.ErrorPhase, &attempt.ErrorDetail, &usageTruncated, &timingTruncated, &metadataTruncated, &stderrTruncated, &detailTruncated, &attempt.StartedAt, &attempt.CompletedAt, &attempt.DurationMS); err != nil {
 			return Run{}, err
 		}
 		attempt.UsageTruncated = usageTruncated == 1

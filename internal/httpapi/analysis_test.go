@@ -75,3 +75,56 @@ func TestAnalysisHTTPHistory(t *testing.T) {
 		t.Fatalf("run detail = %+v", detail)
 	}
 }
+
+func TestAnalysisHTTPOperationFilter(t *testing.T) {
+	db, err := store.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := t.Context()
+	h := httpapi.NewAnalysisHandler(db)
+
+	article, err := reader.NewArticle("Operations", "Een zin.", "nl", "en")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reader.NewStore(db).CreateArticleQueued(ctx, &article); err != nil {
+		t.Fatal(err)
+	}
+	history := analysis.NewHistoryStore(db)
+	if _, err := history.StartRun(ctx, analysis.RunStart{
+		ArticleID: article.ID, ArticleTitle: article.Title, JobID: library.NewULID(), AttemptCount: 1,
+		ContentHash: article.ContentHash, ContractVersion: semantics.AnalysisContractVersion,
+		PromptVersion: semantics.PromptVersion, RequestedModel: "gpt-visible", RequestedEffort: "low",
+		ProviderID: "codex.appserver", TotalParagraphs: 1,
+		OperationType: "explore", SubjectID: "entry-1", SubjectLabel: "huis",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	filtered := httptest.NewRecorder()
+	h.ServeRuns(filtered, authedRequest(http.MethodGet, "/api/v1/analysis/runs?article_id="+article.ID.String()+"&operation=explore", ""))
+	if filtered.Code != http.StatusOK {
+		t.Fatalf("filtered runs response = %d", filtered.Code)
+	}
+	page := decodeJSON[analysis.RunsPage](t, filtered.Body.String())
+	if len(page.Runs) != 1 || page.Runs[0].OperationType != "explore" || page.Runs[0].SubjectID != "entry-1" || page.Runs[0].SubjectLabel != "huis" || page.Runs[0].Phase != "running" {
+		t.Fatalf("filtered runs = %+v", page)
+	}
+
+	empty := httptest.NewRecorder()
+	h.ServeRuns(empty, authedRequest(http.MethodGet, "/api/v1/analysis/runs?article_id="+article.ID.String()+"&operation=sentence_translation", ""))
+	if empty.Code != http.StatusOK {
+		t.Fatalf("empty filter response = %d", empty.Code)
+	}
+	if got := decodeJSON[analysis.RunsPage](t, empty.Body.String()); len(got.Runs) != 0 {
+		t.Fatalf("sentence runs = %+v", got)
+	}
+
+	invalid := httptest.NewRecorder()
+	h.ServeRuns(invalid, authedRequest(http.MethodGet, "/api/v1/analysis/runs?operation=comparison", ""))
+	if invalid.Code != http.StatusBadRequest {
+		t.Fatalf("invalid operation response = %d", invalid.Code)
+	}
+}

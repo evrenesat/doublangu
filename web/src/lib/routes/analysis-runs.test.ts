@@ -95,6 +95,50 @@ it('appends the next page instead of replacing loaded runs', async () => {
 	expect(fetchMock).toHaveBeenCalledTimes(2);
 });
 
+it('filters by operation and shows operation, subject, and queued states', async () => {
+	const exploreRun = {
+		id: 'run-exp', article_id: 'article-1', article_title: 'Heel het dorp', attempt_count: 1,
+		operation_type: 'explore', subject_id: 'entry-1', subject_label: 'huis', phase: 'finished',
+		requested_model: '', requested_effort: '', status: 'succeeded', profile_name: 'Imported Codex',
+		total_paragraphs: 0, completed_paragraphs: 0, failed_block_index: -1, duration_ms: 1200,
+		started_at: '2026-01-02T18:21:00Z', completed_at: '2026-01-02T18:21:01Z', error_code: ''
+	};
+	const queuedRun = {
+		id: 'run-q', article_id: 'article-1', article_title: 'Heel het dorp', attempt_count: 1,
+		operation_type: 'sentence_translation', subject_id: 'sent-1', subject_label: '', phase: 'queued',
+		requested_model: 'model-a', requested_effort: 'low', status: 'running',
+		total_paragraphs: 0, completed_paragraphs: 0, failed_block_index: -1, duration_ms: 0,
+		started_at: '2026-01-02T18:22:00Z', completed_at: '', error_code: ''
+	};
+	const requested: string[] = [];
+	const fetchMock = vi.fn(async (input: string): Promise<Response> => {
+		requested.push(input);
+		if (input === '/api/v1/analysis/runs?limit=25') return json(200, { runs: [legacyRun], next_cursor: '' });
+		if (input === '/api/v1/analysis/runs?operation=explore&limit=25') return json(200, { runs: [exploreRun], next_cursor: '' });
+		if (input === '/api/v1/analysis/runs?operation=sentence_translation&limit=25') return json(200, { runs: [queuedRun], next_cursor: '' });
+		throw new Error(`unexpected request ${input}`);
+	});
+	vi.stubGlobal('fetch', fetchMock);
+
+	render(AnalysisRunsPage);
+	// Legacy rows without an operation read as article analysis.
+	// (Cell queries use a td selector because the filter options repeat the labels.)
+	expect(await screen.findByText('Article analysis', { selector: 'td' })).toBeTruthy();
+
+	// Switching the filter reloads with the operation parameter.
+	await fireEvent.change(screen.getByLabelText('Operation'), { target: { value: 'explore' } });
+	await waitFor(() => expect(screen.getByText('Explore', { selector: 'td' })).toBeTruthy());
+	expect(screen.getByText('huis')).toBeTruthy();
+	expect(requested).toContain('/api/v1/analysis/runs?operation=explore&limit=25');
+
+	// A queued run reads Queued, not Running, with its subject id as fallback.
+	await fireEvent.change(screen.getByLabelText('Operation'), { target: { value: 'sentence_translation' } });
+	await waitFor(() => expect(screen.getByText('Queued')).toBeTruthy());
+	expect(screen.getByText('Sentence translation', { selector: 'td' })).toBeTruthy();
+	expect(screen.getByText('sent-1')).toBeTruthy();
+	expect(requested).toContain('/api/v1/analysis/runs?operation=sentence_translation&limit=25');
+});
+
 it('shows an empty state, and a retryable error when the API fails', async () => {
 	let healthy = false;
 	const fetchMock = vi.fn(async (input: string): Promise<Response> => {

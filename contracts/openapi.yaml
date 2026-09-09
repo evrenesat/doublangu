@@ -671,6 +671,10 @@ paths:
           in: query
           required: false
           schema: { $ref: "#/components/schemas/ULID" }
+        - name: operation
+          in: query
+          required: false
+          schema: { type: string, enum: [article_analysis, explore, sentence_translation] }
         - name: limit
           in: query
           required: false
@@ -2489,6 +2493,21 @@ components:
         bindings:
           type: array
           items: { $ref: "#/components/schemas/AnalysisProfileSnapshotBinding" }
+        prompt_snapshots:
+          type: array
+          items: { $ref: "#/components/schemas/AnalysisPromptSnapshot" }
+    AnalysisPromptSnapshot:
+      type: object
+      additionalProperties: false
+      required: [type, id, version, content_hash, envelope_version]
+      description: One exact captured prompt version a job ran.
+      properties:
+        type: { type: string }
+        id: { type: string }
+        version: { type: integer, minimum: 1 }
+        content_hash: { type: string }
+        instruction_text: { type: string }
+        envelope_version: { type: string }
     AnalysisProfileSnapshotBinding:
       type: object
       additionalProperties: false
@@ -2602,6 +2621,10 @@ components:
         id: { $ref: "#/components/schemas/ULID" }
         article_id: { $ref: "#/components/schemas/ULID" }
         article_title: { type: string }
+        operation_type: { type: string, enum: [article_analysis, explore, sentence_translation] }
+        subject_id: { type: string }
+        subject_label: { type: string }
+        phase: { type: string, enum: ['', queued, running, finished] }
         attempt_count: { type: integer, minimum: 1 }
         requested_model: { type: string }
         requested_effort: { type: string }
@@ -2642,6 +2665,10 @@ components:
         id: { $ref: "#/components/schemas/ULID" }
         article_id: { $ref: "#/components/schemas/ULID" }
         article_title: { type: string }
+        operation_type: { type: string, enum: [article_analysis, explore, sentence_translation] }
+        subject_id: { type: string }
+        subject_label: { type: string }
+        phase: { type: string, enum: ['', queued, running, finished] }
         job_id: { $ref: "#/components/schemas/ULID" }
         attempt_count: { type: integer, minimum: 1 }
         content_hash: { $ref: "#/components/schemas/SHA256" }
@@ -2708,6 +2735,7 @@ components:
         metadata_json: { type: string }
         provider_stderr_excerpt: { type: string }
         error_code: { type: string }
+        error_phase: { type: string, enum: ['', preflight, provider, stage_validation, final_validation, storage, interrupted] }
         error_detail: { type: string }
         usage_truncated: { type: boolean }
         timing_truncated: { type: boolean }

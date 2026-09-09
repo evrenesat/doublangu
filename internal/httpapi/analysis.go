@@ -47,7 +47,7 @@ func (h *AnalysisHandler) ServeRuns(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusBadRequest, "invalid analysis run limit", ErrCodeValidation)
 		return
 	}
-	page, err := h.history.ListRuns(r.Context(), articleID, limit, strings.TrimSpace(r.URL.Query().Get("cursor")))
+	page, err := h.history.ListRunsFiltered(r.Context(), articleID, strings.TrimSpace(r.URL.Query().Get("operation")), limit, strings.TrimSpace(r.URL.Query().Get("cursor")))
 	if err != nil {
 		if errors.Is(err, analysis.ErrInvalidRunQuery) {
 			WriteError(w, http.StatusBadRequest, "invalid analysis run query", ErrCodeValidation)

@@ -1214,6 +1214,7 @@ export interface paths {
             parameters: {
                 query?: {
                     article_id?: components["schemas"]["ULID"];
+                    operation?: "article_analysis" | "explore" | "sentence_translation";
                     limit?: number;
                     cursor?: string;
                 };
@@ -3498,6 +3499,16 @@ export interface components {
             id: string;
             name: string;
             bindings: components["schemas"]["AnalysisProfileSnapshotBinding"][];
+            prompt_snapshots?: components["schemas"]["AnalysisPromptSnapshot"][];
+        };
+        /** @description One exact captured prompt version a job ran. */
+        AnalysisPromptSnapshot: {
+            type: string;
+            id: string;
+            version: number;
+            content_hash: string;
+            instruction_text?: string;
+            envelope_version: string;
         };
         AnalysisProfileSnapshotBinding: {
             /** @enum {string} */
@@ -3568,6 +3579,12 @@ export interface components {
             id: components["schemas"]["ULID"];
             article_id: components["schemas"]["ULID"];
             article_title: string;
+            /** @enum {string} */
+            operation_type?: "article_analysis" | "explore" | "sentence_translation";
+            subject_id?: string;
+            subject_label?: string;
+            /** @enum {string} */
+            phase?: "" | "queued" | "running" | "finished";
             attempt_count: number;
             requested_model: string;
             requested_effort: string;
@@ -3596,6 +3613,12 @@ export interface components {
             id: components["schemas"]["ULID"];
             article_id: components["schemas"]["ULID"];
             article_title: string;
+            /** @enum {string} */
+            operation_type?: "article_analysis" | "explore" | "sentence_translation";
+            subject_id?: string;
+            subject_label?: string;
+            /** @enum {string} */
+            phase?: "" | "queued" | "running" | "finished";
             job_id: components["schemas"]["ULID"];
             attempt_count: number;
             content_hash: components["schemas"]["SHA256"];
@@ -3656,6 +3679,8 @@ export interface components {
             metadata_json?: string;
             provider_stderr_excerpt?: string;
             error_code: string;
+            /** @enum {string} */
+            error_phase?: "" | "preflight" | "provider" | "stage_validation" | "final_validation" | "storage" | "interrupted";
             error_detail?: string;
             usage_truncated?: boolean;
             timing_truncated?: boolean;

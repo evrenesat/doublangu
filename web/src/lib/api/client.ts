@@ -367,7 +367,6 @@ export async function getDictionaryEntryById(entryId: string): Promise<Dictionar
 	return apiFetch(`/api/v1/dictionary/entries/${id(entryId)}`);
 }
 
-export async function listAnalysisRuns(options: { articleId?: string; limit?: number; cursor?: string } = {}): Promise<AnalysisRunsPage> {
 export async function getSentenceTranslation(articleId: string, sentenceId: string): Promise<SentenceTranslationEnvelope> {
 	return apiFetch(`/api/v1/articles/${id(articleId)}/sentences/${id(sentenceId)}/translation`);
 }
@@ -376,8 +375,10 @@ export async function startSentenceTranslation(articleId: string, sentenceId: st
 	return apiFetch(`/api/v1/articles/${id(articleId)}/sentences/${id(sentenceId)}/translation`, { method: 'POST', body: JSON.stringify(data), csrf: true });
 }
 
+export async function listAnalysisRuns(options: { articleId?: string; operation?: string; limit?: number; cursor?: string } = {}): Promise<AnalysisRunsPage> {
 	const query = new URLSearchParams();
 	if (options.articleId) query.set('article_id', options.articleId);
+	if (options.operation) query.set('operation', options.operation);
 	if (options.limit !== undefined) query.set('limit', String(options.limit));
 	if (options.cursor) query.set('cursor', options.cursor);
 	const suffix = query.toString() ? `?${query.toString()}` : '';

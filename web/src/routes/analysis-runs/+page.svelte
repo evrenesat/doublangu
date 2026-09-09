@@ -11,11 +11,19 @@
 
 	const PAGE_SIZE = 25;
 
+	const OPERATION_FILTERS = [
+		{ value: '', label: 'All' },
+		{ value: 'article_analysis', label: 'Article analysis' },
+		{ value: 'explore', label: 'Explore' },
+		{ value: 'sentence_translation', label: 'Sentence translation' }
+	];
+
 	let runs = $state<AnalysisRunSummary[]>([]);
 	let nextCursor = $state('');
 	let loading = $state(true);
 	let loadingMore = $state(false);
 	let error = $state('');
+	let operation = $state('');
 
 	onMount(() => {
 		void loadRuns();
@@ -25,7 +33,7 @@
 		loading = true;
 		error = '';
 		try {
-			const page = await listAnalysisRuns({ limit: PAGE_SIZE });
+			const page = await listAnalysisRuns({ limit: PAGE_SIZE, operation: operation || undefined });
 			runs = page.runs;
 			nextCursor = page.next_cursor ?? '';
 		} catch (cause) {
@@ -41,7 +49,7 @@
 		loadingMore = true;
 		error = '';
 		try {
-			const page = await listAnalysisRuns({ limit: PAGE_SIZE, cursor: nextCursor });
+			const page = await listAnalysisRuns({ limit: PAGE_SIZE, cursor: nextCursor, operation: operation || undefined });
 			runs = [...runs, ...page.runs];
 			nextCursor = page.next_cursor ?? '';
 		} catch (cause) {
@@ -51,10 +59,30 @@
 		}
 	}
 
-	function statusLabel(status: string): string {
+	function changeOperation(value: string) {
+		if (value === operation) return;
+		operation = value;
+		nextCursor = '';
+		void loadRuns();
+	}
+
+	function statusLabel(status: string, phase?: string): string {
 		if (status === 'succeeded') return 'Succeeded';
 		if (status === 'failed') return 'Failed';
+		if (phase === 'queued') return 'Queued';
 		return 'Running';
+	}
+
+	/** Owner-facing operation name; rows stored before operations existed read as article analysis. */
+	function operationLabel(operationType?: string): string {
+		if (operationType === 'explore') return 'Explore';
+		if (operationType === 'sentence_translation') return 'Sentence translation';
+		return 'Article analysis';
+	}
+
+	/** Subject label for on-demand runs; empty for article runs and legacy rows. */
+	function runSubject(run: AnalysisRunSummary): string {
+		return run.subject_label || run.subject_id || '';
 	}
 
 	/** Provenance line: profile plus both compact bindings for pipeline runs, legacy model/effort otherwise. */
@@ -108,6 +136,15 @@
 		<p>Analysis jobs are retained for troubleshooting. Open a run to inspect providers, timing, outputs, and failures.</p>
 	</div>
 
+	<div class="filter-row">
+		<label for="operation-filter">Operation</label>
+		<select id="operation-filter" value={operation} onchange={(event) => changeOperation(event.currentTarget.value)}>
+			{#each OPERATION_FILTERS as filter (filter.value)}
+				<option value={filter.value}>{filter.label}</option>
+			{/each}
+		</select>
+	</div>
+
 	{#if loading}
 		<p class="status" role="status">Loading analysis runs…</p>
 	{:else if error && runs.length === 0}
@@ -122,6 +159,7 @@
 			<thead>
 				<tr>
 					<th scope="col">Status</th>
+					<th scope="col">Operation</th>
 					<th scope="col">Article</th>
 					<th scope="col">Profile / models</th>
 					<th scope="col" class="num">Progress</th>
@@ -133,8 +171,12 @@
 				{#each runs as run (run.id)}
 					<tr>
 						<td data-label="Status">
-							<span class={statusClass(run.status)}>{statusLabel(run.status)}</span>
+							<span class={statusClass(run.status)}>{statusLabel(run.status, run.phase)}</span>
 							{#if run.error_code}<span class="error-code">{run.error_code}</span>{/if}
+						</td>
+						<td data-label="Operation">
+							{operationLabel(run.operation_type)}
+							{#if runSubject(run)}<span class="subject">{runSubject(run)}</span>{/if}
 						</td>
 						<td data-label="Article">
 							<a href={appPath(`/analysis-runs/${encodeURIComponent(run.id)}`)}>{run.article_title}</a>
@@ -273,6 +315,34 @@
 	}
 
 	.error-code {
+		display: block;
+		color: var(--color-muted);
+		font-size: 0.82rem;
+		overflow-wrap: anywhere;
+	}
+
+	.filter-row {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+		margin-bottom: 1rem;
+	}
+
+	.filter-row label {
+		color: var(--color-muted);
+		font-size: 0.9rem;
+	}
+
+	.filter-row select {
+		font: inherit;
+		color: var(--color-text);
+		background: var(--color-surface-raised);
+		border: 1px solid var(--color-border);
+		border-radius: 0.5rem;
+		padding: 0.4rem 0.6rem;
+	}
+
+	.subject {
 		display: block;
 		color: var(--color-muted);
 		font-size: 0.82rem;
