@@ -559,6 +559,34 @@ func (s *ProfileStore) ExplorePromptSnapshots(ctx context.Context, profileID str
 	return snapshots, nil
 }
 
+// SentencePromptSnapshots captures the profile's pinned sentence_translation
+// generation and correction versions as immutable execution snapshots for one
+// on-demand sentence operation.
+func (s *ProfileStore) SentencePromptSnapshots(ctx context.Context, profileID string) ([]pipeline.PromptSnapshot, error) {
+	selections, err := s.PromptSelections(ctx, profileID)
+	if err != nil {
+		return nil, err
+	}
+	promptStore := prompts.NewStore(s.db)
+	snapshots := make([]pipeline.PromptSnapshot, 0, 2)
+	for _, promptType := range []prompts.PromptType{prompts.TypeSentenceTranslation, prompts.TypeCorrection} {
+		versionID, ok := selections[promptType]
+		if !ok {
+			return nil, fmt.Errorf("profile %s has no %s prompt selection", profileID, promptType)
+		}
+		version, err := promptStore.Resolve(ctx, promptType, versionID)
+		if err != nil {
+			return nil, err
+		}
+		snapshots = append(snapshots, pipeline.PromptSnapshot{
+			Type: string(version.PromptType), ID: version.ID, Version: version.Version,
+			ContentHash: version.ContentHash, InstructionText: version.InstructionText,
+			EnvelopeVersion: pipeline.PromptCapturedEnvelopeVersion,
+		})
+	}
+	return snapshots, nil
+}
+
 // PromptSelections returns the profile's pinned prompt version ids by type.
 // Types without a stored selection (only possible before startup seeding)
 // are absent from the map.

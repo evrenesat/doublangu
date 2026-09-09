@@ -1,5 +1,76 @@
 # Development Log
 
+## 2026-09-09 — Checkpoint 10: on-demand translation/Explore API
+
+Implemented Checkpoint 10 of
+`plans/in-progress/reader-settings-prompt-experiments-20260908.md` on top
+of the uncommitted Checkpoint 8/9 work (storage, contract, generation
+service). Only the Explore regenerate exposure, the sentence translation
+HTTP surface, the OpenAPI contract plus regenerated client, and
+contract/routing tests changed. No unauthenticated endpoints, no
+browser-authored source inputs, no production calls. Verified work is left
+uncommitted for review; no checkpoint commits were created.
+
+### Implementation
+
+- `internal/dictionary/store.go` + `service.go`: entries now carry
+  `last_run_id`; `StatusEnvelope` gains `generation_status`
+  (idle/queued/running/failed), `run_id`, and `generation_error_code`. A
+  saved document stays readable under status ready while a regeneration
+  runs or after one fails; the generation fields expose the latest attempt
+  beside it, including the retained failure code behind a ready entry.
+- `internal/analysis/profiles.go`: `SentencePromptSnapshots` captures the
+  pinned sentence_translation/correction versions, mirroring
+  `ExplorePromptSnapshots`.
+- `internal/httpapi/dictionary.go`: POST accepts `regenerate` (default
+  false); `retry=true` plus `regenerate=true` rejects as ambiguous (400).
+  `retry` stays required, preserving the existing contract.
+- `internal/httpapi/sentence_translation.go` (new): authenticated
+  GET/POST `/api/v1/articles/{id}/sentences/{sentence_id}/translation`
+  with `mode` ensure/regenerate. Membership mismatches return 404 before
+  any run/provider work; POST requires CSRF; 202 when work is
+  queued/running, 200 for saved or retained-failure states; provider
+  failures map to 503 with the stable sentence code. The resolver uses
+  only the Translation binding plus sentence snapshots, so an unavailable
+  linguistic provider never blocks sentence work. GET performs no writes
+  and never touches a provider.
+- `cmd/doublangu-server/main.go`: sentence routes mounted under the
+  authenticated no-store dictionary mux.
+- `contracts/openapi.yaml`: `regenerate` on
+  `DictionaryExploreStartInput`; generation fields on
+  `DictionaryStatusEnvelope`; new `SentenceTranslationEnvelope`,
+  `SentenceTranslationStartInput`, the two sentence paths, and the
+  `SentenceProviderUnavailable` response.
+- `web/src/lib/api/client.ts`: `getSentenceTranslation` and
+  `startSentenceTranslation` wrappers; `web/src/lib/api/generated.ts`
+  regenerated twice byte-identical. The existing Explore start path
+  passes `regenerate: false` explicitly (Regenerate UI lands in
+  checkpoint 12); adjacent test expectations updated.
+- Tests: `TestDictionaryExploreRegenerate` (ambiguity 400, fresh job on
+  regenerate with old document readable, generation tracking, two jobs
+  total) and `sentence_translation_test.go` (provider-free reads,
+  validation/CSRF/membership matrix, ensure dedup to one job/run,
+  full-slice ready + regenerate with old-text retention, preflight
+  failure retained without retry loops).
+
+### Verification
+
+- `go test ./internal/httpapi ./cmd/doublangu-server -count=1`: all ok.
+- `go test ./internal/dictionary ./internal/analysis ./internal/sentencetranslation -count=1`: all ok.
+- `npm --prefix web run check`: 0 errors. `test:unit -- src/lib/reader`: 38 passed.
+- `generate:api` twice byte-identical (`cmp` clean).
+- `npm --prefix web run validate:openapi` fails identically at baseline
+  and with this change (pre-existing worker/ailocals schema errors; error
+  sets diffed identical, 42 paths each). No new contract errors.
+- `git diff --check` clean; `gofmt` clean on touched Go files
+  (`internal/httpapi/ailocals.go` was already unformatted, untouched).
+- Web tooling needed Node 24 (`/opt/node-v24.20.0-linux-x64`; system node
+  is v22, below the project's `>=24` requirement); `npm --prefix web ci`
+  run once (`web/node_modules` stays gitignored).
+- Observed: real HTTP requests get saved/queued/failed states; repeated
+  ensures return the same run/job; cross-article and malformed requests
+  create no jobs or runs; ready reads open no provider sessions.
+
 ## 2026-09-09 — Checkpoint 9: sentence generation jobs
 
 Implemented Checkpoint 9 of

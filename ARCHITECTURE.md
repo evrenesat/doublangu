@@ -700,6 +700,24 @@ or a subject that moved to a newer job aborts, so stale jobs never
 overwrite a new anchor or the last successful text. Failed initial
 generation needs an explicit regenerate.
 
+### On-demand translation/Explore API
+
+`internal/httpapi` exposes both generation paths over authenticated
+no-store routes. Explore POST accepts `regenerate` (default false) and
+rejects `retry` plus `regenerate` as ambiguous; the dictionary envelope
+carries `generation_status`/`run_id`/`generation_error_code` beside the
+retained document, so a ready entry still exposes its latest attempt.
+Sentence GET/POST
+`/api/v1/articles/{id}/sentences/{sentence_id}/translation` takes
+`mode` ensure/regenerate: membership is verified server-side before any
+run or queue work (mismatch is 404 with nothing created), POST requires
+CSRF, queued/running answers are 202, and saved or retained-failure
+states are 200. The sentence resolver pins only the Translation binding
+plus sentence_translation/correction snapshots; GET never writes and never
+resolves a provider. The OpenAPI contract documents both envelopes, the
+start inputs, and the stable provider-unavailable codes; the generated web
+client is produced twice byte-identical.
+
 ## Deployment boundary
 
 Pushes to `main` are verified and packaged on a GitHub-hosted runner. Only the

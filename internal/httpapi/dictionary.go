@@ -143,6 +143,7 @@ type dictionaryStartInput struct {
 	OccurrenceID string `json:"occurrence_id"`
 	AnnotationID string `json:"annotation_id"`
 	Retry        *bool  `json:"retry"`
+	Regenerate   *bool  `json:"regenerate"`
 }
 
 func (h *DictionaryHandler) serveStart(w http.ResponseWriter, r *http.Request, articleID library.ULID) {
@@ -179,9 +180,8 @@ func (h *DictionaryHandler) serveStart(w http.ResponseWriter, r *http.Request, a
 		}
 		ref.AnnotationID = id
 	}
-	// Regenerate stays a checkpoint 10 concern: the HTTP contract still
-	// exposes only ensure/retry today.
-	envelope, _, started, err := h.service.Start(r.Context(), articleID, ref, *input.Retry, false)
+	regenerate := input.Regenerate != nil && *input.Regenerate
+	envelope, _, started, err := h.service.Start(r.Context(), articleID, ref, *input.Retry, regenerate)
 	if err != nil {
 		h.writeDictionaryError(w, err)
 		return
@@ -223,6 +223,8 @@ func (h *DictionaryHandler) writeDictionaryError(w http.ResponseWriter, err erro
 	switch {
 	case errors.Is(err, dictionary.ErrNotFound):
 		WriteError(w, http.StatusNotFound, "dictionary subject not found", ErrCodeNotFound)
+	case errors.Is(err, dictionary.ErrAmbiguousRequest):
+		WriteError(w, http.StatusBadRequest, "retry and regenerate are mutually exclusive", ErrCodeValidation)
 	case errors.Is(err, dictionary.ErrProviderUnavailable):
 		WriteError(w, http.StatusServiceUnavailable, "the configured translation provider is not usable", "v1.dictionary_provider_unavailable")
 	default:

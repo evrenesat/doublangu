@@ -602,6 +602,66 @@ paths:
         "405": { $ref: "#/components/responses/MethodNotAllowed" }
         "500": { $ref: "#/components/responses/Internal" }
 
+  /api/v1/articles/{id}/sentences/{sentence_id}/translation:
+    get:
+      summary: Read the saved sentence translation without starting generation
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ULID" }
+        - name: sentence_id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ULID" }
+      responses:
+        "200":
+          description: Saved, active, failed, or missing sentence translation state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SentenceTranslationEnvelope" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "405": { $ref: "#/components/responses/MethodNotAllowed" }
+        "500": { $ref: "#/components/responses/Internal" }
+    post:
+      summary: Return the saved translation or start one explicit sentence generation
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ULID" }
+        - name: sentence_id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ULID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SentenceTranslationStartInput" }
+      responses:
+        "200":
+          description: Saved translation is ready or terminally failed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SentenceTranslationEnvelope" }
+        "202":
+          description: New or active sentence generation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SentenceTranslationEnvelope" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "405": { $ref: "#/components/responses/MethodNotAllowed" }
+        "500": { $ref: "#/components/responses/Internal" }
+        "503": { $ref: "#/components/responses/SentenceProviderUnavailable" }
+
   /api/v1/analysis/runs:
     get:
       summary: List retained owner-visible analysis runs
@@ -2901,6 +2961,12 @@ components:
           enum: [missing, queued, generating, ready, failed]
         entry_id: { nullable: true, allOf: [{ $ref: "#/components/schemas/ULID" }] }
         job_id: { nullable: true, allOf: [{ $ref: "#/components/schemas/ULID" }] }
+        run_id: { nullable: true, allOf: [{ $ref: "#/components/schemas/ULID" }] }
+        generation_status:
+          nullable: true
+          type: string
+          enum: [idle, queued, running, failed]
+        generation_error_code: { nullable: true, type: string }
         subject: { nullable: true, allOf: [{ $ref: "#/components/schemas/DictionarySubjectView" }] }
         document: { nullable: true, allOf: [{ $ref: "#/components/schemas/DictionaryDocument" }] }
         error_code: { nullable: true, type: string }
@@ -2913,6 +2979,33 @@ components:
         occurrence_id: { $ref: "#/components/schemas/ULID" }
         annotation_id: { $ref: "#/components/schemas/ULID" }
         retry: { type: boolean }
+        regenerate: { type: boolean, default: false }
+
+    SentenceTranslationEnvelope:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [missing, queued, running, ready, failed]
+        sentence_id: { nullable: true, allOf: [{ $ref: "#/components/schemas/ULID" }] }
+        translation: { nullable: true, type: string }
+        job_id: { nullable: true, allOf: [{ $ref: "#/components/schemas/ULID" }] }
+        run_id: { nullable: true, allOf: [{ $ref: "#/components/schemas/ULID" }] }
+        generation_status:
+          nullable: true
+          type: string
+          enum: [idle, queued, running, failed]
+        error_code: { nullable: true, type: string }
+        error_summary: { nullable: true, type: string }
+
+    SentenceTranslationStartInput:
+      type: object
+      additionalProperties: false
+      required: [mode]
+      properties:
+        mode: { type: string, enum: [ensure, regenerate] }
 
     SemanticSense:
       type: object
@@ -3548,6 +3641,11 @@ components:
           schema: { $ref: "#/components/schemas/APIError" }
     DictionaryProviderUnavailable:
       description: The configured translation provider is not usable for dictionary generation.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/APIError" }
+    SentenceProviderUnavailable:
+      description: The configured translation provider is not usable for sentence generation.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/APIError" }

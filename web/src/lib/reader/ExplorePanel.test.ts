@@ -68,7 +68,8 @@ describe('ExplorePanel', () => {
 		expect(startDictionaryExplore).toHaveBeenCalledWith('article-1', {
 			occurrence_id: 'w-missing',
 			annotation_id: undefined,
-			retry: false
+			retry: false,
+			regenerate: false
 		});
 	});
 

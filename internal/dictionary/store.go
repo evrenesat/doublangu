@@ -45,8 +45,11 @@ type Entry struct {
 	LastJobID        *string
 	LastJobState     string
 	LastJobErrorCode string
-	CreatedAt        string
-	UpdatedAt        string
+	// LastRunID is the retained analysis run pointer for the latest
+	// generation attempt, kept for preflight-failure evidence and run links.
+	LastRunID *string
+	CreatedAt string
+	UpdatedAt string
 }
 
 // Status values for the reader API.
@@ -238,7 +241,7 @@ func languageBase(tag string) string {
 
 const entryColumns = `id, source_language, target_language, lookup_kind, lookup_form,
 	normalized_lookup_form, document_json, document_hash, contract_version,
-	prompt_version, provenance_json, last_job_id, created_at, updated_at`
+	prompt_version, provenance_json, last_job_id, last_run_id, created_at, updated_at`
 
 func scanEntry(row interface{ Scan(...any) error }) (*Entry, error) {
 	var entry Entry
@@ -246,7 +249,7 @@ func scanEntry(row interface{ Scan(...any) error }) (*Entry, error) {
 	err := row.Scan(&id, &entry.SourceLanguage, &entry.TargetLanguage, &entry.LookupKind,
 		&entry.LookupForm, &entry.NormalizedForm, &entry.DocumentJSON, &entry.DocumentHash,
 		&entry.ContractVersion, &entry.PromptVersion, &entry.ProvenanceJSON, &entry.LastJobID,
-		&entry.CreatedAt, &entry.UpdatedAt)
+		&entry.LastRunID, &entry.CreatedAt, &entry.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

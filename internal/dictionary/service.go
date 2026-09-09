@@ -176,15 +176,31 @@ func jobPayload(entryID, articleID string, input semantics.DictionaryInput, gene
 }
 
 // Subject is re-declared in service context for the envelope.
-// StatusEnvelope is the shared read/poll response body.
+// StatusEnvelope is the shared read/poll response body. GenerationStatus
+// mirrors the sentence-translation operation values (idle/queued/running/
+// failed) so readers can render progress beside a retained document;
+// GenerationErrorCode retains the last generation failure even when an older
+// document stays readable under status ready.
 type StatusEnvelope struct {
-	Status    string                        `json:"status"`
-	EntryID   string                        `json:"entry_id,omitempty"`
-	JobID     string                        `json:"job_id,omitempty"`
-	Subject   *SubjectView                  `json:"subject,omitempty"`
-	Document  *semantics.DictionaryDocument `json:"document,omitempty"`
-	ErrorCode string                        `json:"error_code,omitempty"`
+	Status              string                        `json:"status"`
+	EntryID             string                        `json:"entry_id,omitempty"`
+	JobID               string                        `json:"job_id,omitempty"`
+	RunID               string                        `json:"run_id,omitempty"`
+	GenerationStatus    string                        `json:"generation_status,omitempty"`
+	GenerationErrorCode string                        `json:"generation_error_code,omitempty"`
+	Subject             *SubjectView                  `json:"subject,omitempty"`
+	Document            *semantics.DictionaryDocument `json:"document,omitempty"`
+	ErrorCode           string                        `json:"error_code,omitempty"`
 }
+
+// Generation phases for in-flight or failed work behind the envelope,
+// aligned with the sentence-translation operation values.
+const (
+	GenerationIdle    = "idle"
+	GenerationQueued  = "queued"
+	GenerationRunning = "running"
+	GenerationFailed  = "failed"
+)
 
 // SubjectView is the server-resolved subject rendered to the reader.
 type SubjectView struct {
@@ -204,10 +220,13 @@ func subjectView(subject *Subject) *SubjectView {
 	}
 }
 
-// envelopeFor renders the persisted entry status.
+// envelopeFor renders the persisted entry status. A saved document stays
+// readable (status ready) while a regeneration runs or after one fails; the
+// generation fields expose the latest attempt beside it.
 func envelopeFor(entry *Entry, subject *Subject) StatusEnvelope {
 	envelope := StatusEnvelope{
-		Subject: subjectView(subject),
+		Subject:          subjectView(subject),
+		GenerationStatus: GenerationIdle,
 	}
 	if entry == nil {
 		envelope.Status = StatusMissing
@@ -218,12 +237,31 @@ func envelopeFor(entry *Entry, subject *Subject) StatusEnvelope {
 	if entry.LastJobID != nil {
 		envelope.JobID = *entry.LastJobID
 	}
-	if entry.LastJobState == jobs.StateFailed || entry.LastJobState == jobs.StateCanceled {
-		envelope.ErrorCode = dictionaryErrorCode(entry.LastJobErrorCode)
+	if entry.LastRunID != nil && *entry.LastRunID != "" {
+		envelope.RunID = *entry.LastRunID
 	}
-	if entry.Ready() {
-		envelope.Status = StatusReady
+	failed := entry.LastJobState == jobs.StateFailed || entry.LastJobState == jobs.StateCanceled
+	if failed {
+		envelope.ErrorCode = dictionaryErrorCode(entry.LastJobErrorCode)
+		envelope.GenerationErrorCode = dictionaryErrorCode(entry.LastJobErrorCode)
+	}
+	switch envelope.Status {
+	case StatusQueued:
+		envelope.GenerationStatus = GenerationQueued
+	case StatusGenerating:
+		envelope.GenerationStatus = GenerationRunning
+	case StatusFailed:
+		envelope.GenerationStatus = GenerationFailed
+	case StatusReady:
 		envelope.ErrorCode = ""
+		switch {
+		case entry.LastJobState == jobs.StateQueued:
+			envelope.GenerationStatus = GenerationQueued
+		case entry.LastJobState == jobs.StateLeased || entry.LastJobState == jobs.StateRunning:
+			envelope.GenerationStatus = GenerationRunning
+		case failed:
+			envelope.GenerationStatus = GenerationFailed
+		}
 		var document semantics.DictionaryDocument
 		if err := json.Unmarshal([]byte(*entry.DocumentJSON), &document); err == nil {
 			envelope.Document = &document

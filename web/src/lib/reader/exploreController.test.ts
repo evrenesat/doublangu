@@ -19,7 +19,7 @@ function readyEnvelope(entryId = 'entry-1'): Envelope {
 function harness() {
 	const states: ExploreState[] = [];
 	const lookup = vi.fn((_articleId: string, _ref: ExploreRef): Promise<Envelope> => Promise.resolve({ status: 'missing' }));
-	const start = vi.fn((_articleId: string, _input: { occurrence_id?: string; annotation_id?: string; retry: boolean }): Promise<Envelope> => Promise.resolve({ status: 'missing' }));
+	const start = vi.fn((_articleId: string, _input: { occurrence_id?: string; annotation_id?: string; retry: boolean; regenerate: boolean }): Promise<Envelope> => Promise.resolve({ status: 'missing' }));
 	const poll = vi.fn((_entryId: string): Promise<Envelope> => Promise.resolve({ status: 'missing' }));
 	const controller = createExploreController({
 		lookup: (articleId, ref) => lookup(articleId, ref),
@@ -78,7 +78,7 @@ describe('exploreController', () => {
 		lookup.mockResolvedValue({ status: 'missing' });
 		start.mockResolvedValue({ status: 'queued', entry_id: 'entry-9', job_id: 'job-1' });
 		await controller.open({ occurrenceId: 'w1' }, 'article-1');
-		expect(start).toHaveBeenCalledWith('article-1', { occurrence_id: 'w1', annotation_id: undefined, retry: false });
+		expect(start).toHaveBeenCalledWith('article-1', { occurrence_id: 'w1', annotation_id: undefined, retry: false, regenerate: false });
 		await flush();
 		expect(controller.state.phase).toBe('queued');
 		expect(poll).toHaveBeenCalledTimes(1);
@@ -140,7 +140,7 @@ describe('exploreController', () => {
 		// Explicit retry requests generation with retry:true.
 		start.mockResolvedValue({ status: 'queued', entry_id: 'entry-4' });
 		await controller.retry({ occurrenceId: 'w1' }, 'article-1');
-		expect(start).toHaveBeenCalledWith('article-1', { occurrence_id: 'w1', annotation_id: undefined, retry: true });
+		expect(start).toHaveBeenCalledWith('article-1', { occurrence_id: 'w1', annotation_id: undefined, retry: true, regenerate: false });
 		expect(controller.state.phase).toBe('queued');
 	});
 

@@ -1115,6 +1115,93 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/articles/{id}/sentences/{sentence_id}/translation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the saved sentence translation without starting generation */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["schemas"]["ULID"];
+                    sentence_id: components["schemas"]["ULID"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Saved, active, failed, or missing sentence translation state. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SentenceTranslationEnvelope"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                404: components["responses"]["NotFound"];
+                405: components["responses"]["MethodNotAllowed"];
+                500: components["responses"]["Internal"];
+            };
+        };
+        put?: never;
+        /** Return the saved translation or start one explicit sentence generation */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["schemas"]["ULID"];
+                    sentence_id: components["schemas"]["ULID"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["SentenceTranslationStartInput"];
+                };
+            };
+            responses: {
+                /** @description Saved translation is ready or terminally failed. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SentenceTranslationEnvelope"];
+                    };
+                };
+                /** @description New or active sentence generation. */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SentenceTranslationEnvelope"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                405: components["responses"]["MethodNotAllowed"];
+                500: components["responses"]["Internal"];
+                503: components["responses"]["SentenceProviderUnavailable"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/analysis/runs": {
         parameters: {
             query?: never;
@@ -3725,6 +3812,10 @@ export interface components {
             status: "missing" | "queued" | "generating" | "ready" | "failed";
             entry_id?: components["schemas"]["ULID"] | null;
             job_id?: components["schemas"]["ULID"] | null;
+            run_id?: components["schemas"]["ULID"] | null;
+            /** @enum {string|null} */
+            generation_status?: "idle" | "queued" | "running" | "failed" | null;
+            generation_error_code?: string | null;
             subject?: components["schemas"]["DictionarySubjectView"] | null;
             document?: components["schemas"]["DictionaryDocument"] | null;
             error_code?: string | null;
@@ -3733,6 +3824,24 @@ export interface components {
             occurrence_id?: components["schemas"]["ULID"];
             annotation_id?: components["schemas"]["ULID"];
             retry: boolean;
+            /** @default false */
+            regenerate: boolean;
+        };
+        SentenceTranslationEnvelope: {
+            /** @enum {string} */
+            status: "missing" | "queued" | "running" | "ready" | "failed";
+            sentence_id?: components["schemas"]["ULID"] | null;
+            translation?: string | null;
+            job_id?: components["schemas"]["ULID"] | null;
+            run_id?: components["schemas"]["ULID"] | null;
+            /** @enum {string|null} */
+            generation_status?: "idle" | "queued" | "running" | "failed" | null;
+            error_code?: string | null;
+            error_summary?: string | null;
+        };
+        SentenceTranslationStartInput: {
+            /** @enum {string} */
+            mode: "ensure" | "regenerate";
         };
         SemanticSense: {
             id: components["schemas"]["ULID"];
@@ -4248,6 +4357,15 @@ export interface components {
         };
         /** @description The configured translation provider is not usable for dictionary generation. */
         DictionaryProviderUnavailable: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["APIError"];
+            };
+        };
+        /** @description The configured translation provider is not usable for sentence generation. */
+        SentenceProviderUnavailable: {
             headers: {
                 [name: string]: unknown;
             };

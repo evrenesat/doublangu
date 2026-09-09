@@ -325,15 +325,19 @@ func newHandlerWithMedia(
 	mux.Handle("/api/v1/analysis/", analysisRoutes)
 
 	dictionaryHandler := httpapi.NewDictionaryHandler(db, authHandler.CSRF, providerRegistry, sharedCatalog)
+	sentenceHandler := httpapi.NewSentenceHandler(db, authHandler.CSRF, providerRegistry, sharedCatalog)
 	dictionaryMux := http.NewServeMux()
 	dictionaryMux.HandleFunc("GET /api/v1/articles/{id}/explore", dictionaryHandler.ServeExplore)
 	dictionaryMux.HandleFunc("POST /api/v1/articles/{id}/explore", dictionaryHandler.ServeExplore)
 	dictionaryMux.HandleFunc("GET /api/v1/dictionary/entries/{id}", dictionaryHandler.ServeEntry)
+	dictionaryMux.HandleFunc("GET /api/v1/articles/{id}/sentences/{sentence_id}/translation", sentenceHandler.ServeTranslation)
+	dictionaryMux.HandleFunc("POST /api/v1/articles/{id}/sentences/{sentence_id}/translation", sentenceHandler.ServeTranslation)
 	dictionaryRoutes := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		authHandler.RequireAuth(dictionaryMux).ServeHTTP(w, r)
 	})
 	mux.Handle("/api/v1/articles/{id}/explore", dictionaryRoutes)
+	mux.Handle("/api/v1/articles/{id}/sentences/", dictionaryRoutes)
 	mux.Handle("/api/v1/dictionary/entries/", dictionaryRoutes)
 
 	readerSettingsHandler := httpapi.NewReaderSettingsHandler(db, authHandler.CSRF)

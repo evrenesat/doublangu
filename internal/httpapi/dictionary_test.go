@@ -21,11 +21,14 @@ import (
 )
 
 type dictionaryEnvelope struct {
-	Status    string `json:"status"`
-	EntryID   string `json:"entry_id"`
-	JobID     string `json:"job_id"`
-	ErrorCode string `json:"error_code"`
-	Subject   *struct {
+	Status              string `json:"status"`
+	EntryID             string `json:"entry_id"`
+	JobID               string `json:"job_id"`
+	RunID               string `json:"run_id"`
+	GenerationStatus    string `json:"generation_status"`
+	GenerationErrorCode string `json:"generation_error_code"`
+	ErrorCode           string `json:"error_code"`
+	Subject             *struct {
 		LookupForm     string `json:"lookup_form"`
 		LookupKind     string `json:"lookup_kind"`
 		SourceLanguage string `json:"source_language"`
@@ -388,4 +391,88 @@ func TestDictionaryExploreHandlerToRunnerToReady(t *testing.T) {
 	if provider.sessionCount() != sessionsBefore {
 		t.Fatal("retry on ready must not generate")
 	}
+}
+
+// TestDictionaryExploreRegenerate covers the checkpoint 10 HTTP surface:
+// retry+regenerate ambiguity rejects, regenerate on a ready entry starts a
+// fresh job while the old document stays readable, and the generation fields
+// track the attempt beside the retained result.
+func TestDictionaryExploreRegenerate(t *testing.T) {
+	db, fix := dictionaryFixtureDB(t)
+	handler, provider := newDictionaryHarness(t, db)
+	activateDictionaryProfile(t, db)
+
+	t.Run("retry plus regenerate is ambiguous", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		handler.ServeExplore(rec, authedRequest(http.MethodPost, "/api/v1/articles/"+fix.articleID+"/explore",
+			`{"occurrence_id":"`+fix.occurrenceID+`","retry":true,"regenerate":true}`, "id", fix.articleID))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("ambiguous status = %d body=%s", rec.Code, rec.Body.String())
+		}
+	})
+
+	// Enqueue, run the worker to ready, then regenerate.
+	rec := httptest.NewRecorder()
+	handler.ServeExplore(rec, authedRequest(http.MethodPost, "/api/v1/articles/"+fix.articleID+"/explore",
+		`{"occurrence_id":"`+fix.occurrenceID+`","retry":false}`, "id", fix.articleID))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("start status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	first := decodeJSON[dictionaryEnvelope](t, rec.Body.String())
+	if first.GenerationStatus != "queued" {
+		t.Fatalf("queued generation status = %+v", first)
+	}
+	runner := dictionary.NewRunner(db, &catalogAndSessionsRegistry{
+		descriptors: []annotator.ProviderDescriptor{provider.descriptor},
+		providers:   map[string]annotator.Provider{provider.descriptor.ID: provider},
+	})
+	runner.SetHeartbeatInterval(0)
+	if err := runner.RunOnce(context.Background()); err != nil {
+		t.Fatalf("runner: %v", err)
+	}
+
+	t.Run("regenerate keeps the old document readable", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		handler.ServeExplore(rec, authedRequest(http.MethodPost, "/api/v1/articles/"+fix.articleID+"/explore",
+			`{"occurrence_id":"`+fix.occurrenceID+`","retry":false,"regenerate":true}`, "id", fix.articleID))
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("regenerate status = %d body=%s", rec.Code, rec.Body.String())
+		}
+		regen := decodeJSON[dictionaryEnvelope](t, rec.Body.String())
+		if regen.JobID == "" || regen.JobID == first.JobID {
+			t.Fatalf("regenerate must start a fresh job, got %+v", regen)
+		}
+		if regen.Status != "ready" || regen.Document == nil {
+			t.Fatalf("old document must stay readable, got %+v", regen)
+		}
+		if regen.GenerationStatus != "queued" && regen.GenerationStatus != "running" {
+			t.Fatalf("generation must track the fresh attempt, got %+v", regen)
+		}
+		// The saved result stays pollable while the replacement runs.
+		rec = httptest.NewRecorder()
+		handler.ServeExplore(rec, authedRequest(http.MethodGet, "/api/v1/articles/"+fix.articleID+"/explore?occurrence_id="+fix.occurrenceID, "", "id", fix.articleID))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("poll status = %d body=%s", rec.Code, rec.Body.String())
+		}
+		poll := decodeJSON[dictionaryEnvelope](t, rec.Body.String())
+		if poll.Status != "ready" || poll.Document == nil || poll.JobID != regen.JobID {
+			t.Fatalf("poll envelope = %+v, want %+v", poll, regen)
+		}
+		if err := runner.RunOnce(context.Background()); err != nil {
+			t.Fatalf("runner: %v", err)
+		}
+		rec = httptest.NewRecorder()
+		handler.ServeExplore(rec, authedRequest(http.MethodGet, "/api/v1/articles/"+fix.articleID+"/explore?occurrence_id="+fix.occurrenceID, "", "id", fix.articleID))
+		settled := decodeJSON[dictionaryEnvelope](t, rec.Body.String())
+		if settled.Status != "ready" || settled.GenerationStatus != "idle" || settled.Document == nil {
+			t.Fatalf("settled envelope = %+v", settled)
+		}
+		var jobCount int
+		if err := db.QueryRow(context.Background(), `SELECT COUNT(*) FROM job WHERE job_type = 'reader.dictionary.v1'`).Scan(&jobCount); err != nil {
+			t.Fatal(err)
+		}
+		if jobCount != 2 {
+			t.Fatalf("job count = %d", jobCount)
+		}
+	})
 }

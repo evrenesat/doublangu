@@ -72,6 +72,9 @@ export type DictionaryDocument = components['schemas']['DictionaryDocument'];
 export type DictionarySense = components['schemas']['DictionarySense'];
 export type DictionaryExploreStartInput = components['schemas']['DictionaryExploreStartInput'];
 export type DictionaryStatus = NonNullable<DictionaryStatusEnvelope['status']>;
+export type SentenceTranslationEnvelope = components['schemas']['SentenceTranslationEnvelope'];
+export type SentenceTranslationStartInput = components['schemas']['SentenceTranslationStartInput'];
+export type SentenceTranslationStatus = NonNullable<SentenceTranslationEnvelope['status']>;
 
 export interface SessionStatus {
 	authenticated: boolean;
@@ -365,6 +368,14 @@ export async function getDictionaryEntryById(entryId: string): Promise<Dictionar
 }
 
 export async function listAnalysisRuns(options: { articleId?: string; limit?: number; cursor?: string } = {}): Promise<AnalysisRunsPage> {
+export async function getSentenceTranslation(articleId: string, sentenceId: string): Promise<SentenceTranslationEnvelope> {
+	return apiFetch(`/api/v1/articles/${id(articleId)}/sentences/${id(sentenceId)}/translation`);
+}
+
+export async function startSentenceTranslation(articleId: string, sentenceId: string, data: SentenceTranslationStartInput): Promise<SentenceTranslationEnvelope> {
+	return apiFetch(`/api/v1/articles/${id(articleId)}/sentences/${id(sentenceId)}/translation`, { method: 'POST', body: JSON.stringify(data), csrf: true });
+}
+
 	const query = new URLSearchParams();
 	if (options.articleId) query.set('article_id', options.articleId);
 	if (options.limit !== undefined) query.set('limit', String(options.limit));
