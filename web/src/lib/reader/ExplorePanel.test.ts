@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import ExplorePanel from './ExplorePanel.svelte';
 
@@ -84,5 +84,38 @@ describe('ExplorePanel', () => {
 		await waitFor(() => expect(screen.getByText('Could not generate an explanation.')).toBeTruthy());
 		expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
 		expect(screen.queryByText('Saved dictionary entry')).toBeNull();
+	});
+
+	it('offers Regenerate on a saved entry and keeps it during replacement', async () => {
+		const { startDictionaryExplore } = await import('$lib/api/client');
+		render(ExplorePanel, { articleId: 'article-1', occurrenceId: 'w-ready' });
+		await waitFor(() => expect(screen.getByText('Saved dictionary entry')).toBeTruthy());
+		await fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }));
+		expect(startDictionaryExplore).toHaveBeenCalledWith('article-1', {
+			occurrence_id: 'w-ready',
+			annotation_id: undefined,
+			retry: false,
+			regenerate: true
+		});
+		// The old entry stays readable while the replacement is queued.
+		await waitFor(() => expect(screen.getByText('Regenerating… previous entry kept')).toBeTruthy());
+		expect(screen.getByText('bench')).toBeTruthy();
+	});
+
+	it('failed replacement keeps the old entry with a retry and run link', async () => {
+		const { startDictionaryExplore } = await import('$lib/api/client');
+		(startDictionaryExplore as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+			status: 'failed',
+			entry_id: 'entry-1',
+			error_code: 'v1.dictionary_invalid_output',
+			run_id: 'run-7'
+		});
+		render(ExplorePanel, { articleId: 'article-1', occurrenceId: 'w-ready' });
+		await waitFor(() => expect(screen.getByText('Saved dictionary entry')).toBeTruthy());
+		await fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }));
+		await waitFor(() => expect(screen.getByText('Regeneration failed. Previous entry kept.')).toBeTruthy());
+		expect(screen.getByText('bench')).toBeTruthy();
+		expect(screen.getByRole('button', { name: 'Retry regeneration' })).toBeTruthy();
+		expect(screen.getByRole('link', { name: 'View run' })).toBeTruthy();
 	});
 });

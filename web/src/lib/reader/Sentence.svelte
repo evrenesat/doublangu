@@ -3,6 +3,7 @@
 	import { buildSemanticRuns, type SemanticRun } from './semanticRuns';
 	import TextOccurrence from './TextOccurrence.svelte';
 	import ConstructionOverlay from './ConstructionOverlay.svelte';
+	import SentenceTranslationPopover from './SentenceTranslationPopover.svelte';
 	import { onDestroy } from 'svelte';
 
 	type Props = {
@@ -41,7 +42,22 @@
 	let anchor: HTMLElement | null = $state(null);
 	let words: HTMLElement | null = $state(null);
 	const constructions = $derived(occurrences.filter((item) => item.role !== 'token'));
-	onDestroy(clearDwell);
+	// Sentence-translation popover: only this Translate control may start
+	// generation, after a 350ms dwell for hover/focus or immediately for
+	// touch/click. Hovering arbitrary sentence text never generates.
+	let translationOpen = $state(false);
+	let translationAutoEnsure = $state(false);
+	let translationAnchor: HTMLElement | null = $state(null);
+	let translationTrigger: HTMLElement | null = $state(null);
+	let translationTimer: ReturnType<typeof setTimeout> | undefined;
+	// A close that returns focus must not reopen through the focus
+	// handler's own focus event. The flag covers that synchronous event
+	// and clears before any genuine later keyboard focus.
+	let suppressTranslateFocus = false;
+	onDestroy(() => {
+		clearDwell();
+		clearTranslationTimer();
+	});
 
 	const localBlock = $derived.by((): ArticleBlock => ({
 		...block,
@@ -103,6 +119,57 @@
 		event.preventDefault();
 		focusSentence(event);
 	}
+
+	function clearTranslationTimer(): void {
+		if (translationTimer) clearTimeout(translationTimer);
+		translationTimer = undefined;
+	}
+
+	function openTranslation(element: HTMLElement, immediate: boolean): void {
+		clearTranslationTimer();
+		translationAnchor = element;
+		translationOpen = true;
+		translationAutoEnsure = immediate;
+		if (!immediate) {
+			translationTimer = setTimeout(() => {
+				translationTimer = undefined;
+				translationAutoEnsure = true;
+			}, 350);
+		}
+	}
+
+	function closeTranslation(refocus = false): void {
+		clearTranslationTimer();
+		const wasOpen = translationOpen;
+		translationOpen = false;
+		translationAutoEnsure = false;
+		translationAnchor = null;
+		if (refocus && wasOpen) {
+			suppressTranslateFocus = true;
+			translationTrigger?.focus();
+			queueMicrotask(() => {
+				suppressTranslateFocus = false;
+			});
+		}
+	}
+
+	function handleTranslateEnter(event: PointerEvent | FocusEvent): void {
+		if (event instanceof PointerEvent && event.pointerType === 'touch') return;
+		if (!(event instanceof PointerEvent) && suppressTranslateFocus) return;
+		openTranslation(event.currentTarget as HTMLElement, false);
+	}
+
+	function handleTranslateLeave(): void {
+		// Leaving before the dwell dispatched cancels generation; an open
+		// popover stays open until its explicit close.
+		if (!translationTimer) return;
+		closeTranslation();
+	}
+
+	function handleTranslateClick(event: MouseEvent): void {
+		event.stopPropagation();
+		openTranslation(event.currentTarget as HTMLElement, true);
+	}
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
@@ -146,6 +213,20 @@
 		<button type="button" class="play-sentence" disabled={!sentence.audio?.ready} onclick={(event) => { event.stopPropagation(); onPlay?.(sentence); }}>
 			<span aria-hidden="true">▶</span> {sentence.audio?.ready ? 'Play sentence' : 'Audio not ready'}
 		</button>
+		<button
+			type="button"
+			class="translate-sentence"
+			bind:this={translationTrigger}
+			aria-expanded={translationOpen}
+			aria-label={`Translate sentence ${sentence.sentence_index + 1}`}
+			onpointerenter={handleTranslateEnter}
+			onpointerleave={handleTranslateLeave}
+			onfocus={handleTranslateEnter}
+			onblur={handleTranslateLeave}
+			onclick={handleTranslateClick}
+		>
+			<span aria-hidden="true">⇄</span> Translate
+		</button>
 		<span class="expression-keys">
 			{#each constructions as construction, index (construction.id)}
 				<button type="button" class="expression-key" class:expression-active={activeConstructionIDs.includes(construction.id)}
@@ -158,6 +239,18 @@
 			{/each}
 		</span>
 	</span>
+	{#if translationOpen && translationAnchor}
+		<SentenceTranslationPopover
+			articleId={block.article_id}
+			sentenceId={sentence.id}
+			sentenceLabel={sentence.source_text}
+			anchor={translationAnchor}
+			autoEnsure={translationAutoEnsure}
+			onEnter={() => {}}
+			onLeave={() => {}}
+			onClose={() => closeTranslation(true)}
+		/>
+	{/if}
 </span>
 
 <style>

@@ -151,4 +151,56 @@ describe('exploreController', () => {
 		expect(controller.state.phase).toBe('failed');
 		expect(start).not.toHaveBeenCalled();
 	});
+
+	it('regenerates a saved entry while keeping the old document visible', async () => {
+		const { lookup, start, poll, controller } = harness();
+		const server = pollServer();
+		poll.mockImplementation(server.impl);
+		lookup.mockResolvedValue(readyEnvelope());
+		await controller.open({ occurrenceId: 'w1' }, 'article-1');
+		expect(controller.state.phase).toBe('ready');
+		const gate = deferred();
+		start.mockReturnValue(gate.promise);
+		const pending = controller.regenerate({ occurrenceId: 'w1' }, 'article-1');
+		expect(start).toHaveBeenCalledWith('article-1', { occurrence_id: 'w1', annotation_id: undefined, retry: false, regenerate: true });
+		expect(controller.state.phase).toBe('queued');
+		expect(controller.state.document).toBeTruthy();
+		gate.release({ status: 'generating', entry_id: 'entry-1', run_id: 'run-5' });
+		await pending;
+		await flush();
+		expect(controller.state.phase).toBe('generating');
+		expect(controller.state.document).toBeTruthy();
+		expect(controller.state.runId).toBe('run-5');
+		server.releaseNext(readyEnvelope('entry-1') as Envelope);
+		await flush();
+		await flush();
+		expect(controller.state.phase).toBe('ready');
+		expect(poll).toHaveBeenCalledWith('entry-1');
+	});
+
+	it('duplicate regenerate calls while pending start one generation', async () => {
+		const { lookup, start, controller } = harness();
+		lookup.mockResolvedValue(readyEnvelope());
+		await controller.open({ occurrenceId: 'w1' }, 'article-1');
+		const gate = deferred();
+		start.mockReturnValue(gate.promise);
+		const first = controller.regenerate({ occurrenceId: 'w1' }, 'article-1');
+		await controller.regenerate({ occurrenceId: 'w1' }, 'article-1');
+		gate.release({ status: 'queued', entry_id: 'entry-1' });
+		await first;
+		expect(start).toHaveBeenCalledTimes(1);
+		expect(controller.state.document).toBeTruthy();
+	});
+
+	it('failed regeneration keeps the old document with the run reference', async () => {
+		const { lookup, start, controller } = harness();
+		lookup.mockResolvedValue(readyEnvelope());
+		await controller.open({ occurrenceId: 'w1' }, 'article-1');
+		start.mockResolvedValue({ status: 'failed', entry_id: 'entry-1', error_code: 'v1.dictionary_invalid_output', run_id: 'run-7' });
+		await controller.regenerate({ occurrenceId: 'w1' }, 'article-1');
+		expect(controller.state.phase).toBe('failed');
+		expect(controller.state.document).toBeTruthy();
+		expect(controller.state.runId).toBe('run-7');
+		expect(controller.state.errorCode).toBe('v1.dictionary_invalid_output');
+	});
 });

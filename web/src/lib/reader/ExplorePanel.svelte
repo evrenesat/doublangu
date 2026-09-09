@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
 	import { getDictionaryEntry, getDictionaryEntryById, startDictionaryExplore, type DictionarySense } from '$lib/api/client';
+	import { appPath } from '$lib/paths';
 	import { createExploreController, initialExploreState, type ExploreRef, type ExploreState } from './exploreController';
 
 	type Props = {
@@ -67,26 +68,60 @@
 		void controller.retry(ref, articleId);
 	}
 
+	function regenerate(): void {
+		void controller.regenerate(ref, articleId);
+	}
+
+	const runHref = $derived(state.runId ? appPath(`/analysis-runs/${state.runId}`) : '');
+	const replacementLabel = $derived.by(() => {
+		switch (state.phase) {
+			case 'queued':
+			case 'generating':
+				return 'Regenerating… previous entry kept';
+			case 'failed':
+				return 'Regeneration failed. Previous entry kept.';
+			default:
+				return '';
+		}
+	});
+
 	function partOfSpeechLabel(value: string): string {
 		return value.replaceAll('_', ' ');
 	}
 </script>
 
 <div class="explore-panel" data-explore-phase={state.phase} data-explore-entry={state.entryId}>
-	{#if state.phase !== 'ready'}
-		<div class="explore-status" role="status">
-			<span>{statusLabel}</span>
-			{#if state.phase === 'failed'}
-				<button type="button" class="retry-action" onclick={retry}>Retry</button>
-			{/if}
-		</div>
-	{:else if state.document}
+	{#if state.document}
 		<p class="explore-caption">Saved dictionary entry</p>
 		<ol class="senses">
 			{#each state.document.senses as sense, index (index)}
 				{@render Sense({ sense, index })}
 			{/each}
 		</ol>
+		{#if state.phase === 'ready'}
+			<div class="explore-actions">
+				<button type="button" class="regenerate-action" onclick={regenerate}>Regenerate</button>
+				{#if runHref}<a class="run-link" href={runHref}>View run</a>{/if}
+			</div>
+		{:else}
+			<div class="explore-status replacement" role={state.phase === 'failed' ? 'alert' : 'status'}>
+				<span>{replacementLabel}</span>
+				{#if state.phase === 'failed'}
+					<button type="button" class="retry-action" onclick={regenerate}>Retry regeneration</button>
+					{#if runHref}<a class="run-link" href={runHref}>View run</a>{/if}
+				{:else}
+					<button type="button" class="retry-action" disabled>Regenerating…</button>
+				{/if}
+			</div>
+		{/if}
+	{:else if state.phase !== 'ready'}
+		<div class="explore-status" role="status">
+			<span>{statusLabel}</span>
+			{#if state.phase === 'failed'}
+				<button type="button" class="retry-action" onclick={retry}>Retry</button>
+				{#if runHref}<a class="run-link" href={runHref}>View run</a>{/if}
+			{/if}
+		</div>
 	{/if}
 </div>
 
@@ -149,6 +184,39 @@
 		color: inherit;
 		font-size: 0.78rem;
 		cursor: pointer;
+	}
+
+	.retry-action:disabled {
+		cursor: wait;
+		opacity: 0.6;
+	}
+
+	.explore-actions {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+		margin-top: 0.65rem;
+	}
+
+	.regenerate-action {
+		padding: 0.2rem 0.55rem;
+		border: 1px solid var(--reader-border, rgb(255 255 255 / 12%));
+		border-radius: 999px;
+		background: transparent;
+		color: var(--reader-muted);
+		font-size: 0.78rem;
+		cursor: pointer;
+	}
+
+	.run-link {
+		color: var(--reader-accent);
+		font-size: 0.78rem;
+	}
+
+	.explore-status.replacement {
+		margin-top: 0.65rem;
+		border-top: 1px solid var(--reader-border, rgb(255 255 255 / 12%));
+		padding-top: 0.65rem;
 	}
 
 	.explore-caption {

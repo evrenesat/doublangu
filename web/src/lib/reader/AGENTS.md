@@ -16,3 +16,13 @@
   320/375px widths and middle/end focus switches, before accepting layout edits.
 - Run browser E2E separately from Svelte sync/build tasks. Those tasks share
   generated output with the test dev server and can force reloads mid-test.
+- Sentence translation starts only from the Translate control next to Play
+  sentence: 350ms dwell for hover/focus, immediate for touch/click. The
+  popover polls while pending, keeps the saved text during replacement,
+  retries only through explicit buttons, and links work to its analysis run.
+  Opening another sentence closes the current popover; closing returns focus
+  without reopening.
+- Explore Regenerate posts regenerate:true, keeps the saved entry readable
+  with inline progress, and rejoins a pending generation instead of
+  reposting. A failed replacement keeps the old entry with a retry and run
+  link.
