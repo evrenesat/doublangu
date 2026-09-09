@@ -208,12 +208,17 @@ func TestGenerateDictionary_CorrectionExhaustionFails(t *testing.T) {
 	if err == nil {
 		t.Fatal("exhausted corrections must fail")
 	}
-	if result != nil {
-		t.Fatalf("no result may be returned on failure, got %+v", result)
-	}
 	var stageErr *StageError
 	if !errors.As(err, &stageErr) || stageErr.Code != CodeInvalidOutput {
 		t.Fatalf("error = %v", err)
+	}
+	// Result-plus-error: the retained attempt (every executed turn) survives
+	// the failure so diagnostics keep the evidence.
+	if result == nil {
+		t.Fatal("result-plus-error contract broken: nil result on failure")
+	}
+	if len(result.Attempt.Turns) != 3 {
+		t.Fatalf("retained turns = %d, want 3 (initial + 2 corrections)", len(result.Attempt.Turns))
 	}
 	if len(provider.prompts) != 3 {
 		t.Fatalf("turns = %d, want 3 (initial + 2 corrections)", len(provider.prompts))

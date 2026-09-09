@@ -147,6 +147,13 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "stage attempt recovery: %v\n", err)
 		return 1
 	}
+	// Restart reconciliation: runs left running by an exited process whose
+	// job is already terminal are finalized as interrupted; partial records
+	// are preserved and nothing is ever marked successful here.
+	if _, err := historyStore.ReconcileTerminalJobRuns(context.Background()); err != nil {
+		fmt.Fprintf(stderr, "analysis run reconciliation: %v\n", err)
+		return 1
+	}
 	var articleAnnotator annotator.Annotator
 	if cfg.Annotator == "disabled" {
 		articleAnnotator = annotator.Disabled{}

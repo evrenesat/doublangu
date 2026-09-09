@@ -2,6 +2,7 @@ package analysis
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 
@@ -42,7 +43,10 @@ type StageAttempt struct {
 	StartedAt         string `json:"started_at"`
 }
 
-// StageAttemptFinish carries the terminal attempt outcome.
+// StageAttemptFinish carries the terminal attempt outcome. ErrorPhase names
+// where the failure happened (preflight, provider, stage_validation,
+// final_validation, storage, interrupted) and stays empty for successes and
+// legacy rows.
 type StageAttemptFinish struct {
 	Status        string
 	ReportedModel string
@@ -54,8 +58,20 @@ type StageAttemptFinish struct {
 	StderrExcerpt string
 	ErrorCode     string
 	ErrorDetail   string
+	ErrorPhase    string
 	CompletedAt   string
 	DurationMS    int64
+}
+
+// validErrorPhases mirrors the analysis_stage_attempt CHECK constraint.
+var validErrorPhases = map[string]bool{
+	"":                 true,
+	"preflight":        true,
+	"provider":         true,
+	"stage_validation": true,
+	"final_validation": true,
+	"storage":          true,
+	"interrupted":      true,
 }
 
 // StageTurn is one recorded stage turn bound to a stage attempt.
@@ -150,11 +166,21 @@ func (s *HistoryStore) StartStageAttempt(ctx context.Context, attempt StageAttem
 
 // FinishStageAttempt marks one attempt terminal.
 func (s *HistoryStore) FinishStageAttempt(ctx context.Context, attemptID string, finish StageAttemptFinish) error {
+	return s.FinishStageAttemptTx(ctx, nil, attemptID, finish)
+}
+
+// FinishStageAttemptTx is the transaction-capable form of FinishStageAttempt:
+// it composes with other history and publication writes inside one
+// caller-owned transaction. A nil tx runs standalone.
+func (s *HistoryStore) FinishStageAttemptTx(ctx context.Context, tx *sql.Tx, attemptID string, finish StageAttemptFinish) error {
 	if s == nil || s.db == nil {
 		return errors.New("analysis history: nil database")
 	}
 	if attemptID == "" || (finish.Status != "succeeded" && finish.Status != "failed") {
 		return errors.New("analysis history: invalid stage attempt finish")
+	}
+	if !validErrorPhases[finish.ErrorPhase] {
+		return errors.New("analysis history: invalid stage attempt error phase")
 	}
 	if finish.CompletedAt == "" {
 		finish.CompletedAt = store.NowUTC()
@@ -164,17 +190,19 @@ func (s *HistoryStore) FinishStageAttempt(ctx context.Context, attemptID string,
 	metadata, metadataTruncated := boundJSONField(finish.MetadataJSON, stageMetadataLimitBytes)
 	stderr, stderrTruncated := boundField(finish.StderrExcerpt, stageExcerptLimitBytes)
 	detail, detailTruncated := boundField(finish.ErrorDetail, stageExcerptLimitBytes)
-	_, err := s.db.Exec(ctx, `
+	querier := s.execQuerier(tx)
+	_, err := querier.ExecContext(ctx, `
 		UPDATE analysis_stage_attempt SET
 			status = ?, reported_model = ?, request_id = ?, finish_reason = ?,
 			usage_json = ?, timing_json = ?, metadata_json = ?,
 			provider_stderr_excerpt = ?, error_code = ?, error_detail = ?,
+			error_phase = ?,
 			usage_truncated = ?, timing_truncated = ?, metadata_truncated = ?,
 			stderr_truncated = ?, error_detail_truncated = ?,
 			completed_at = ?, duration_ms = ?
 		WHERE id = ?
 	`, finish.Status, finish.ReportedModel, finish.RequestID, finish.FinishReason,
-		usage, timing, metadata, stderr, finish.ErrorCode, detail,
+		usage, timing, metadata, stderr, finish.ErrorCode, detail, finish.ErrorPhase,
 		flagValue(usageTruncated), flagValue(timingTruncated), flagValue(metadataTruncated),
 		flagValue(stderrTruncated), flagValue(detailTruncated),
 		finish.CompletedAt, finish.DurationMS, attemptID)
@@ -185,6 +213,11 @@ func (s *HistoryStore) FinishStageAttempt(ctx context.Context, attemptID string,
 // rejected rather than silently truncated (provider protocol errors already
 // enforce the response bound before this point).
 func (s *HistoryStore) AppendStageTurn(ctx context.Context, turn StageTurn) error {
+	return s.AppendStageTurnTx(ctx, nil, turn)
+}
+
+// AppendStageTurnTx is the transaction-capable form of AppendStageTurn.
+func (s *HistoryStore) AppendStageTurnTx(ctx context.Context, tx *sql.Tx, turn StageTurn) error {
 	if s == nil || s.db == nil {
 		return errors.New("analysis history: nil database")
 	}
@@ -213,7 +246,7 @@ func (s *HistoryStore) AppendStageTurn(ctx context.Context, turn StageTurn) erro
 	validation, validationTruncated := boundField(turn.ValidationError, stageExcerptLimitBytes)
 	providerError, providerErrorTruncated := boundField(turn.ProviderError, stageExcerptLimitBytes)
 	flag := flagValue
-	_, err := s.db.Exec(ctx, `
+	_, err := s.execQuerier(tx).ExecContext(ctx, `
 		INSERT INTO analysis_stage_turn (
 			id, stage_attempt_id, turn_index, turn_kind, prompt, output_schema,
 			completed_response, response_hash, validation_error, provider_error,
@@ -244,6 +277,7 @@ func (s *HistoryStore) RecoverInterruptedStageAttempts(ctx context.Context) erro
 			status = 'failed',
 			error_code = 'v1.analysis_interrupted',
 			error_detail = 'stage attempt interrupted during server restart',
+			error_phase = 'interrupted',
 			completed_at = ?,
 			duration_ms = CASE
 				WHEN julianday(started_at) IS NULL THEN duration_ms
@@ -306,4 +340,37 @@ func (s *HistoryStore) SetRunPipelineFailure(ctx context.Context, runID, stageID
 	}
 	_, err := s.db.Exec(ctx, `UPDATE analysis_run SET failed_stage_id = ?, failed_provider_id = ? WHERE id = ?`, stageID, providerID, runID)
 	return err
+}
+
+// ReconcileTerminalJobRuns finalizes every analysis run that is still
+// 'running' after its owning job reached a terminal state without the worker
+// returning it: expired leases, cancellations, and restart recovery all land
+// here. Such runs are marked failed with v1.analysis_interrupted and phase
+// 'finished' while every partial attempt and turn record is preserved; a run
+// is never marked successful by reconciliation.
+func (s *HistoryStore) ReconcileTerminalJobRuns(ctx context.Context) (int64, error) {
+	if s == nil || s.db == nil {
+		return 0, errors.New("analysis history: nil database")
+	}
+	reconciledAt := store.NowUTC()
+	result, err := s.db.Exec(ctx, `
+		UPDATE analysis_run SET
+			status = 'failed',
+			error_code = 'v1.analysis_interrupted',
+			error_detail = 'analysis run abandoned after its job reached a terminal state',
+			phase = 'finished',
+			completed_at = ?,
+			duration_ms = CASE
+				WHEN julianday(started_at) IS NULL THEN duration_ms
+				WHEN julianday(?) > julianday(started_at)
+					THEN CAST((julianday(?) - julianday(started_at)) * 86400000 AS INTEGER)
+				ELSE 0
+			END
+		WHERE status = 'running'
+		  AND job_id IN (SELECT id FROM job WHERE state IN ('failed', 'canceled', 'succeeded'))
+	`, reconciledAt, reconciledAt, reconciledAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }

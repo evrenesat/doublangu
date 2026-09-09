@@ -253,10 +253,10 @@ func (p *apiFakeProvider) OpenSession(context.Context, annotator.ResolvedBinding
 }
 
 type profilePayload struct {
-	ID       string                     `json:"id"`
-	Name     string                     `json:"name"`
-	Bindings []pipeline.BindingSnapshot `json:"bindings"`
-	ExploreBinding *pipeline.BindingSnapshot `json:"explore_binding,omitempty"`
+	ID             string                     `json:"id"`
+	Name           string                     `json:"name"`
+	Bindings       []pipeline.BindingSnapshot `json:"bindings"`
+	ExploreBinding *pipeline.BindingSnapshot  `json:"explore_binding,omitempty"`
 	PromptVersions map[string]struct {
 		ID      string `json:"id"`
 		Version int    `json:"version"`

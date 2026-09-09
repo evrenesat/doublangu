@@ -327,12 +327,12 @@ type profilePromptVersionRef struct {
 }
 
 type profileResponse struct {
-	ID              string                             `json:"id"`
-	Name            string                             `json:"name"`
-	Bindings        []profileBindingResponse           `json:"bindings"`
-	ExploreBinding  *profileBindingResponse            `json:"explore_binding,omitempty"`
-	PromptVersions  map[string]profilePromptVersionRef `json:"prompt_versions,omitempty"`
-	IsActive        bool                               `json:"is_active"`
+	ID             string                             `json:"id"`
+	Name           string                             `json:"name"`
+	Bindings       []profileBindingResponse           `json:"bindings"`
+	ExploreBinding *profileBindingResponse            `json:"explore_binding,omitempty"`
+	PromptVersions map[string]profilePromptVersionRef `json:"prompt_versions,omitempty"`
+	IsActive       bool                               `json:"is_active"`
 }
 
 type pipelineSettingsResponse struct {

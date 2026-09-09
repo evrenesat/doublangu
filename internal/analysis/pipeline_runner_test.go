@@ -36,6 +36,10 @@ type fakeStageProvider struct {
 	// prompts records every turn prompt in arrival order for instruction
 	// retention assertions.
 	prompts []string
+	// overrideResponses optionally replaces the schema-derived artifact with
+	// fixed responses (the last one repeats), letting tests drive invalid
+	// provider output through the correction loop.
+	overrideResponses []string
 }
 
 func newFakeStageProvider(id, providerType string, blockOnCall int) *fakeStageProvider {
@@ -162,9 +166,19 @@ func (s *fakeStageSession) Turn(_ context.Context, request annotator.TurnRequest
 		<-s.provider.release
 	}
 	translation := request.StageID == pipeline.StageTranslation
-	text, err := artifactFromSchema(request.OutputSchema, translation)
-	if err != nil {
-		return annotator.Completion{}, err
+	text := ""
+	if len(s.provider.overrideResponses) > 0 {
+		index := s.provider.turns - 1
+		if index >= len(s.provider.overrideResponses) {
+			index = len(s.provider.overrideResponses) - 1
+		}
+		text = s.provider.overrideResponses[index]
+	} else {
+		var err error
+		text, err = artifactFromSchema(request.OutputSchema, translation)
+		if err != nil {
+			return annotator.Completion{}, err
+		}
 	}
 	if s.provider.turnDelay > 0 {
 		time.Sleep(s.provider.turnDelay)

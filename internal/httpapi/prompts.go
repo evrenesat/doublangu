@@ -37,7 +37,7 @@ type promptVersionResponse struct {
 }
 
 type promptVersionListResponse struct {
-	PromptType string                   `json:"prompt_type"`
+	PromptType string                  `json:"prompt_type"`
 	Versions   []promptVersionResponse `json:"versions"`
 }
 

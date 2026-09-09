@@ -1,5 +1,101 @@
 # Development Log
 
+## 2026-09-08 — Checkpoint 6: durable LLM failure collection
+
+Implemented Checkpoint 6 of
+`plans/in-progress/reader-settings-prompt-experiments-20260908.md` on top of
+the approved Checkpoint 5 commit (plan baseline `7779c6d`). Verified work is
+left uncommitted for review; no checkpoint commits were created.
+
+### Implementation
+
+- Prompt turn recorder (internal/annotator/stage_executor.go): executeStage
+  accepts optional `StageOption`s including `WithTurnRecorder` — a small
+  callback invoked as each turn completes or fails, while its artifacts are
+  still available. A recorder failure surfaces as an explicit storage-phase
+  StageError (`v1.stage_storage_failed`), never a silent drop. Provider
+  errors now capture any partial completion text, hash, and metadata on the
+  failed turn (marked failed, never validated); open-session failures remain
+  pre-turn failures with zero recorded turns.
+- Result-plus-error (internal/annotator/dictionary.go):
+  `GenerateDictionary` now returns the retained attempt — every executed
+  turn, reported model, request id — alongside the error, so a validation
+  failure no longer discards the collected diagnostics. The dictionary
+  runner logs a safe correlated summary (turn count, reported model, request
+  id; never prompts, responses, or credentials) on generation failure and
+  reconciles abandoned runs on its scheduler path.
+- Operation metadata and lifecycle (internal/analysis/history.go): RunStart
+  carries operation_type/subject_id/subject_label (article runs default to
+  article_analysis); StartRun writes them with phase 'running', and FinishRun
+  marks phase 'finished' through the new transaction-capable
+  `FinishRunTx`. `StageAttemptFinish` gains ErrorPhase (preflight, provider,
+  stage_validation, final_validation, storage, interrupted) validated against
+  the retention CHECK and written by `FinishStageAttemptTx` — the
+  transaction-capable forms of StartStageAttempt/AppendStageTurn/
+  FinishStageAttempt/FinishRun all exist now for history-and-publication
+  composition.
+- Prompt turn persistence (internal/analysis/pipeline_runner.go): both stage
+  executions attach a per-attempt recorder backed by `AppendStageTurn`, so
+  turns are persisted promptly during execution instead of only after
+  ownership re-verification; the post-hoc recording pass is gone. Stage
+  failures map onto the attempt error_phase (provider, stage_validation,
+  final_validation, storage) and a storage-phase failure maps the article
+  failure to `v1.analysis_history_failed`.
+- Restart/lease reconciliation: `HistoryStore.ReconcileTerminalJobRuns`
+  finalizes every analysis run still 'running' whose job reached a terminal
+  state (expired lease, cancellation, restart) as failed with
+  `v1.analysis_interrupted` and phase 'finished', preserving all partial
+  attempt/turn records and never marking an abandoned run successful.
+  Wired at startup (after stage-attempt recovery) and in both the pipeline
+  and dictionary scheduler loops after RecoverExpired.
+  `RecoverInterruptedStageAttempts` now also records error_phase
+  'interrupted'.
+- Tests: executor recorder ordering, storage-phase propagation, partial
+  response capture on provider errors, and zero-turn open-session failures
+  (internal/annotator); zero-turn failed attempt with cache_disposition miss
+  distinguished from cache reuse and prompt turn persistence across a
+  correction-exhaustion failure (internal/analysis); operation metadata and
+  phase lifecycle, error_phase retention, and reconciliation idempotency
+  with untouched queued/succeeded runs (internal/analysis history tests).
+
+### Verification
+
+Toolchain: Go 1.26.5 at
+`/root/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.5.linux-amd64/bin`.
+
+- `go test ./internal/analysis ./internal/annotator ./internal/dictionary ./internal/jobs -count=1` — all ok.
+- `go test -race ./internal/analysis ./internal/dictionary ./internal/jobs -count=1` — all ok.
+- `gofmt` clean on changed files (ailocals.go remains a pre-existing
+  formatting outlier, untouched).
+- Observations: failed calls retain every completed turn available before
+  the failure with safe correlated details, and zero-turn failures are
+  distinguishable from cache hits (failed attempt, error_phase provider,
+  cache_disposition miss vs. hit).
+- Incidental: three committed cp5 httpapi files were not gofmt-aligned
+  (struct tag alignment); gofmt-only corrections applied to
+  `internal/httpapi/{pipeline_analysis.go,pipeline_analysis_test.go,prompts.go}`
+  — no semantic diff.
+
+### Fix (2026-09-09 restart): durable validation-error persistence
+
+- `executeStage` now validates each successful provider completion before
+  the durable record, populating the turn's `ValidationError` and invoking
+  `recordTurn` exactly once with the finalized record. Rejected
+  initial/corrective turns (including exhausted corrections) retain their
+  exact validation errors in history; valid turns carry none. Provider-error
+  partial recording and storage-error propagation are unchanged; a storage
+  failure stops the stage without further provider turns.
+- Tests: `TestTurnRecorderSeesEveryTurnPromptly` asserts the invalid-initial
+  callback carries a nonempty validation error, the valid correction carries
+  none, and callback/returned records agree with exactly one record per
+  provider turn. `TestPipelineRunnerRecorderPersistsTurnsDuringExecution`
+  proves all three exhausted-correction rows keep nonempty validation_error
+  in the database.
+- Re-verified 2026-09-09 on the restored cp6 tree plus this fix:
+  `go test ./internal/analysis ./internal/annotator ./internal/dictionary ./internal/jobs -count=1` — all ok;
+  `go test -race ./internal/analysis ./internal/dictionary ./internal/jobs -count=1` — all ok;
+  `git diff --check` clean.
+
 ## 2026-09-08 — Checkpoint 5 review approval
 
 Reviewed pending cp5 v01 against approved cp4 v01 (`3a4e4c6`) using the

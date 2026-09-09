@@ -17,12 +17,18 @@ import (
 // logical session.
 const maxStageCorrectiveTurns = 2
 
+// CodeStorageFailed marks a durable history recording failure. It is a
+// diagnostics/storage phase, never a provider or validation problem.
+const CodeStorageFailed = "v1.stage_storage_failed"
+
 // StageError is the typed executor failure. Phase distinguishes the local
 // stage artifact validation from the final v3 merge validation so owner
 // diagnostics can tell implementation bugs from provider output problems.
 type StageError struct {
 	Stage pipeline.StageID
-	Phase string // "provider" | "stage_validation" | "final_validation"
+	// Phase: "provider" | "stage_validation" | "final_validation" |
+	// "storage". It maps directly onto the retained attempt error_phase.
+	Phase string
 	Code  string
 	Err   error
 }
@@ -94,6 +100,25 @@ func correctivePromptFor(adapter stageAdapter, validationError, previousResponse
 	return BuildStageCorrectionPrompt(validationError, previousResponse)
 }
 
+// TurnRecorder persists one completed or failed provider turn promptly, while
+// its artifacts are still available. A recorder failure is an explicit
+// storage error, never a silent drop.
+type TurnRecorder func(ctx context.Context, turn StageTurnRecord) error
+
+// StageOption customizes one stage execution.
+type StageOption func(*stageExecutionOptions)
+
+type stageExecutionOptions struct {
+	turnRecorder TurnRecorder
+}
+
+// WithTurnRecorder attaches the prompt turn recorder for one execution.
+func WithTurnRecorder(recorder TurnRecorder) StageOption {
+	return func(options *stageExecutionOptions) {
+		options.turnRecorder = recorder
+	}
+}
+
 // maxStagePromptSchemaBytes is the hard pre-invocation bound for one turn's
 // prompt and generated schema (handoff §8.4). It mirrors
 // analysis.stagePromptLimitBytes: oversized stages fail locally before any
@@ -113,7 +138,21 @@ func checkInvocationSize(stage pipeline.StageID, prompt string, schema json.RawM
 // executeStage runs one stage through a session with at most two corrective
 // turns. It always records every turn artifact, including provider failures,
 // and returns the raw text of the first validated artifact.
-func executeStage(ctx context.Context, provider Provider, binding ResolvedBinding, adapter stageAdapter) (string, StageAttemptResult, error) {
+func executeStage(ctx context.Context, provider Provider, binding ResolvedBinding, adapter stageAdapter, opts ...StageOption) (string, StageAttemptResult, error) {
+	var options stageExecutionOptions
+	for _, apply := range opts {
+		apply(&options)
+	}
+	recordTurn := func(result *StageAttemptResult, record StageTurnRecord) error {
+		result.Turns = append(result.Turns, record)
+		if options.turnRecorder == nil {
+			return nil
+		}
+		if err := options.turnRecorder(ctx, record); err != nil {
+			return &StageError{Stage: binding.StageID, Phase: "storage", Code: CodeStorageFailed, Err: err}
+		}
+		return nil
+	}
 	// Validate the initial prompt and schema before opening the provider
 	// session: session startup can launch real provider processes, so an
 	// input that must be rejected locally must never reach OpenSession.
@@ -171,26 +210,39 @@ func executeStage(ctx context.Context, provider Provider, binding ResolvedBindin
 		result.StderrExcerpt = completion.StderrExcerpt
 		if turnErr != nil {
 			record.ProviderError = turnErr.Error()
+			// Capture any partial completion the provider produced before the
+			// error: recorded as failed, never validated.
+			record.CompletedResponse = completion.Text
+			record.ResponseHash = hashText(completion.Text)
+			record.CompletionMetadata = completion.ProviderMetadataJSON
 			record.Status = "failed"
-			result.Turns = append(result.Turns, record)
+			if recordErr := recordTurn(&result, record); recordErr != nil {
+				return "", result, recordErr
+			}
 			return "", result, &StageError{Stage: binding.StageID, Phase: "provider", Code: codeOf(turnErr), Err: turnErr}
 		}
 		record.CompletedResponse = completion.Text
 		record.ResponseHash = hashText(completion.Text)
 		record.CompletionMetadata = completion.ProviderMetadataJSON
-		result.Turns = append(result.Turns, record)
 		if err := adapter.Validate(completion.Text); err != nil {
 			validationErr = err
 			// Preserve the rejected artifact so the corrective prompt can
-			// show the provider exactly what was invalid.
+			// show the provider exactly what was invalid. Validate before
+			// the durable record so the persisted turn keeps the exact
+			// validation error; the recorder fires exactly once per turn.
 			raw = completion.Text
 			record.ValidationError = err.Error()
-			result.Turns[len(result.Turns)-1] = record
+			if recordErr := recordTurn(&result, record); recordErr != nil {
+				return "", result, recordErr
+			}
 			if correctiveUsed >= maxStageCorrectiveTurns {
 				return "", result, &StageError{Stage: binding.StageID, Phase: "stage_validation", Code: CodeInvalidOutput, Err: err}
 			}
 			correctiveUsed++
 			continue
+		}
+		if recordErr := recordTurn(&result, record); recordErr != nil {
+			return "", result, recordErr
 		}
 		validationErr = nil
 		raw = completion.Text
@@ -296,9 +348,9 @@ func (a *linguisticStageAdapter) Validate(raw string) error {
 // ExecuteLinguisticStage runs the linguistic stage for one paragraph and
 // returns the validated artifact. The stage runs the exact captured
 // instructions in stagePrompts.
-func ExecuteLinguisticStage(ctx context.Context, provider Provider, binding ResolvedBinding, chunk semantics.PreparedChunk, stagePrompts StagePrompts) (*semantics.ValidatedLinguistic, StageAttemptResult, error) {
+func ExecuteLinguisticStage(ctx context.Context, provider Provider, binding ResolvedBinding, chunk semantics.PreparedChunk, stagePrompts StagePrompts, opts ...StageOption) (*semantics.ValidatedLinguistic, StageAttemptResult, error) {
 	adapter := &linguisticStageAdapter{chunk: chunk, stagePrompts: stagePrompts}
-	raw, result, err := executeStage(ctx, provider, binding, adapter)
+	raw, result, err := executeStage(ctx, provider, binding, adapter, opts...)
 	if err != nil {
 		return nil, result, err
 	}
@@ -359,9 +411,9 @@ type TranslationStageOutput struct {
 // artifacts. The stage runs the exact captured instructions in stagePrompts.
 // Merge or final-validation failures surface as a
 // final_validation phase error on the translation stage.
-func ExecuteTranslationStage(ctx context.Context, provider Provider, binding ResolvedBinding, chunk semantics.PreparedChunk, linguistic *semantics.ValidatedLinguistic, stagePrompts StagePrompts) (*TranslationStageOutput, StageAttemptResult, error) {
+func ExecuteTranslationStage(ctx context.Context, provider Provider, binding ResolvedBinding, chunk semantics.PreparedChunk, linguistic *semantics.ValidatedLinguistic, stagePrompts StagePrompts, opts ...StageOption) (*TranslationStageOutput, StageAttemptResult, error) {
 	adapter := &translationStageAdapter{chunk: chunk, linguistic: linguistic, stagePrompts: stagePrompts}
-	raw, result, err := executeStage(ctx, provider, binding, adapter)
+	raw, result, err := executeStage(ctx, provider, binding, adapter, opts...)
 	if err != nil {
 		return nil, result, err
 	}

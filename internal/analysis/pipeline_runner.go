@@ -73,6 +73,12 @@ func (r *PipelineRunner) RunOnce(ctx context.Context) error {
 	if _, err := r.jobs.RecoverExpired(ctx); err != nil {
 		return err
 	}
+	// Scheduler reconciliation: jobs that expired, were canceled, or were
+	// otherwise terminalized without their worker finalize any analysis run
+	// still marked running, preserving partial records.
+	if _, err := r.history.ReconcileTerminalJobRuns(ctx); err != nil {
+		log.Printf("analysis pipeline: terminal-job run reconciliation failed: %v", err)
+	}
 	lease, err := r.jobs.ClaimMatching(ctx, jobs.TargetServer, r.owner, func(job jobs.Job) bool {
 		return job.JobType == jobs.AnalysisJobType
 	})
@@ -276,25 +282,20 @@ func (r *PipelineRunner) process(ctx context.Context, lease *jobs.Lease) error {
 		}
 		linguistic, artifactHash, outcome, stageErr := r.runLinguistic(runCtx, lease, chunk, linguisticBinding,
 			providerByStage[pipeline.StageLinguisticAnalysis], linguisticSpec, payload.Fresh, run.ID.String(),
-			linguisticStagePrompts)
+			linguisticStagePrompts, attempt.ID)
 		if stageErr != nil {
 			// The heartbeat may have canceled the run while the provider call
-			// was blocked; never write turns or failure state for a run whose
-			// lease was reclaimed or whose job was canceled.
+			// was blocked; never write failure state for a run whose lease was
+			// reclaimed or whose job was canceled. Turns were already recorded
+			// promptly during execution.
 			if err := checkOwnership(); err != nil {
 				return leaseLostPath(err, blockIndex)
-			}
-			if err := r.recordTurns(ctx, attempt.ID, outcome.result.Turns); err != nil {
-				return failRun("v1.analysis_history_failed", err, blockIndex, "", "")
 			}
 			return r.finishStageAndFail(ctx, attempt, outcome, stageErr, failRun, blockIndex,
 				pipeline.StageLinguisticAnalysis, linguisticBinding.ProviderID)
 		}
 		if err := checkOwnership(); err != nil {
 			return leaseLostPath(err, blockIndex)
-		}
-		if err := r.recordTurns(ctx, attempt.ID, outcome.result.Turns); err != nil {
-			return failRun("v1.analysis_history_failed", err, blockIndex, "", "")
 		}
 		if err := r.finishStage(ctx, attempt, outcome, stageFinishFromResult("succeeded", outcome.result)); err != nil {
 			return failRun("v1.analysis_history_failed", err, blockIndex, "", "")
@@ -318,22 +319,16 @@ func (r *PipelineRunner) process(ctx context.Context, lease *jobs.Lease) error {
 		}
 		output, outcome, stageErr := r.runTranslation(runCtx, lease, chunk, linguistic, translationBinding,
 			providerByStage[pipeline.StageTranslation], translationSpec, payload.Fresh, run.ID.String(),
-			translationStagePrompts)
+			translationStagePrompts, attempt.ID)
 		if stageErr != nil {
 			if err := checkOwnership(); err != nil {
 				return leaseLostPath(err, blockIndex)
-			}
-			if err := r.recordTurns(ctx, attempt.ID, outcome.result.Turns); err != nil {
-				return failRun("v1.analysis_history_failed", err, blockIndex, "", "")
 			}
 			return r.finishStageAndFail(ctx, attempt, outcome, stageErr, failRun, blockIndex,
 				pipeline.StageTranslation, translationBinding.ProviderID)
 		}
 		if err := checkOwnership(); err != nil {
 			return leaseLostPath(err, blockIndex)
-		}
-		if err := r.recordTurns(ctx, attempt.ID, outcome.result.Turns); err != nil {
-			return failRun("v1.analysis_history_failed", err, blockIndex, "", "")
 		}
 		if err := r.finishStage(ctx, attempt, outcome, stageFinishFromResult("succeeded", outcome.result)); err != nil {
 			return failRun("v1.analysis_history_failed", err, blockIndex, "", "")
@@ -522,9 +517,11 @@ func (r *PipelineRunner) preflightFail(ctx context.Context, lease *jobs.Lease, i
 	return jobErr
 }
 
-// recordTurns persists executor turn records for one stage attempt.
-func (r *PipelineRunner) recordTurns(ctx context.Context, attemptID string, turns []annotator.StageTurnRecord) error {
-	for _, record := range turns {
+// stageTurnRecorder returns the prompt turn recorder for one stage attempt:
+// every completed or failed turn is persisted while its artifacts are still
+// available, and a recording failure surfaces as an explicit storage error.
+func (r *PipelineRunner) stageTurnRecorder(attemptID string) annotator.TurnRecorder {
+	return func(ctx context.Context, record annotator.StageTurnRecord) error {
 		turn := StageTurn{
 			AttemptID: attemptID, TurnIndex: record.TurnIndex, TurnKind: record.TurnKind,
 			Prompt: record.Prompt, OutputSchema: record.OutputSchema,
@@ -534,11 +531,8 @@ func (r *PipelineRunner) recordTurns(ctx context.Context, attemptID string, turn
 			StartedAt:          record.StartedAt, CompletedAt: record.CompletedAt,
 			DurationMS: record.DurationMS, Status: record.Status,
 		}
-		if err := r.history.AppendStageTurn(ctx, turn); err != nil {
-			return err
-		}
+		return r.history.AppendStageTurn(ctx, turn)
 	}
-	return nil
 }
 
 // stageOutcome carries everything the process loop must persist after one
@@ -558,7 +552,7 @@ type stageOutcome struct {
 // before the cache write; a canceled runCtx aborts the provider session.
 func (r *PipelineRunner) runLinguistic(ctx context.Context, lease *jobs.Lease, chunk semantics.PreparedChunk,
 	binding pipeline.BindingSnapshot, provider annotator.Provider, spec StageCacheSpec, fresh bool, runID string,
-	stagePrompts annotator.StagePrompts) (*semantics.ValidatedLinguistic, string, stageOutcome, error) {
+	stagePrompts annotator.StagePrompts, attemptID string) (*semantics.ValidatedLinguistic, string, stageOutcome, error) {
 	outcome := stageOutcome{disposition: "miss"}
 	if !fresh {
 		if hit, err := r.history.ReadStageCache(ctx, spec); err == nil && hit != nil {
@@ -586,7 +580,8 @@ func (r *PipelineRunner) runLinguistic(ctx context.Context, lease *jobs.Lease, c
 	if err != nil {
 		return nil, "", outcome, err
 	}
-	validated, result, err := annotator.ExecuteLinguisticStage(ctx, provider, resolved, chunk, stagePrompts)
+	validated, result, err := annotator.ExecuteLinguisticStage(ctx, provider, resolved, chunk, stagePrompts,
+		annotator.WithTurnRecorder(r.stageTurnRecorder(attemptID)))
 	outcome.result = result
 	if err != nil {
 		// Turn records accumulated before the failure (provider errors and
@@ -633,7 +628,7 @@ func rawLinguisticArtifact(validated *semantics.ValidatedLinguistic) semantics.L
 func (r *PipelineRunner) runTranslation(ctx context.Context, lease *jobs.Lease, chunk semantics.PreparedChunk,
 	linguistic *semantics.ValidatedLinguistic, binding pipeline.BindingSnapshot, provider annotator.Provider,
 	spec StageCacheSpec, fresh bool, runID string,
-	stagePrompts annotator.StagePrompts) (*annotator.TranslationStageOutput, stageOutcome, error) {
+	stagePrompts annotator.StagePrompts, attemptID string) (*annotator.TranslationStageOutput, stageOutcome, error) {
 	outcome := stageOutcome{disposition: "miss"}
 	if !fresh {
 		if hit, err := r.history.ReadStageCache(ctx, spec); err == nil && hit != nil {
@@ -663,7 +658,8 @@ func (r *PipelineRunner) runTranslation(ctx context.Context, lease *jobs.Lease, 
 	if err != nil {
 		return nil, outcome, err
 	}
-	output, result, err := annotator.ExecuteTranslationStage(ctx, provider, resolved, chunk, linguistic, stagePrompts)
+	output, result, err := annotator.ExecuteTranslationStage(ctx, provider, resolved, chunk, linguistic, stagePrompts,
+		annotator.WithTurnRecorder(r.stageTurnRecorder(attemptID)))
 	outcome.result = result
 	if err != nil {
 		// Turn records accumulated before the failure are returned with the
@@ -779,11 +775,21 @@ func (r *PipelineRunner) finishStageAndFail(ctx context.Context, attempt StageAt
 		finish := stageFinishFromResult("failed", outcome.result)
 		finish.ErrorCode = stageErrorCode(stageErr)
 		finish.ErrorDetail = stageErr.Error()
+		finish.ErrorPhase = stageErrorPhase(stageErr)
 		if err := r.finishStage(ctx, attempt, outcome, finish); err != nil {
 			return failRun("v1.analysis_history_failed", err, blockIndex, stageID, providerID)
 		}
 	}
 	return failRun(stageErrorArticleCode(stageErr), stageErr, blockIndex, stageID, providerID)
+}
+
+// stageErrorPhase maps a stage failure onto the retained attempt error_phase.
+func stageErrorPhase(err error) string {
+	var stageErr *annotator.StageError
+	if errors.As(err, &stageErr) {
+		return stageErr.Phase
+	}
+	return "provider"
 }
 
 func stageErrorCode(err error) string {
@@ -792,11 +798,18 @@ func stageErrorCode(err error) string {
 
 func stageErrorArticleCode(err error) string {
 	// StageError.Phase is unqualified ("provider", "stage_validation",
-	// "final_validation"); StageErrorPhase stringifies stage + phase (for
-	// example "translation provider") and must not be compared here.
+	// "final_validation", "storage"); StageErrorPhase stringifies stage +
+	// phase (for example "translation provider") and must not be compared here.
 	var stageErr *annotator.StageError
-	if errors.As(err, &stageErr) && stageErr.Phase == "provider" {
-		return "v1.analysis_provider_unavailable"
+	if errors.As(err, &stageErr) {
+		if stageErr.Phase == "provider" {
+			return "v1.analysis_provider_unavailable"
+		}
+		if stageErr.Phase == "storage" {
+			// A recording/storage failure is a history problem: the correlated
+			// detail is logged and the failure is returned, never swallowed.
+			return "v1.analysis_history_failed"
+		}
 	}
 	return "v1.analysis_stage_failed"
 }

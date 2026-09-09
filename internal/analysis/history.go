@@ -2,6 +2,7 @@ package analysis
 
 import (
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -127,6 +128,11 @@ type RunStart struct {
 	ProviderID      string
 	CodexCLIVersion string
 	TotalParagraphs int
+	// Operation metadata (section 5): article runs default to
+	// article_analysis; on-demand operations name their subject explicitly.
+	OperationType string
+	SubjectID     string
+	SubjectLabel  string
 }
 
 type RunFinish struct {
@@ -236,12 +242,29 @@ type HistoryStore struct {
 
 func NewHistoryStore(db *store.DB) *HistoryStore { return &HistoryStore{db: db} }
 
+// execQuerier adapts the database handle and a caller-owned transaction to
+// one execution interface so history helpers compose inside transactions.
+type execQuerier interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+func (s *HistoryStore) execQuerier(tx *sql.Tx) execQuerier {
+	if tx != nil {
+		return tx
+	}
+	return s.db.Conn()
+}
+
 func (s *HistoryStore) StartRun(ctx context.Context, start RunStart) (Run, error) {
 	if s == nil || s.db == nil {
 		return Run{}, errors.New("analysis history: nil database")
 	}
 	if start.ArticleID.IsZero() || start.AttemptCount <= 0 || start.TotalParagraphs < 0 {
 		return Run{}, errors.New("analysis history: invalid run start")
+	}
+	operationType := start.OperationType
+	if strings.TrimSpace(operationType) == "" {
+		operationType = "article_analysis"
 	}
 	run := Run{
 		ID: library.NewULID(), ArticleID: start.ArticleID, ArticleTitle: start.ArticleTitle,
@@ -257,12 +280,13 @@ func (s *HistoryStore) StartRun(ctx context.Context, start RunStart) (Run, error
 			id, article_id, job_id, attempt_count, content_hash, contract_version,
 			prompt_version, requested_model, requested_effort, provider_id,
 			codex_cli_version, started_at, status, total_paragraphs,
-			completed_paragraphs, failed_block_index
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, -1)
+			completed_paragraphs, failed_block_index,
+			operation_type, subject_id, subject_label, phase
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, -1, ?, ?, ?, 'running')
 	`, run.ID.String(), run.ArticleID.String(), run.JobID.String(), run.AttemptCount,
 		run.ContentHash, run.ContractVersion, run.PromptVersion, run.RequestedModel,
 		run.RequestedEffort, run.ProviderID, run.CodexCLIVersion, run.StartedAt,
-		run.Status, run.TotalParagraphs)
+		run.Status, run.TotalParagraphs, operationType, start.SubjectID, start.SubjectLabel)
 	if err != nil {
 		return Run{}, fmt.Errorf("start analysis run: %w", err)
 	}
@@ -332,10 +356,34 @@ func (s *HistoryStore) FinishRun(ctx context.Context, runID library.ULID, finish
 	if finish.FailedBlockIndex < -1 {
 		return errors.New("analysis history: invalid failed block")
 	}
-	_, err := s.db.Exec(ctx, `
+	if err := s.FinishRunTx(ctx, nil, runID, finish); err != nil {
+		return err
+	}
+	return nil
+}
+
+// FinishRunTx is the transaction-capable form of FinishRun: it composes with
+// other history writes inside one caller-owned transaction. A nil tx runs
+// standalone.
+func (s *HistoryStore) FinishRunTx(ctx context.Context, tx *sql.Tx, runID library.ULID, finish RunFinish) error {
+	if s == nil || s.db == nil {
+		return errors.New("analysis history: nil database")
+	}
+	if finish.Status != "succeeded" && finish.Status != "failed" {
+		return errors.New("analysis history: invalid final status")
+	}
+	if finish.CompletedAt == "" {
+		finish.CompletedAt = store.NowUTC()
+	}
+	if finish.FailedBlockIndex < -1 {
+		return errors.New("analysis history: invalid failed block")
+	}
+	querier := s.execQuerier(tx)
+	_, err := querier.ExecContext(ctx, `
 		UPDATE analysis_run SET status = ?, reported_model = ?, completed_at = ?,
 			duration_ms = ?, completed_paragraphs = ?, failed_block_index = ?,
-			error_code = ?, error_detail = ?, stderr_excerpt = ? WHERE id = ?
+			error_code = ?, error_detail = ?, stderr_excerpt = ?, phase = 'finished'
+		WHERE id = ?
 	`, finish.Status, finish.ReportedModel, finish.CompletedAt, finish.DurationMS,
 		finish.CompletedParags, finish.FailedBlockIndex, finish.ErrorCode,
 		finish.ErrorDetail, finish.StderrExcerpt, runID.String())

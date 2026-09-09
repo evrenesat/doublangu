@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"doublangu/internal/analysis"
 	"doublangu/internal/annotator"
 	"doublangu/internal/jobs"
 	"doublangu/internal/library"
@@ -43,6 +44,7 @@ type Runner struct {
 	db       *store.DB
 	jobs     *jobs.Store
 	store    *Store
+	history  *analysis.HistoryStore
 	registry providerRegistry
 	owner    string
 	// heartbeatInterval renews the lease while a provider call runs;
@@ -53,8 +55,8 @@ type Runner struct {
 // NewRunner builds the runner over an open database.
 func NewRunner(db *store.DB, registry providerRegistry) *Runner {
 	return &Runner{
-		db: db, jobs: jobs.NewStore(db), store: NewStore(db), registry: registry,
-		owner: "server-dictionary", heartbeatInterval: 20 * time.Second,
+		db: db, jobs: jobs.NewStore(db), store: NewStore(db), history: analysis.NewHistoryStore(db),
+		registry: registry, owner: "server-dictionary", heartbeatInterval: 20 * time.Second,
 	}
 }
 
@@ -84,6 +86,11 @@ func (r *Runner) RunOnce(ctx context.Context) error {
 	}
 	if _, err := r.jobs.RecoverExpired(ctx); err != nil {
 		return err
+	}
+	// Scheduler reconciliation: finalize runs abandoned by expired or
+	// canceled jobs, preserving every partial record.
+	if _, err := r.history.ReconcileTerminalJobRuns(ctx); err != nil {
+		log.Printf("dictionary: terminal-job run reconciliation failed: %v", err)
 	}
 	lease, err := r.jobs.ClaimMatching(ctx, jobs.TargetServer, r.owner, func(job jobs.Job) bool {
 		return job.JobType == JobType && job.OwnerType == OwnerType
@@ -160,6 +167,13 @@ func (r *Runner) process(ctx context.Context, lease *jobs.Lease) error {
 		// failed by this stale worker; the scheduler owns that transition.
 		if cause := retainedLeaseError(); cause != nil {
 			return fmt.Errorf("dictionary: run aborted: %w", cause)
+		}
+		// Result-plus-error: the attempt survives the failure. Safe correlated
+		// details (never prompts, responses, or credentials) are logged so the
+		// failure is never silently claimed complete.
+		if result != nil {
+			log.Printf("dictionary: generation failed with %d retained turns, reported model %q, request id %q",
+				len(result.Attempt.Turns), result.Attempt.ReportedModel, result.Attempt.RequestID)
 		}
 		return r.failDictionaryError(ctx, lease, err)
 	}

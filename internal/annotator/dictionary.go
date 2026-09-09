@@ -170,15 +170,20 @@ func GenerateDictionary(ctx context.Context, provider Provider, binding Resolved
 	}
 	adapter := &dictionaryStageAdapter{input: input}
 	raw, attempt, err := executeStage(ctx, provider, binding, adapter)
+	// Result-plus-error: the accumulated attempt (every retained turn) is
+	// returned even when the final document is invalid, so callers can
+	// preserve available diagnostics instead of losing them with a nil.
+	result := &DictionaryGenerateResult{Attempt: attempt}
 	if err != nil {
-		return nil, err
+		return result, err
 	}
 	document, decodeErr := semantics.DecodeDictionaryArtifact([]byte(raw))
 	if decodeErr != nil {
-		return nil, &StageError{Stage: pipeline.StageTranslation, Phase: "stage_validation", Code: CodeInvalidOutput, Err: decodeErr}
+		return result, &StageError{Stage: pipeline.StageTranslation, Phase: "stage_validation", Code: CodeInvalidOutput, Err: decodeErr}
 	}
 	if validateErr := semantics.ValidateDictionary(input, document); validateErr != nil {
-		return nil, &StageError{Stage: pipeline.StageTranslation, Phase: "stage_validation", Code: CodeInvalidOutput, Err: validateErr}
+		return result, &StageError{Stage: pipeline.StageTranslation, Phase: "stage_validation", Code: CodeInvalidOutput, Err: validateErr}
 	}
-	return &DictionaryGenerateResult{Document: document, Attempt: attempt}, nil
+	result.Document = document
+	return result, nil
 }
