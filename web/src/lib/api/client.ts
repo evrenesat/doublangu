@@ -420,3 +420,7 @@ export async function createSpeechWorkerEnrollment(): Promise<WorkerEnrollment> 
 export async function revokeSpeechWorker(workerId: string): Promise<void> {
 	return apiFetch(`/api/v1/speech-workers/${id(workerId)}`, { method: 'DELETE', csrf: true });
 }
+
+export async function deleteRevokedSpeechWorker(workerId: string): Promise<void> {
+	return apiFetch(`/api/v1/speech-workers/${id(workerId)}/record`, { method: 'DELETE', csrf: true });
+}

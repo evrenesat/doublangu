@@ -53,12 +53,15 @@ function stubWorkersFetch(handlers: {
 	workers: () => unknown;
 	enrollment?: () => Response;
 	revoke?: () => Response;
+	deleteRecord?: () => Response;
 }): ReturnType<typeof vi.fn> {
 	const fetchMock = vi.fn(async (input: string, init: RequestInit = {}): Promise<Response> => {
 		const method = init.method ?? 'GET';
+		if (input === '/api/ailocals/v1/info') return json(200, { service_kind: 'doublangu', environment: 'beta' });
 		if (input === '/api/v1/speech-workers' && method === 'GET') return json(200, handlers.workers());
 		if (input === '/api/v1/speech-workers/enrollments' && method === 'POST') return handlers.enrollment?.() ?? json(201, enrollment);
 		if (input === '/api/v1/speech-workers/worker-1' && method === 'DELETE') return handlers.revoke?.() ?? json(200, { ok: true });
+		if (input === '/api/v1/speech-workers/worker-1/record' && method === 'DELETE') return handlers.deleteRecord?.() ?? json(200, { ok: true });
 		throw new Error(`unexpected request ${method} ${input}`);
 	});
 	vi.stubGlobal('fetch', fetchMock);
@@ -71,12 +74,16 @@ it('lists enrolled workers with capabilities, relay state, and revoke control', 
 	render(SpeechWorkersPage);
 	// Wait for data-driven content rather than the static heading.
 	expect(await screen.findByText('MacBook Air')).toBeTruthy();
+	expect(await screen.findByText('beta')).toBeTruthy();
+	expect(screen.getByText(window.location.origin)).toBeTruthy();
+	expect(screen.getByText(/selecting one does not switch servers/)).toBeTruthy();
 	expect(screen.getByText('Version 0.2.1 · speech-worker.v1')).toBeTruthy();
 	expect(screen.getByText('Capabilities: TTS avspeech (nl) · LLM relay')).toBeTruthy();
 	expect(screen.getByText(/Last seen: \d+ minutes? ago/)).toBeTruthy();
 	expect(screen.getByText(/Relay last seen: \d+ minutes? ago/)).toBeTruthy();
 	expect(screen.getByText(`Enrolled: ${formatDay(worker.created_at)}`)).toBeTruthy();
 	expect(screen.getByRole('button', { name: 'Revoke' })).toBeTruthy();
+	expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
 	expect(screen.getByRole('heading', { name: 'Enroll a new worker' })).toBeTruthy();
 	expect(screen.getByRole('button', { name: 'Generate enrollment token' })).toBeTruthy();
 });
@@ -193,4 +200,36 @@ it('marks a revoked worker without offering revoke again', async () => {
 	await waitFor(() => expect(screen.getByText('MacBook Air')).toBeTruthy());
 	expect(screen.getByText('Revoked')).toBeTruthy();
 	expect(screen.queryByRole('button', { name: 'Revoke' })).toBeNull();
+	expect(screen.getByRole('button', { name: 'Delete' })).toBeTruthy();
+});
+
+it('deletes a revoked record only after confirmation, with CSRF', async () => {
+	useCsrfCookie();
+	const fetchMock = stubWorkersFetch({ workers: () => [{ ...worker, revoked_at: minutesAgo(1) }] });
+	render(SpeechWorkersPage);
+	await fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
+	await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+	expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'DELETE')).toHaveLength(0);
+	await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+	await fireEvent.click(screen.getByRole('button', { name: 'Delete revoked worker' }));
+	await screen.findByText('No workers are enrolled yet.');
+	const deletes = fetchMock.mock.calls.filter(([, init]) => init?.method === 'DELETE');
+	expect(deletes).toHaveLength(1);
+	expect(deletes[0]![0]).toBe('/api/v1/speech-workers/worker-1/record');
+	expect(new Headers(deletes[0]![1]!.headers).get('x-csrf-token')).toBe('test-csrf-token');
+});
+
+it('keeps a revoked record visible when deletion fails and allows retry', async () => {
+	useCsrfCookie();
+	let fail = true;
+	stubWorkersFetch({ workers: () => [{ ...worker, revoked_at: minutesAgo(1) }],
+		deleteRecord: () => fail ? json(500, { error: 'Deletion failed', code: 'v1.internal' }) : json(200, { ok: true }) });
+	render(SpeechWorkersPage);
+	await fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
+	await fireEvent.click(screen.getByRole('button', { name: 'Delete revoked worker' }));
+	await screen.findByText('Deletion failed');
+	expect(screen.getByText('MacBook Air')).toBeTruthy();
+	fail = false;
+	await fireEvent.click(screen.getByRole('button', { name: 'Delete revoked worker' }));
+	await screen.findByText('No workers are enrolled yet.');
 });

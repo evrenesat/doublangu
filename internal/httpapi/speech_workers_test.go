@@ -80,6 +80,51 @@ func relayHTTPFixture(t *testing.T) (*store.DB, *workers.Service, *SpeechWorkerH
 	return db, service, handler, authed, token
 }
 
+type allowWorkerRecordCSRF struct{}
+
+func (allowWorkerRecordCSRF) VerifyRequest(*http.Request) error { return nil }
+
+func TestDeleteRevokedWorkerRecord(t *testing.T) {
+	db, service, handler, worker, token := relayHTTPFixture(t)
+	jobID, _ := seedHTTPRelayJob(t, db)
+	request := func() *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodDelete, "/api/v1/speech-workers/"+worker.ID.String()+"/record", nil)
+		r.SetPathValue("id", worker.ID.String())
+		w := httptest.NewRecorder()
+		handler.ServeOwnerWorkerRecord(w, r)
+		return w
+	}
+	if w := request(); w.Code != http.StatusForbidden {
+		t.Fatalf("without CSRF: %d %s", w.Code, w.Body.String())
+	}
+	handler.csrf = allowWorkerRecordCSRF{}
+	if w := request(); w.Code != http.StatusConflict {
+		t.Fatalf("active worker: %d %s", w.Code, w.Body.String())
+	}
+	if _, err := service.Authenticate(t.Context(), token); err != nil {
+		t.Fatalf("active credential changed: %v", err)
+	}
+	if err := service.Revoke(t.Context(), worker.ID); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if w := request(); w.Code != http.StatusOK {
+			t.Fatalf("delete attempt %d: %d %s", i, w.Code, w.Body.String())
+		}
+	}
+	remaining, err := service.ListWorkers(t.Context())
+	if err != nil || len(remaining) != 0 {
+		t.Fatalf("remaining workers: %v, %v", remaining, err)
+	}
+	if _, err := service.Authenticate(t.Context(), token); err == nil {
+		t.Fatal("deleted worker authenticated")
+	}
+	var count int
+	if err := db.QueryRow(t.Context(), `SELECT COUNT(*) FROM job WHERE id = ?`, jobID.String()).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("job history lost: count=%d err=%v", count, err)
+	}
+}
+
 func seedHTTPRelayJob(t *testing.T, db *store.DB) (library.ULID, []byte) {
 	t.Helper()
 	relay := llmrelay.NewService(db)

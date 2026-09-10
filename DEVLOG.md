@@ -3841,3 +3841,76 @@ those suites were not repeated for this bounded schema/assertion correction.
 Companion CP1 is approved as cp1 v02. CP2 remains pending for authenticated live
 acceptance, the real owner-browser path, and populated rollback. No public
 push or deployment occurred; historical source CP1–13 remain preserved.
+# 2026-09-10 — Explore refresh persistence and ailocals enrollment guidance
+
+Explore now resets on article/occurrence identity changes, not replacement
+objects from background polling. Explicit word/expression switches close the
+panel; refreshing the same selection preserves it. Added a component regression
+test. Workers settings now reads the ailocals info endpoint and displays the
+site URL (including deployment prefix), reported environment, and matching
+Connections enrollment steps. Environment selection checks server identity;
+it does not switch deployments. README documents the setup.
+
+Verification commands (Go commands use
+`PATH=/root/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.5.linux-amd64/bin:$PATH`):
+
+- `make verify`: stopped at frontend check; five errors in untouched
+  `web/dev/readerDemoPlugin.ts` and `web/vite.config.ts` concerning Node types.
+- `npm --prefix web run validate:openapi`: passed.
+- `npm --prefix web run generate:api` twice, with a temporary copy and `cmp`:
+  byte-identical, no generated diff.
+- `npm --prefix web run check`: the same five Node typing errors.
+- `npm --prefix web run test:unit -- src/lib/reader src/lib/routes/speech-workers-page.test.ts`:
+  76 passed. After the explicit subject-switch adjustment,
+  `npm --prefix web run test:unit -- src/lib/reader/SemanticPopover.test.ts src/lib/routes/speech-workers-page.test.ts`:
+  8 passed.
+- `npm --prefix web run build`: passed.
+- `make test-dictionary test-reader-settings`: passed, including the 013
+  migration rehearsal; run separately because `make verify` stopped early.
+- `go test -race ./internal/dictionary ./internal/jobs ./internal/semantics ./internal/httpapi`:
+  all four packages passed (HTTP API took 431 seconds).
+- `npm --prefix web run test:e2e -- reader.spec.ts reader-design.spec.ts reader-progressive.spec.ts reader-preference.spec.ts reader-explore.spec.ts`:
+  23 passed, one subject-switch failure corrected; rerun
+  `npm --prefix web run test:e2e -- reader-explore.spec.ts`: all 4 passed.
+- `DOUBLANGU_TEST_CODEX_LIVE=1 go test ./internal/annotator -run 'TestLive' -count=1`:
+  failed because the dictionary test requires `DOUBLANGU_TEST_CODEX_MODEL`;
+  the chunk test skips without that setting.
+- `node tools/local-reader.mjs`: isolated reader started; reader URL returned
+  HTTP 200; stopped the launched process after the smoke check.
+- `git diff --check`: passed.
+
+No deployment, public push, commit, or real Mac enrollment was performed.
+
+## 2026-09-10 — Delete revoked workers and deploy reader fixes
+
+Added a Delete action with inline confirmation for revoked worker entries.
+The owner/CSRF-protected `DELETE /api/v1/speech-workers/{id}/record` endpoint
+refuses active workers with 409, treats missing records as already deleted,
+and preserves job history. Tests cover authentication/CSRF, active credentials,
+repeat deletion, retained jobs, UI cancellation, errors, and retry. Enrollment
+guidance also explains the already-enrolled 409 recovery path. This release
+includes the Explore persistence and environment guidance changes above.
+
+Verification uses Node 24 at `/opt/node-v24.20.0-linux-x64/bin` and Go 1.26.5
+at `/root/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.5.linux-amd64/bin`,
+both prepended to PATH. `npm --prefix web ci` restored the missing Node type
+files; the earlier frontend diagnostics no longer reproduce.
+
+- `make verify`: passed, including zero frontend diagnostics, all 188 unit
+  tests, backend checks, and migration rehearsal.
+- `npm --prefix web run validate:openapi`: passed.
+- `npm --prefix web run generate:api` twice with a temporary-copy `cmp`:
+  byte-identical, generated changes limited to the new deletion route.
+- `npm --prefix web run build`: passed.
+- `npm --prefix web run test:unit -- src/lib/routes/speech-workers-page.test.ts src/lib/reader/SemanticPopover.test.ts`:
+  all 10 focused tests passed.
+- `go test -race ./internal/workers ./internal/dictionary ./internal/jobs ./internal/semantics ./internal/httpapi`:
+  all five packages passed.
+- `npm --prefix web run test:e2e -- reader.spec.ts reader-design.spec.ts reader-progressive.spec.ts reader-preference.spec.ts reader-explore.spec.ts settings-experiments.spec.ts reader-condensed.spec.ts sentence-translation.spec.ts navigation-menu.spec.ts`:
+  all 50 browser tests passed.
+- `DOUBLANGU_TEST_CODEX_LIVE=1 DOUBLANGU_TEST_CODEX_MODEL=gpt-5.6-luna DOUBLANGU_TEST_CODEX_EFFORT=max go test ./internal/annotator -run '^TestLive' -count=1`:
+  timed out at the Go test runner's ten-minute limit in `TestLiveCodexChunk`;
+  `TestLiveDictionary` was not reached. The initial app-server smoke completed.
+  This live-model check is not a passing release claim; the deterministic
+  deployment gates above passed.
+- `git diff --check`: passed.

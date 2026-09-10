@@ -89,6 +89,32 @@ func (h *SpeechWorkerHandler) authenticate(w http.ResponseWriter, r *http.Reques
 	return worker, true
 }
 
+func (h *SpeechWorkerHandler) ServeOwnerWorkerRecord(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		w.Header().Set("Allow", http.MethodDelete)
+		WriteError(w, http.StatusMethodNotAllowed, "method not allowed", ErrCodeMethodNotAllow)
+		return
+	}
+	if h.csrf == nil || h.csrf.VerifyRequest(r) != nil {
+		WriteError(w, http.StatusForbidden, "csrf token is missing or invalid", ErrCodeCSRF)
+		return
+	}
+	id, err := parseWorkerID(r.PathValue("id"))
+	if err != nil {
+		WriteError(w, http.StatusBadRequest, "invalid worker id", ErrCodeValidation)
+		return
+	}
+	if err := h.service.DeleteRevoked(r.Context(), id); err != nil {
+		if errors.Is(err, workers.ErrWorkerActive) {
+			WriteError(w, http.StatusConflict, "Revoke the worker before deleting its record.", ErrCodeValidation)
+		} else {
+			WriteError(w, http.StatusInternalServerError, "worker deletion failed", ErrCodeInternal)
+		}
+		return
+	}
+	WriteOK(w, map[string]bool{"ok": true})
+}
+
 func (h *SpeechWorkerHandler) ServeEnroll(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)

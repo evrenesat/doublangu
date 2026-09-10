@@ -68,6 +68,24 @@ DOUBLANGU_WEB_BASE_PATH=/beta npm --prefix web run build
 
 ## Development
 
+### Connect ailocals
+
+Open Settings → Workers for this deployment's Server URL and Expected
+environment. In ailocals, open Connections → Add connection, enter those
+values, click Test server, and select the services to share. Generate a fresh
+enrollment token in Doublangu, paste it into ailocals, and click Enroll within
+30 minutes. Tokens are single-use. Use the site root (including any deployment
+prefix), without `/settings` or `/api`.
+
+The expected environment must match `DOUBLANGU_WORKER_ENVIRONMENT` reported
+by the server (`beta`, `production`, or `development`). It is an identity
+check; changing the selection in ailocals does not switch deployments.
+
+Revoked workers have a Delete action to remove their old credential record
+from the list. Active workers must be revoked first. Deletion preserves job
+history. If enrollment returns HTTP 409, an ailocals worker is already enrolled;
+revoke the stale registration before retrying (deletion is optional).
+
 ```sh
 make verify
 ```

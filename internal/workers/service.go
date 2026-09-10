@@ -32,6 +32,7 @@ const (
 )
 
 var (
+	ErrWorkerActive     = errors.New("revoke the worker before deleting its record")
 	ErrUnauthorized     = errors.New("worker unauthorized")
 	ErrProtocol         = errors.New("unsupported worker protocol")
 	ErrNoWork           = jobs.ErrNoWork
@@ -344,6 +345,29 @@ func (s *Service) Revoke(ctx context.Context, id library.ULID) error {
 	}
 	_, err := s.db.Exec(ctx, `UPDATE job SET state = 'queued', lease_owner = '', lease_token_hash = '', lease_expires_at = '', error_code = 'v1.worker_revoked', updated_at = ? WHERE lease_owner = ? AND state IN ('leased', 'running')`, now, id.String())
 	return err
+}
+
+// DeleteRevoked removes a revoked credential record without deleting job history.
+// Missing records are successful so repeated deletes remain safe.
+func (s *Service) DeleteRevoked(ctx context.Context, id library.ULID) error {
+	if s == nil || s.db == nil {
+		return errors.New("workers: nil database")
+	}
+	return s.db.WithTransaction(ctx, func(tx *sql.Tx) error {
+		var revokedAt string
+		err := tx.QueryRowContext(ctx, `SELECT revoked_at FROM speech_worker WHERE id = ?`, id.String()).Scan(&revokedAt)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if revokedAt == "" {
+			return ErrWorkerActive
+		}
+		_, err = tx.ExecContext(ctx, `DELETE FROM speech_worker WHERE id = ? AND revoked_at <> ''`, id.String())
+		return err
+	})
 }
 
 func (s *Service) Lease(ctx context.Context, worker *Worker, request LeaseRequest) (*LeaseResponse, error) {

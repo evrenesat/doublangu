@@ -212,6 +212,35 @@ func TestAssembledLibraryAndMediaAuthCSRF(t *testing.T) {
 	}
 }
 
+func TestWorkerRecordDeletionRequiresOwnerAndCSRF(t *testing.T) {
+	ah, db := testAuth(t)
+	handler := newHandler(manifest.NewRegistry(), &manifest.ParsedSchema{}, ah, testHealth(t, db), testConfig(t), db)
+	target := "/api/v1/speech-workers/01J00000000000000000000000/record"
+	session, err := ah.Sessions.Create(t.Context(), time.Hour, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	csrf, err := ah.CSRF.GenerateToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		session string
+		csrf    string
+		want    int
+	}{
+		{"", "", http.StatusUnauthorized},
+		{session, "", http.StatusForbidden},
+		{session, csrf, http.StatusOK},
+	} {
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, serverRequest(http.MethodDelete, target, "", tc.session, tc.csrf))
+		if w.Code != tc.want {
+			t.Fatalf("want %d got %d: %s", tc.want, w.Code, w.Body.String())
+		}
+	}
+}
+
 func TestAssembledArticleRoutesRequireOwnerAndCSRF(t *testing.T) {
 	ah, db := testAuth(t)
 	handler := newHandler(manifest.NewRegistry(), &manifest.ParsedSchema{}, ah, testHealth(t, db), testConfig(t), db, annotator.Disabled{})

@@ -1105,6 +1105,24 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /api/v1/speech-workers/{id}/record:
+    delete:
+      summary: Delete a revoked worker record while preserving job history
+      description: Active workers must be revoked first. Deleting a missing record succeeds.
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ULID" }
+      responses:
+        "200": { description: Worker record deleted or already absent., content: { application/json: { schema: { $ref: "#/components/schemas/OKResponse" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: Worker is still active., content: { application/json: { schema: { $ref: "#/components/schemas/APIError" } } } }
+        "500": { $ref: "#/components/responses/Internal" }
+
   /api/v1/speech-worker/enroll:
     post:
       summary: Exchange a one-time secret for a worker credential

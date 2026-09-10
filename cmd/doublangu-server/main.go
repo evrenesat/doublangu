@@ -355,6 +355,7 @@ func newHandlerWithMedia(
 	ownerWorkerMux.HandleFunc("POST /api/v1/speech-workers/enrollments", workerHandler.ServeOwnerEnrollments)
 	ownerWorkerMux.HandleFunc("GET /api/v1/speech-workers", workerHandler.ServeOwnerWorkers)
 	ownerWorkerMux.HandleFunc("DELETE /api/v1/speech-workers/{id}", workerHandler.ServeOwnerWorker)
+	ownerWorkerMux.HandleFunc("DELETE /api/v1/speech-workers/{id}/record", workerHandler.ServeOwnerWorkerRecord)
 	mux.Handle("/api/v1/speech-workers", authHandler.RequireAuth(ownerWorkerMux))
 	mux.Handle("/api/v1/speech-workers/", authHandler.RequireAuth(ownerWorkerMux))
 

@@ -50,6 +50,7 @@
 	let saving = $state(false);
 	let frame = 0;
 	let resizeObserver: ResizeObserver | undefined;
+	const selectionKey = $derived(JSON.stringify([articleId, occurrence.id]));
 
 	// The explicit subject: the selected occurrence itself (word) or its
 	// owning construction (expression). Switching changes the popover's
@@ -66,7 +67,8 @@
 	$effect(() => {
 		// A different selected occurrence resets to the word subject and
 		// closes the panel; Explore is always an explicit click.
-		void occurrence.id;
+		// Polling replaces occurrence objects without changing the selection.
+		void selectionKey;
 		subject = 'word';
 		explored = false;
 	});
@@ -160,7 +162,7 @@
 				type="button"
 				class:selected={subject === 'word'}
 				aria-pressed={subject === 'word'}
-				onclick={() => { subject = 'word'; onSubjectChange?.('word'); }}
+				onclick={() => { if (subject !== 'word') explored = false; subject = 'word'; onSubjectChange?.('word'); }}
 			>
 				Word: {occurrence.spans.map((span) => span.source_text).join(' … ')}
 			</button>
@@ -168,7 +170,7 @@
 				type="button"
 				class:selected={subject === 'expression'}
 				aria-pressed={subject === 'expression'}
-				onclick={() => { subject = 'expression'; onSubjectChange?.('expression'); }}
+				onclick={() => { if (subject !== 'expression') explored = false; subject = 'expression'; onSubjectChange?.('expression'); }}
 			>
 				Expression
 			</button>

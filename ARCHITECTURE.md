@@ -718,6 +718,14 @@ resolves a provider. The OpenAPI contract documents both envelopes, the
 start inputs, and the stable provider-unavailable codes; the generated web
 client is produced twice byte-identical.
 
+## Revoked worker cleanup
+
+Owner worker cleanup uses `DELETE /api/v1/speech-workers/{id}/record` behind
+the existing session and CSRF protections. It deletes only revoked records
+and credential hashes; active workers return 409 and missing records succeed.
+Job history remains intact. The existing worker DELETE route continues to
+revoke credentials and requeue outstanding leases.
+
 ## Deployment boundary
 
 Pushes to `main` are verified and packaged on a GitHub-hosted runner. Only the

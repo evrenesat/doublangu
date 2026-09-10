@@ -1,9 +1,11 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { appPath } from '$lib/paths';
 	import {
 		DoublanguAPIError,
 		DoublanguNetworkError,
 		createSpeechWorkerEnrollment,
+		deleteRevokedSpeechWorker,
 		listSpeechWorkers,
 		revokeSpeechWorker,
 		type SpeechWorker,
@@ -13,6 +15,9 @@
 	let workers = $state<SpeechWorker[]>([]);
 	let loading = $state(true);
 	let listError = $state('');
+	let serverURL = $state('');
+	let environment = $state('');
+	let connectionError = $state('');
 
 	let enrolling = $state(false);
 	let enrollError = $state('');
@@ -22,12 +27,30 @@
 	let copyState = $state<'' | 'copied' | 'error'>('');
 
 	let revokeTarget = $state<SpeechWorker | null>(null);
+	let deleteTarget = $state<SpeechWorker | null>(null);
+	let deletingId = $state('');
+	let deleteErrors = $state<Record<string, string>>({});
 	let revokingId = $state('');
 	let revokeErrors = $state<Record<string, string>>({});
 
 	onMount(() => {
+		serverURL = window.location.origin + appPath('/').replace(/\/$/, '');
+		void loadConnectionInfo();
 		void loadWorkers();
 	});
+
+	async function loadConnectionInfo() {
+		connectionError = '';
+		try {
+			const response = await fetch(appPath('/api/ailocals/v1/info'));
+			if (!response.ok) throw new Error();
+			const info = await response.json();
+			if (info.service_kind !== 'doublangu' || !['beta', 'production', 'development'].includes(info.environment)) throw new Error();
+			environment = info.environment;
+		} catch {
+			connectionError = 'Could not read the server environment. Use Test server in ailocals and match the environment it reports.';
+		}
+	}
 
 	async function loadWorkers() {
 		loading = true;
@@ -95,6 +118,22 @@
 		return Boolean(worker.revoked_at);
 	}
 
+	async function confirmDelete() {
+		const worker = deleteTarget;
+		if (!worker || deletingId) return;
+		deletingId = worker.id;
+		deleteErrors = {};
+		try {
+			await deleteRevokedSpeechWorker(worker.id);
+			workers = workers.filter((entry) => entry.id !== worker.id);
+			deleteTarget = null;
+		} catch (cause) {
+			deleteErrors[worker.id] = errorMessage(cause, `Could not delete ${worker.name}.`);
+		} finally {
+			deletingId = '';
+		}
+	}
+
 	function capabilityText(worker: SpeechWorker): string {
 		const parts = (worker.capabilities ?? []).map((cap) => {
 			const languages = cap.languages?.length > 0 ? ` (${cap.languages.join(', ')})` : '';
@@ -155,6 +194,17 @@
 
 <section class="enrollment" aria-labelledby="enroll-heading">
 	<h2 id="enroll-heading">Enroll a new worker</h2>
+	<p>In ailocals, open Connections → Add connection. Name it anything you recognize, then use:</p>
+	<p><strong>Server URL:</strong> <code>{serverURL}</code></p>
+	<p><strong>Expected environment:</strong> {environment || (connectionError ? 'Unavailable' : 'Checking…')}</p>
+	{#if connectionError}<p class="error-text" role="alert">{connectionError}</p>{/if}
+	<p class="muted">Use the site URL above, without /settings or /api. The expected environment must match this server. Beta, production, and development are deployment labels checked by ailocals; selecting one does not switch servers or change features.</p>
+	<ol>
+		<li>Click Test server in ailocals, then select at least one service to share.</li>
+		<li>Generate a token below and paste it into ailocals’ Enrollment token field.</li>
+		<li>Click Enroll. If enrollment fails, check the reported environment and retry with a fresh token from this server.</li>
+	</ol>
+	<p class="muted">HTTP 409 during enrollment means an ailocals worker is already enrolled. If it is a stale registration from a failed setup, revoke that entry below before retrying. Deleting a revoked entry is optional cleanup.</p>
 	<p class="muted enroll-help">Generate a one-time enrollment token for a worker. The token expires after 30 minutes and can be used once.</p>
 	<button type="button" class="secondary" disabled={enrolling} onclick={() => void generateEnrollment()}>
 		{enrolling ? 'Generating…' : 'Generate enrollment token'}
@@ -202,6 +252,22 @@
 						<span class="muted">Enrolled: {formatDate(worker.created_at)}</span>
 					</div>
 					{#if revokeErrors[worker.id]}<p class="error-text" role="alert">{revokeErrors[worker.id]}</p>{/if}
+					{#if deleteErrors[worker.id]}<p class="error-text" role="alert">{deleteErrors[worker.id]}</p>{/if}
+					{#if isRevoked(worker)}
+						{#if deleteTarget?.id === worker.id}
+							<div class="confirm-box" role="group" aria-label={`Confirm deleting ${worker.name}`}>
+								<p>Delete the revoked record for {worker.name}? This cannot be undone. Job history is kept.</p>
+								<div class="confirm-actions">
+									<button type="button" class="secondary" disabled={deletingId !== ''} onclick={() => { deleteTarget = null; }}>Cancel</button>
+									<button type="button" class="secondary danger" disabled={deletingId !== ''} onclick={() => void confirmDelete()}>{deletingId === worker.id ? 'Deleting…' : 'Delete revoked worker'}</button>
+								</div>
+							</div>
+						{:else}
+							<div class="worker-actions">
+								<button type="button" class="secondary danger" disabled={deletingId !== ''} onclick={() => { deleteErrors = {}; deleteTarget = worker; }}>Delete</button>
+							</div>
+						{/if}
+					{/if}
 					{#if revokeTarget?.id === worker.id}
 						<div class="confirm-box" role="group" aria-label={`Confirm revoking ${worker.name}`}>
 							<p>Revoke {worker.name}? This worker will no longer be able to connect.</p>
